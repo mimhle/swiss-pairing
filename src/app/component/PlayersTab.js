@@ -1,9 +1,14 @@
 "use client";
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState, memo, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { Dialog, Menu, Portal, Tooltip } from '@skeletonlabs/skeleton-react';
-import { AlertTriangle, ArrowLeft, ArrowRight, ChevronDown, CreditCard, FileDown, FileUp, Play, Plus, Settings, Trash, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, ChevronDown, CreditCard, FileDown, FileUp, GripVertical, Play, Plus, Settings, Trash, Trash2, Upload } from 'lucide-react';
+import { loadPlayers, savePlayers } from '@/app/component/indexedDbPlayers';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 // ─── Column definitions ──────────────────────────────────────────────────────
 
@@ -36,6 +41,15 @@ const emptyPlayer = (id) => {
     const p = { playerUniqueId: id };
     EDITABLE_KEYS.forEach(k => { p[k] = ''; });
     return p;
+};
+
+const normalizePlayers = (savedPlayers) => {
+    if (!Array.isArray(savedPlayers)) return [];
+    return savedPlayers.map((p, i) => ({
+        ...emptyPlayer(i + 1),
+        ...p,
+        playerUniqueId: i + 1,
+    }));
 };
 
 // ─── Import parsing ──────────────────────────────────────────────────────────
@@ -149,7 +163,7 @@ function applyMapping(rows, columnMap, getNextId) {
 
 const FILTER_FIELDS = [
     { key: 'group',      label: 'Group'  },
-    { key: 'federation', label: 'Fed.'   },
+    { key: 'federation', label: 'Fed'   },
     { key: 'gender',     label: 'Gender' },
     { key: 'club',       label: 'Club'   },
 ];
@@ -177,10 +191,192 @@ const looksLikeVietnameseAscii = (name) => {
     return name.toLowerCase().split(/\s+/).some(w => VIET_WORDS.has(w));
 };
 
+// ─── Optimized Editable Cell Input ──────────────────────────────────────────
+// Uses local state for typing to avoid triggering full table re-renders
+const EditableInput = memo(({ value, playerId, colKey, colType, rowIdx, colIdx, onUpdate, onPaste, onKeyDown, EDITABLE_COL_IDX }) => {
+    const [localValue, setLocalValue] = useState(value);
+
+    // Sync external value changes (from paste, etc.)
+    useEffect(() => {
+        setLocalValue(value);
+    }, [value]);
+
+    const handleBlur = useCallback(() => {
+        const trimmed = localValue?.trim() || "";
+        if (trimmed !== value) {
+            onUpdate(playerId, colKey, trimmed);
+        } else {
+            setLocalValue(value); // Reset if no change
+        }
+    }, [localValue, value, playerId, colKey, onUpdate]);
+
+    return (
+        <input
+            className="bg-transparent w-full outline-none placeholder:text-surface-400-600"
+            type={colType === 'number' ? 'number' : 'text'}
+            placeholder="—"
+            value={localValue}
+            data-row={rowIdx}
+            data-col={colIdx}
+            onChange={e => setLocalValue(e.target.value)}
+            onBlur={handleBlur}
+            onPaste={e => onPaste(e, playerId, colKey)}
+            onKeyDown={e => onKeyDown(e, rowIdx, colIdx)}
+        />
+    );
+}, (prevProps, nextProps) => {
+    // Memoization: only re-render if value or keys change
+    return prevProps.value === nextProps.value &&
+           prevProps.playerId === nextProps.playerId &&
+           prevProps.colKey === nextProps.colKey;
+});
+
+EditableInput.displayName = 'EditableInput';
+
+// ─── Draggable Row Component ─────────────────────────────────────────────
+const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUMNS, EDITABLE_COL_IDX, updatePlayer, handleCellPaste, handleCellKeyDown, removePlayer }) => {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+        isDragging,
+    } = useSortable({ id: player.playerUniqueId });
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+    };
+
+    const warns = playerWarnings[player.playerUniqueId];
+
+    return (
+        <tr
+            ref={setNodeRef}
+            style={style}
+            className={`border-b border-surface-200-800 last:border-0 hover:bg-surface-50-950 transition-colors ${warns ? 'bg-warning-500/5' : ''} ${isDragging ? 'bg-primary-500/10' : ''}`}
+        >
+            <td className="px-2 py-2 text-center cursor-grab active:cursor-grabbing" {...attributes} {...listeners}>
+                <div className="flex justify-center text-surface-400-600 hover:text-surface-600-400 transition-colors">
+                    <GripVertical size={16} />
+                </div>
+            </td>
+            {COLUMNS.map(col => (
+                <td key={col.key} className="px-3 py-2">
+                    <Menu onSelect={({ value }) => {
+                        if (value === 'copy') navigator.clipboard.writeText(String(player[col.key] ?? ''));
+                        else if (value === 'cut') {
+                            navigator.clipboard.writeText(String(player[col.key] ?? ''));
+                            updatePlayer(player.playerUniqueId, col.key, '');
+                        }
+                        else if (value === 'paste') navigator.clipboard.readText().then(t => updatePlayer(player.playerUniqueId, col.key, t.trim()));
+                        else if (value === 'clear') updatePlayer(player.playerUniqueId, col.key, '');
+                    }}>
+                        <Menu.ContextTrigger element={(attrs) => (
+                            <div {...attrs}>
+                                {col.editable ? (
+                                    <EditableInput
+                                        value={col.key === 'playerUniqueId' ? displayIndex : player[col.key]}
+                                        playerId={player.playerUniqueId}
+                                        colKey={col.key}
+                                        colType={col.type}
+                                        rowIdx={rowIdx}
+                                        colIdx={EDITABLE_COL_IDX[col.key]}
+                                        onUpdate={updatePlayer}
+                                        onPaste={handleCellPaste}
+                                        onKeyDown={handleCellKeyDown}
+                                    />
+                                ) : (
+                                    <span className="text-surface-600-400 tabular-nums select-none">
+                                        {col.key === 'playerUniqueId' ? displayIndex : player[col.key]}
+                                    </span>
+                                )}
+                            </div>
+                        )} />
+                        <Portal>
+                            <Menu.Positioner>
+                                <Menu.Content className="card p-1 preset-filled-surface-100-900 shadow-lg min-w-36">
+                                    <Menu.Item value="copy" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                        <Menu.ItemText>Copy</Menu.ItemText>
+                                    </Menu.Item>
+                                    {col.editable && <>
+                                        <Menu.Item value="cut" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                            <Menu.ItemText>Cut</Menu.ItemText>
+                                        </Menu.Item>
+                                        <Menu.Item value="paste" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                            <Menu.ItemText>Paste</Menu.ItemText>
+                                        </Menu.Item>
+                                        <Menu.Separator className="my-1 border-surface-200-800" />
+                                        <Menu.Item value="clear" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-error">
+                                            <Menu.ItemText>Clear</Menu.ItemText>
+                                        </Menu.Item>
+                                    </>}
+                                </Menu.Content>
+                            </Menu.Positioner>
+                        </Portal>
+                    </Menu>
+                </td>
+            ))}
+            <td className="px-1 py-2 text-center">
+                {warns && (
+                    <Tooltip openDelay={100} positioning={{ placement: 'top' }}>
+                        <Tooltip.Trigger element={(attrs) => (
+                            <span {...attrs} className="text-warning-500 cursor-help inline-flex">
+                                <AlertTriangle size={13} />
+                            </span>
+                        )} />
+                        <Portal>
+                            <Tooltip.Positioner>
+                                <Tooltip.Content className="card p-2 text-xs preset-filled-surface-950-50 max-w-48">
+                                    {warns.map((w, i) => <div key={i}>{w}</div>)}
+                                    <Tooltip.Arrow className="[--arrow-size:--spacing(2)] [--arrow-background:var(--color-surface-950-50)]">
+                                        <Tooltip.ArrowTip />
+                                    </Tooltip.Arrow>
+                                </Tooltip.Content>
+                            </Tooltip.Positioner>
+                        </Portal>
+                    </Tooltip>
+                )}
+            </td>
+            <td className="px-2 py-2">
+                <button
+                    className="p-1 rounded text-surface-400-600 hover:text-error-500 transition-colors"
+                    onClick={() => removePlayer(player.playerUniqueId)}
+                    aria-label="Remove player"
+                >
+                    <Trash2 size={14} />
+                </button>
+            </td>
+        </tr>
+    );
+}, (prevProps, nextProps) => {
+    return prevProps.player === nextProps.player &&
+           prevProps.rowIdx === nextProps.rowIdx &&
+           prevProps.displayIndex === nextProps.displayIndex &&
+           prevProps.playerWarnings === nextProps.playerWarnings;
+});
+
+DraggableRow.displayName = 'DraggableRow';
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function PlayersTab() {
     const [players, setPlayers] = useState([]);
+    const saveTimeoutRef = useRef(null);
+    const saveIdleRef = useRef(null);
+    const hasLoadedRef = useRef(false);
+
+    // Drag and drop sensors
+    const sensors = useSensors(
+        useSensor(PointerSensor, {
+            distance: 8,
+        }),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
 
     // Import state
     const [importPhase, setImportPhase] = useState('input'); // 'input' | 'mapping'
@@ -274,11 +470,19 @@ export default function PlayersTab() {
     };
 
     const removePlayer = (id) => {
-        setPlayers(prev =>
-            prev
-                .filter(p => p.playerUniqueId !== id)
-                .map((p, i) => ({ ...p, playerUniqueId: i + 1 }))
-        );
+        setPlayers(prev => prev.filter(p => p.playerUniqueId !== id));
+    };
+
+    const handleDragEnd = (event) => {
+        const { active, over } = event;
+        if (!over || active.id === over.id) return;
+
+        const activeIdx = players.findIndex(p => p.playerUniqueId === active.id);
+        const overIdx = players.findIndex(p => p.playerUniqueId === over.id);
+
+        if (activeIdx === -1 || overIdx === -1) return;
+
+        setPlayers(prev => arrayMove(prev, activeIdx, overIdx));
     };
 
     const handleClearAll = () => setPlayers([]);
@@ -301,6 +505,25 @@ export default function PlayersTab() {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Players');
         XLSX.writeFile(wb, 'players.xlsx');
+    };
+
+    const exportCsv = () => {
+        const ws = XLSX.utils.json_to_sheet(visiblePlayers.map(p => ({
+            Id: p.playerUniqueId,
+            Name: p.name,
+            Gender: p.gender,
+            Group: p.group,
+            Rating: p.rating,
+            Title: p.title,
+            Federation: p.federation,
+            'FIDE Id': p.fideId,
+            Club: p.club,
+            'Team Id': p.teamUniqueId,
+            Type: p.type,
+        })));
+        const url = URL.createObjectURL(new Blob([XLSX.utils.sheet_to_csv(ws)], { type: 'text/csv;charset=utf-8' }));
+        Object.assign(document.createElement('a'), { href: url, download: 'players.csv' }).click();
+        URL.revokeObjectURL(url);
     };
 
     const exportXml = () => {
@@ -431,6 +654,35 @@ export default function PlayersTab() {
         ? players.filter(p => FILTER_FIELDS.every(({ key }) => !filters[key] || p[key] === filters[key]))
         : players;
 
+    useEffect(() => {
+        let isActive = true;
+        loadPlayers().then(saved => {
+            if (!isActive) return;
+            setPlayers(normalizePlayers(saved));
+            hasLoadedRef.current = true;
+        });
+        return () => { isActive = false; };
+    }, []);
+
+     useEffect(() => {
+         if (!hasLoadedRef.current) return;
+         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+         if (saveIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveIdleRef.current);
+         saveTimeoutRef.current = setTimeout(() => {
+             if (window.requestIdleCallback) {
+                 saveIdleRef.current = window.requestIdleCallback(() => savePlayers(players), { timeout: 1000 });
+             } else {
+                 // Fire save without awaiting - it's fire-and-forget now
+                 savePlayers(players);
+             }
+         }, 300);
+         return () => {
+             if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+             if (saveIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveIdleRef.current);
+             if (saveIdleRef.current && !window.cancelIdleCallback) clearTimeout(saveIdleRef.current);
+         };
+     }, [players]);
+
     // ── Render ────────────────────────────────────────────────────────────────
     return (
         <div className="space-y-3">
@@ -479,6 +731,14 @@ export default function PlayersTab() {
                             >
                                 <option value="">Actions...</option>
                                 <option value="fill_down">Fill Downward</option>
+                                {/*
+                                TODO: + add more action
+                                 - auto fill rating in order (user input: start rating, step, direction, players to fill)
+                                 - auto fill group base on gender
+                                 - auto fill club and fed using a mapping table
+                                 - auto fill team id using fed or club
+                                 + make action apply to what shown (filtered) instead of all players
+                                    */}
                             </select>
                             {selectedAction === 'fill_down' && (
                                 <select
@@ -720,7 +980,7 @@ export default function PlayersTab() {
 
             {/* Filters */}
             {players.length > 0 && FILTER_FIELDS.some(({ key }) => uniqueValues(key).length > 0) && (
-                <div className="flex flex-wrap gap-x-4 gap-y-2 items-center px-3 py-2.5 bg-surface-50-950 border border-surface-200-800 rounded-lg">
+                <div className={`flex flex-wrap gap-x-4 gap-y-2 items-center px-3 py-2.5 border rounded-lg transition-colors ${hasActiveFilter ? "bg-primary-500/10 border-primary-500/30" : "bg-surface-50-950 border-surface-200-800"}`}>
                     {FILTER_FIELDS.map(({ key, label }) => {
                         const options = uniqueValues(key);
                         if (!options.length) return null;
@@ -750,128 +1010,58 @@ export default function PlayersTab() {
             )}
 
             {/* Table */}
-            <div className="border border-surface-200-800 rounded-lg overflow-x-auto">
-                <table className="w-full text-sm whitespace-nowrap">
-                    <thead className="bg-surface-100-900 border-b border-surface-200-800">
-                        <tr>
-                            {COLUMNS.map(col => (
-                                <th
-                                    key={col.key}
-                                    className={`px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400 ${col.className}`}
-                                >
-                                    {col.label}
-                                </th>
-                            ))}
-                            <th className="w-6" />
-                            <th className="w-10" />
-                        </tr>
-                    </thead>
-                    <tbody ref={tableBodyRef}>
-                        {visiblePlayers.map((player, rowIdx) => {
-                            const warns = playerWarnings[player.playerUniqueId];
-                            return (
-                            <tr
-                                key={player.playerUniqueId}
-                                className={`border-b border-surface-200-800 last:border-0 hover:bg-surface-50-950 transition-colors ${warns ? 'bg-warning-500/5' : ''}`}
-                            >
-                                {COLUMNS.map(col => (
-                                    <td key={col.key} className="px-3 py-2">
-                                        <Menu onSelect={({ value }) => {
-                                            if (value === 'copy') navigator.clipboard.writeText(String(player[col.key] ?? ''));
-                                            else if (value === 'cut') {
-                                                navigator.clipboard.writeText(String(player[col.key] ?? ''));
-                                                updatePlayer(player.playerUniqueId, col.key, '');
-                                            }
-                                            else if (value === 'paste') navigator.clipboard.readText().then(t => updatePlayer(player.playerUniqueId, col.key, t.trim()));
-                                            else if (value === 'clear') updatePlayer(player.playerUniqueId, col.key, '');
-                                        }}>
-                                            <Menu.ContextTrigger element={(attrs) => (
-                                                <div {...attrs}>
-                                                    {col.editable ? (
-                                                        <input
-                                                            className="bg-transparent w-full outline-none placeholder:text-surface-400-600"
-                                                            type={col.type === 'number' ? 'number' : 'text'}
-                                                            placeholder="—"
-                                                            value={player[col.key]}
-                                                            data-row={rowIdx}
-                                                            data-col={EDITABLE_COL_IDX[col.key]}
-                                                            onChange={e => updatePlayer(player.playerUniqueId, col.key, e.target.value)}
-                                                            onBlur={e => updatePlayer(player.playerUniqueId, col.key, e.target.value.trim())}
-                                                            onPaste={e => handleCellPaste(e, player.playerUniqueId, col.key)}
-                                                            onKeyDown={e => handleCellKeyDown(e, rowIdx, EDITABLE_COL_IDX[col.key])}
-                                                        />
-                                                    ) : (
-                                                        <span className="text-surface-600-400 tabular-nums select-none">
-                                                            {player[col.key]}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            )} />
-                                            <Portal>
-                                                <Menu.Positioner>
-                                                    <Menu.Content className="card p-1 preset-filled-surface-100-900 shadow-lg min-w-36">
-                                                        <Menu.Item value="copy" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
-                                                            <Menu.ItemText>Copy</Menu.ItemText>
-                                                        </Menu.Item>
-                                                        {col.editable && <>
-                                                            <Menu.Item value="cut" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
-                                                                <Menu.ItemText>Cut</Menu.ItemText>
-                                                            </Menu.Item>
-                                                            <Menu.Item value="paste" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
-                                                                <Menu.ItemText>Paste</Menu.ItemText>
-                                                            </Menu.Item>
-                                                            <Menu.Separator className="my-1 border-surface-200-800" />
-                                                            <Menu.Item value="clear" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-error">
-                                                                <Menu.ItemText>Clear</Menu.ItemText>
-                                                            </Menu.Item>
-                                                        </>}
-                                                    </Menu.Content>
-                                                </Menu.Positioner>
-                                            </Portal>
-                                        </Menu>
-                                    </td>
+            <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+            >
+                <SortableContext
+                    items={visiblePlayers.map(p => p.playerUniqueId)}
+                    strategy={verticalListSortingStrategy}
+                >
+                    <div className="border border-surface-200-800 rounded-lg overflow-x-auto">
+                        <table className="w-full text-sm whitespace-nowrap">
+                            <thead className="bg-surface-100-900 border-b border-surface-200-800">
+                                <tr>
+                                    <th className="w-8" />
+                                    {COLUMNS.map(col => (
+                                        <th
+                                            key={col.key}
+                                            className={`px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400 ${col.className}`}
+                                        >
+                                            {col.label}
+                                        </th>
+                                    ))}
+                                    <th className="w-6" />
+                                    <th className="w-10" />
+                                </tr>
+                            </thead>
+                            <tbody ref={tableBodyRef}>
+                                {visiblePlayers.map((player, rowIdx) => (
+                                    <DraggableRow
+                                        key={player.playerUniqueId}
+                                        player={player}
+                                        rowIdx={rowIdx}
+                                        displayIndex={rowIdx + 1}
+                                        playerWarnings={playerWarnings}
+                                        COLUMNS={COLUMNS}
+                                        EDITABLE_COL_IDX={EDITABLE_COL_IDX}
+                                        updatePlayer={updatePlayer}
+                                        handleCellPaste={handleCellPaste}
+                                        handleCellKeyDown={handleCellKeyDown}
+                                        removePlayer={removePlayer}
+                                    />
                                 ))}
-                                <td className="px-1 py-2 text-center">
-                                    {warns && (
-                                        <Tooltip openDelay={100} positioning={{ placement: 'top' }}>
-                                            <Tooltip.Trigger element={(attrs) => (
-                                                <span {...attrs} className="text-warning-500 cursor-help inline-flex">
-                                                    <AlertTriangle size={13} />
-                                                </span>
-                                            )} />
-                                            <Portal>
-                                                <Tooltip.Positioner>
-                                                    <Tooltip.Content className="card p-2 text-xs preset-filled-surface-950-50 max-w-48">
-                                                        {warns.map((w, i) => <div key={i}>{w}</div>)}
-                                                        <Tooltip.Arrow className="[--arrow-size:--spacing(2)] [--arrow-background:var(--color-surface-950-50)]">
-                                                            <Tooltip.ArrowTip />
-                                                        </Tooltip.Arrow>
-                                                    </Tooltip.Content>
-                                                </Tooltip.Positioner>
-                                            </Portal>
-                                        </Tooltip>
-                                    )}
-                                </td>
-                                <td className="px-2 py-2">
-                                    <button
-                                        className="p-1 rounded text-surface-400-600 hover:text-error-500 transition-colors"
-                                        onClick={() => removePlayer(player.playerUniqueId)}
-                                        aria-label="Remove player"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
-                                </td>
-                            </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
-            </div>
+                            </tbody>
+                        </table>
+                    </div>
+                </SortableContext>
+            </DndContext>
 
             {players.length > 0 && (
                 <div className="flex items-center justify-between">
                     <div className="flex gap-2">
-                        <Menu onSelect={({ value }) => { if (value === 'excel') exportExcel(); else if (value === 'xml') exportXml(); }}>
+                        <Menu onSelect={({ value }) => { if (value === 'excel') exportExcel(); else if (value === 'csv') exportCsv(); else if (value === 'xml') exportXml(); }}>
                             <Menu.Trigger className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer ${hasActiveFilter ? 'text-warning-600-400' : ''}`}>
                                 <FileDown size={14} />
                                 Export
@@ -889,6 +1079,9 @@ export default function PlayersTab() {
                                         )}
                                         <Menu.Item value="excel" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
                                             <Menu.ItemText>Export as Excel</Menu.ItemText>
+                                        </Menu.Item>
+                                        <Menu.Item value="csv" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                            <Menu.ItemText>Export as CSV</Menu.ItemText>
                                         </Menu.Item>
                                         <Menu.Item value="xml" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
                                             <Menu.ItemText>Export as XML</Menu.ItemText>
@@ -916,3 +1109,4 @@ export default function PlayersTab() {
         </div>
     );
 }
+
