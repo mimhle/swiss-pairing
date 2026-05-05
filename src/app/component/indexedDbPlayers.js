@@ -210,3 +210,100 @@ export const deleteTournamentData = async (tournamentId) => {
         console.error("Failed to delete tournament data", e);
     }
 };
+
+export const exportAllData = async () => {
+    try {
+        const db = await openDb();
+        const data = {
+            players: [],
+            mappings: [],
+            cardGen: []
+        };
+        
+        const exportStore = (storeName, arrayRef) => {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(storeName, 'readonly');
+                const store = tx.objectStore(storeName);
+                const request = store.openCursor();
+                request.onsuccess = (event) => {
+                    const cursor = event.target.result;
+                    if (cursor) {
+                        arrayRef.push({ key: cursor.key, value: cursor.value });
+                        cursor.continue();
+                    } else {
+                        resolve();
+                    }
+                };
+                request.onerror = () => reject(request.error);
+            });
+        };
+
+        await exportStore(STORE_NAME, data.players);
+        await exportStore(MAPPINGS_STORE_NAME, data.mappings);
+        await exportStore(CARD_GEN_STORE_NAME, data.cardGen);
+
+        return data;
+    } catch (e) {
+        console.error("Failed to export all data", e);
+        return null;
+    }
+};
+
+export const importAllData = async (data) => {
+    try {
+        const db = await openDb();
+
+        const importStore = (storeName, arrayRef) => {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(storeName, 'readwrite');
+                const store = tx.objectStore(storeName);
+                
+                // Clear existing data
+                store.clear();
+
+                if (arrayRef && arrayRef.length > 0) {
+                    arrayRef.forEach(item => {
+                        store.put(item.value, item.key);
+                    });
+                }
+
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        await importStore(STORE_NAME, data.players || []);
+        await importStore(MAPPINGS_STORE_NAME, data.mappings || []);
+        await importStore(CARD_GEN_STORE_NAME, data.cardGen || []);
+        
+        return true;
+    } catch (e) {
+        console.error("Failed to import all data", e);
+        return false;
+    }
+};
+
+export const clearAllData = async () => {
+    try {
+        const db = await openDb();
+
+        const clearStore = (storeName) => {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(storeName, 'readwrite');
+                const store = tx.objectStore(storeName);
+                store.clear();
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        };
+
+        await clearStore(STORE_NAME);
+        await clearStore(MAPPINGS_STORE_NAME);
+        await clearStore(CARD_GEN_STORE_NAME);
+
+        return true;
+    } catch (e) {
+        console.error("Failed to clear all data", e);
+        return false;
+    }
+};

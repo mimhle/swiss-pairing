@@ -4,6 +4,7 @@ import { Fragment } from 'react';
 import { Tabs } from '@skeletonlabs/skeleton-react';
 import { Users, Swords, Settings } from 'lucide-react';
 import PlayersTab from '@/app/component/PlayersTab';
+import SettingsTab from '@/app/component/SettingsTab';
 
 const tabs = [
     { value: "players", label: "Players", icon: Users },
@@ -32,7 +33,7 @@ export default function TournamentTabs() {
                 <p className="text-surface-600-400">Rounds go here.</p>
             </Tabs.Content>
             <Tabs.Content value="settings" className="pt-4">
-                <p className="text-surface-600-400">Settings go here.</p>
+                <SettingsTab />
             </Tabs.Content>
         </Tabs>
     );

@@ -1,6 +1,7 @@
 "use client";
 
 import { Switch } from '@skeletonlabs/skeleton-react';
+import { Sun, Moon } from 'lucide-react';
 
 import { useEffect, useState } from 'react';
 
@@ -22,7 +23,9 @@ export default function Lightswitch() {
     return (
         <Switch checked={checked} onCheckedChange={onCheckedChange}>
             <Switch.Control>
-                <Switch.Thumb />
+                <Switch.Thumb>
+                    {checked ? <Moon size={14} /> : <Sun size={14} />}
+                </Switch.Thumb>
             </Switch.Control>
             <Switch.HiddenInput />
         </Switch>
