@@ -1,29 +1,30 @@
 "use client";
 
-import { useEffect, useRef, useState, memo, useCallback } from 'react';
+import { useEffect, useRef, useState, memo, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { Dialog, Menu, Portal, Tooltip } from '@skeletonlabs/skeleton-react';
-import { AlertTriangle, ArrowLeft, ArrowRight, ChevronDown, CreditCard, FileDown, FileUp, GripVertical, Play, Plus, Settings, Trash, Trash2, Upload } from 'lucide-react';
-import { loadPlayers, savePlayers } from '@/app/component/indexedDbPlayers';
+import { AlertTriangle, ArrowLeft, ArrowRight, ChevronDown, CreditCard, FileDown, FileUp, Filter, GripVertical, Play, Plus, Redo2, Settings, Trash, Trash2, Undo2, Upload, X } from 'lucide-react';
+import { loadPlayers, savePlayers, loadClubFedMapping, saveClubFedMapping } from '@/app/component/indexedDbPlayers';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import GeneratePlayerCardModal from '@/app/component/GeneratePlayerCardModal';
 
 // ─── Column definitions ──────────────────────────────────────────────────────
 
 const COLUMNS = [
-    { key: 'playerUniqueId', label: 'Id',         editable: false,                  className: 'w-14'     },
-    { key: 'name',           label: 'Name',        editable: true,  type: 'text',    className: 'min-w-36' },
-    { key: 'gender',         label: 'Gender',      editable: true,  type: 'text',    className: 'w-20'     },
-    { key: 'group',          label: 'Group',       editable: true,  type: 'text',    className: 'w-20'     },
-    { key: 'rating',         label: 'Rating',      editable: true,  type: 'text',    className: 'w-20'     },
-    { key: 'title',          label: 'Title',       editable: true,  type: 'text',    className: 'w-16'     },
-    { key: 'federation',     label: 'Federation',  editable: true,  type: 'text',    className: 'w-24'     },
-    { key: 'fideId',         label: 'FIDE Id',     editable: true,  type: 'text',    className: 'w-24'     },
-    { key: 'club',           label: 'Club',        editable: true,  type: 'text',    className: 'min-w-32' },
-    { key: 'teamUniqueId',   label: 'Team Id',     editable: true,  type: 'text',    className: 'w-20'     },
-    { key: 'type',           label: 'Type',        editable: true,  type: 'text',    className: 'w-20'     },
+    { key: 'playerUniqueId', label: 'Id', editable: false, className: 'w-14' },
+    { key: 'name', label: 'Name', editable: true, type: 'text', className: 'min-w-36' },
+    { key: 'gender', label: 'Gender', editable: true, type: 'text', className: 'w-20' },
+    { key: 'group', label: 'Group', editable: true, type: 'text', className: 'w-20' },
+    { key: 'rating', label: 'Rating', editable: true, type: 'text', className: 'w-20' },
+    { key: 'title', label: 'Title', editable: true, type: 'text', className: 'w-16' },
+    { key: 'federation', label: 'Federation', editable: true, type: 'text', className: 'w-24' },
+    { key: 'fideId', label: 'FIDE Id', editable: true, type: 'text', className: 'w-24' },
+    { key: 'club', label: 'Club', editable: true, type: 'text', className: 'min-w-32' },
+    { key: 'teamUniqueId', label: 'Team Id', editable: true, type: 'text', className: 'w-20' },
+    { key: 'type', label: 'Type', editable: true, type: 'text', className: 'w-20' },
 ];
 
 const EDITABLE_KEYS = COLUMNS.filter(c => c.editable).map(c => c.key);
@@ -57,41 +58,41 @@ const normalizePlayers = (savedPlayers) => {
 // Vietnamese header → internal field key.
 // '__natrating' is a sentinel used in suggestMapping to handle Rat QG fallback.
 const VI_MAP = new Map([
-    ['số',        null],
-    ['tên',       'name'],
-    ['cấp',       'title'],
-    ['số id',     null],
-    ['rat qg',    '__natrating'],
-    ['rat qt',    'rating'],
-    ['ns',        null],
-    ['lđ',        'federation'],
-    ['phái',      'gender'],
-    ['loại',      'type'],
-    ['nhóm',      'group'],
-    ['csố',       'teamUniqueId'],
-    ['clb',       'club'],
-    ['số fide',   'fideId'],
-    ['nguồn',     null],
-    ['điểm',      null],
+    ['số', null],
+    ['tên', 'name'],
+    ['cấp', 'title'],
+    ['số id', null],
+    ['rat qg', '__natrating'],
+    ['rat qt', 'rating'],
+    ['ns', null],
+    ['lđ', 'federation'],
+    ['phái', 'gender'],
+    ['loại', 'type'],
+    ['nhóm', 'group'],
+    ['csố', 'teamUniqueId'],
+    ['clb', 'club'],
+    ['số fide', 'fideId'],
+    ['nguồn', null],
+    ['điểm', null],
     ['hs1', null], ['hs2', null], ['hs3', null], ['hs4', null], ['hs5', null],
-    ['hạng',      null],
-    ['họ',        null],
-    ['học vị',    null],
+    ['hạng', null],
+    ['họ', null],
+    ['học vị', null],
 ]);
 
 const EN_MAP = new Map([
-    ['name',           'name'],
-    ['gender',         'gender'],
-    ['group',          'group'],
-    ['rating',         'rating'],
-    ['title',          'title'],
-    ['federation',     'federation'],
-    ['fideid',         'fideId'],
-    ['fide id',        'fideId'],
-    ['club',           'club'],
-    ['teamuniqueid',   'teamUniqueId'],
-    ['team id',        'teamUniqueId'],
-    ['type',           'type'],
+    ['name', 'name'],
+    ['gender', 'gender'],
+    ['group', 'group'],
+    ['rating', 'rating'],
+    ['title', 'title'],
+    ['federation', 'federation'],
+    ['fideid', 'fideId'],
+    ['fide id', 'fideId'],
+    ['club', 'club'],
+    ['teamuniqueid', 'teamUniqueId'],
+    ['team id', 'teamUniqueId'],
+    ['type', 'type'],
 ]);
 
 function parseRawData(text) {
@@ -162,10 +163,10 @@ function applyMapping(rows, columnMap, getNextId) {
 // ─── Filters ────────────────────────────────────────────────────────────────
 
 const FILTER_FIELDS = [
-    { key: 'group',      label: 'Group'  },
-    { key: 'federation', label: 'Fed'   },
-    { key: 'gender',     label: 'Gender' },
-    { key: 'club',       label: 'Club'   },
+    { key: 'group', label: 'Group' },
+    { key: 'federation', label: 'Fed' },
+    { key: 'gender', label: 'Gender' },
+    { key: 'club', label: 'Club' },
 ];
 
 const EMPTY_FILTERS = Object.fromEntries(FILTER_FIELDS.map(f => [f.key, '']));
@@ -175,15 +176,15 @@ const EMPTY_FILTERS = Object.fromEntries(FILTER_FIELDS.map(f => [f.key, '']));
 const VIET_DIACRITICS = /[àáảãạăắặằẳẵâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]/i;
 
 const VIET_WORDS = new Set([
-    'nguyen','tran','le','pham','hoang','bui','ngo','duong','vo','do',
-    'dang','vu','dinh','ha','trinh','truong','luong','cao','doan','thi',
-    'van','duc','minh','trung','thanh','hung','tuan','son','long','hai',
-    'nam','quoc','quan','phuong','huong','thuy','hien','linh','lan','hong',
-    'mai','thu','trang','ngoc','nhu','tien','xuan','huy','kien','lien',
-    'binh','cuong','khanh','phong','quang','dat','hieu','hiep','khoa',
-    'dung','hoa','tam','yen','chi','viet','vinh','lam','bao','thao',
-    'phuc','sang','tan','thang','tin','toan','trong','tung','uyen','my',
-    'nga','ninh','sinh','loi','khiem','phu','tuong','tuyen',
+    'nguyen', 'tran', 'le', 'pham', 'hoang', 'bui', 'ngo', 'duong', 'vo', 'do',
+    'dang', 'vu', 'dinh', 'ha', 'trinh', 'truong', 'luong', 'cao', 'doan', 'thi',
+    'van', 'duc', 'minh', 'trung', 'thanh', 'hung', 'tuan', 'son', 'long', 'hai',
+    'nam', 'quoc', 'quan', 'phuong', 'huong', 'thuy', 'hien', 'linh', 'lan', 'hong',
+    'mai', 'thu', 'trang', 'ngoc', 'nhu', 'tien', 'xuan', 'huy', 'kien', 'lien',
+    'binh', 'cuong', 'khanh', 'phong', 'quang', 'dat', 'hieu', 'hiep', 'khoa',
+    'dung', 'hoa', 'tam', 'yen', 'chi', 'viet', 'vinh', 'lam', 'bao', 'thao',
+    'phuc', 'sang', 'tan', 'thang', 'tin', 'toan', 'trong', 'tung', 'uyen', 'my',
+    'nga', 'ninh', 'sinh', 'loi', 'khiem', 'phu', 'tuong', 'tuyen',
 ]);
 
 const looksLikeVietnameseAscii = (name) => {
@@ -227,11 +228,83 @@ const EditableInput = memo(({ value, playerId, colKey, colType, rowIdx, colIdx, 
 }, (prevProps, nextProps) => {
     // Memoization: only re-render if value or keys change
     return prevProps.value === nextProps.value &&
-           prevProps.playerId === nextProps.playerId &&
-           prevProps.colKey === nextProps.colKey;
+        prevProps.playerId === nextProps.playerId &&
+        prevProps.colKey === nextProps.colKey;
 });
 
 EditableInput.displayName = 'EditableInput';
+
+const MAPPING_COLS = ['club', 'federation'];
+
+const MappingRow = memo(({ row, idx, onUpdate, onRemove, onPaste, isDuplicate }) => {
+    const [localClub, setLocalClub] = useState(row.club);
+    const [localFed, setLocalFed] = useState(row.federation);
+
+    // Sync when parent resets the row (e.g. populate from data)
+    useEffect(() => { setLocalClub(row.club); }, [row.club]);
+    useEffect(() => { setLocalFed(row.federation); }, [row.federation]);
+
+    const commitClub = useCallback(() => {
+        const v = localClub?.trim() ?? '';
+        if (v !== row.club) onUpdate(idx, 'club', v);
+        else setLocalClub(row.club);
+    }, [localClub, row.club, idx, onUpdate]);
+
+    const commitFed = useCallback(() => {
+        const v = localFed?.trim() ?? '';
+        if (v !== row.federation) onUpdate(idx, 'federation', v);
+        else setLocalFed(row.federation);
+    }, [localFed, row.federation, idx, onUpdate]);
+
+    return (
+        <tr className={`border-b border-surface-200-800 last:border-0 hover:bg-surface-50-950 transition-colors ${isDuplicate ? 'bg-warning-500/5' : ''}`}>
+            <td className="px-3 py-2">
+                <input
+                    type="text"
+                    value={localClub}
+                    onChange={e => setLocalClub(e.target.value)}
+                    onBlur={commitClub}
+                    onPaste={e => onPaste(e, idx, 'club')}
+                    placeholder="—"
+                    className="w-full bg-transparent outline-none border-b border-transparent hover:border-surface-300-700 focus:border-primary-500 focus:ring-0 transition-colors px-1"
+                />
+            </td>
+            <td className="px-3 py-2">
+                <input
+                    type="text"
+                    value={localFed}
+                    onChange={e => setLocalFed(e.target.value)}
+                    onBlur={commitFed}
+                    onPaste={e => onPaste(e, idx, 'federation')}
+                    placeholder="—"
+                    className="w-full bg-transparent outline-none border-b border-transparent hover:border-surface-300-700 focus:border-primary-500 focus:ring-0 transition-colors px-1"
+                />
+            </td>
+            <td className="px-3 py-2 text-center">
+                <div className="flex items-center justify-center gap-1">
+                    {isDuplicate && (
+                        <span className="text-warning-500" title="Duplicate value — resolve before applying">
+                            <AlertTriangle size={13} />
+                        </span>
+                    )}
+                    <button
+                        onClick={() => onRemove(idx)}
+                        className="p-1 rounded text-surface-400-600 hover:text-error-500 transition-colors"
+                        aria-label="Remove mapping row"
+                    >
+                        <Trash2 size={14} />
+                    </button>
+                </div>
+            </td>
+        </tr>
+    );
+}, (prev, next) =>
+    prev.row === next.row &&
+    prev.idx === next.idx &&
+    prev.isDuplicate === next.isDuplicate
+);
+
+MappingRow.displayName = 'MappingRow';
 
 // ─── Draggable Row Component ─────────────────────────────────────────────
 const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUMNS, EDITABLE_COL_IDX, updatePlayer, handleCellPaste, handleCellKeyDown, removePlayer }) => {
@@ -353,20 +426,85 @@ const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUM
     );
 }, (prevProps, nextProps) => {
     return prevProps.player === nextProps.player &&
-           prevProps.rowIdx === nextProps.rowIdx &&
-           prevProps.displayIndex === nextProps.displayIndex &&
-           prevProps.playerWarnings === nextProps.playerWarnings;
+        prevProps.rowIdx === nextProps.rowIdx &&
+        prevProps.displayIndex === nextProps.displayIndex &&
+        prevProps.playerWarnings === nextProps.playerWarnings;
 });
 
 DraggableRow.displayName = 'DraggableRow';
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
+const MAX_HISTORY = 100;
+
 export default function PlayersTab() {
     const [players, setPlayers] = useState([]);
+    const [toastMessage, setToastMessage] = useState('');
+    const [toastType, setToastType] = useState(''); // 'error' | 'success'
     const saveTimeoutRef = useRef(null);
     const saveIdleRef = useRef(null);
     const hasLoadedRef = useRef(false);
+
+    // ── Undo / Redo ───────────────────────────────────────────────────────────
+    const pastRef = useRef([]); // snapshots before each user mutation
+    const futureRef = useRef([]); // snapshots cleared on new action, restored on undo
+    const [canUndo, setCanUndo] = useState(false);
+    const [canRedo, setCanRedo] = useState(false);
+    // Mounted flag: ensures undo/redo disabled state matches between SSR and client
+    // (Fast Refresh can retain canUndo/canRedo=true in memory while server re-renders fresh)
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => setMounted(true), []);
+
+    const pushHistory = useCallback((snapshot) => {
+        pastRef.current = [...pastRef.current.slice(-(MAX_HISTORY - 1)), snapshot];
+        futureRef.current = [];
+        setCanUndo(true);
+        setCanRedo(false);
+    }, []);
+
+    // Wraps every user-initiated setPlayers call so history is captured
+    const setPlayersWithHistory = useCallback((updater) => {
+        setPlayers(prev => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            pushHistory(prev);
+            return next;
+        });
+    }, [pushHistory]);
+
+    const undo = useCallback(() => {
+        if (!pastRef.current.length) return;
+        const snapshot = pastRef.current[pastRef.current.length - 1];
+        pastRef.current = pastRef.current.slice(0, -1);
+        setPlayers(cur => {
+            futureRef.current = [cur, ...futureRef.current.slice(0, MAX_HISTORY - 1)];
+            setCanRedo(true);
+            return snapshot;
+        });
+        setCanUndo(pastRef.current.length > 0);
+    }, []);
+
+    const redo = useCallback(() => {
+        if (!futureRef.current.length) return;
+        const snapshot = futureRef.current[0];
+        futureRef.current = futureRef.current.slice(1);
+        setPlayers(cur => {
+            pastRef.current = [...pastRef.current.slice(-(MAX_HISTORY - 1)), cur];
+            setCanUndo(true);
+            return snapshot;
+        });
+        setCanRedo(futureRef.current.length > 0);
+    }, []);
+
+    // Global keyboard shortcut: Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo
+    useEffect(() => {
+        const handler = (e) => {
+            const ctrl = e.ctrlKey || e.metaKey;
+            if (ctrl && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
+            if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [undo, redo]);
 
     // Drag and drop sensors
     const sensors = useSensors(
@@ -380,24 +518,36 @@ export default function PlayersTab() {
 
     // Import state
     const [importPhase, setImportPhase] = useState('input'); // 'input' | 'mapping'
-    const [rawData, setRawData]     = useState(null);  // { headers: string[], rows: string[][] }
+    const [rawData, setRawData] = useState(null);  // { headers: string[], rows: string[][] }
     const [columnMap, setColumnMap] = useState({});    // { colIndex: fieldKey | '' }
     const [importText, setImportText] = useState('');
-    const [fileName, setFileName]   = useState('');
+    const [fileName, setFileName] = useState('');
     const fileInputRef = useRef(null);
     const tableBodyRef = useRef(null);
 
     // Action selector state
     const [selectedAction, setSelectedAction] = useState('');
-    const [actionField, setActionField]       = useState('');
+    const [actionField, setActionField] = useState('');
+    const [overwriteRating, setOverwriteRating] = useState(false);
+    const [overwriteGroup, setOverwriteGroup] = useState(false);
+
+    // Club/Fed mapping modal state
+    const [showMappingModal, setShowMappingModal] = useState(false);
+    const [clubFedMapping, setClubFedMapping] = useState({});
+    const [mappingTableData, setMappingTableData] = useState([]);
+    const [mappingDirection, setMappingDirection] = useState('club_to_fed'); // 'club_to_fed' | 'fed_to_club'
+    const [mappingOverwrite, setMappingOverwrite] = useState(false);
+
+    // Generate Player Card modal state
+    const [showCardModal, setShowCardModal] = useState(false);
 
     // ── Player handlers ───────────────────────────────────────────────────────
     const updatePlayer = (id, field, value) => {
-        setPlayers(prev => prev.map(p => p.playerUniqueId === id ? { ...p, [field]: value } : p));
+        setPlayersWithHistory(prev => prev.map(p => p.playerUniqueId === id ? { ...p, [field]: value } : p));
     };
 
     const addPlayer = () => {
-        setPlayers(prev => [...prev, emptyPlayer(prev.length + 1)]);
+        setPlayersWithHistory(prev => [...prev, emptyPlayer(prev.length + 1)]);
     };
 
     const handleCellPaste = (e, playerId, colKey) => {
@@ -411,7 +561,7 @@ export default function PlayersTab() {
         const startRowIdx = players.findIndex(p => p.playerUniqueId === playerId);
         const pasteRows = rawRows.map(r => r.split('\t'));
         const rowsNeeded = (startRowIdx + pasteRows.length) - players.length;
-        setPlayers(prev => {
+        setPlayersWithHistory(prev => {
             const next = [...prev];
             for (let i = 0; i < rowsNeeded; i++) next.push(emptyPlayer(next.length + 1));
             pasteRows.forEach((cells, ri) => {
@@ -431,7 +581,7 @@ export default function PlayersTab() {
         if (!input) return;
         input.focus();
         const len = input.value.length;
-        try { input.setSelectionRange(len, len); } catch (_) {}
+        try { input.setSelectionRange(len, len); } catch (_) { }
     };
 
     const handleCellKeyDown = (e, rowIdx, colIdx) => {
@@ -453,11 +603,155 @@ export default function PlayersTab() {
         }
     };
 
+    const mappingSaveTimeoutRef = useRef(null);
+
+    const openMappingModal = async () => {
+        // Load persisted mapping from IndexedDB and reconstruct rows
+        try {
+            const saved = await loadClubFedMapping();
+            const entries = Object.entries(saved)
+                // The saved format stores { club -> { federation } } entries; reconstruct pairs.
+                .filter(([key, val]) => val?.federation && key !== val?.federation)
+                .map(([club, val]) => ({ club, federation: val.federation }));
+            if (entries.length > 0) {
+                setMappingTableData(entries);
+            } else {
+                setMappingTableData([{ club: '', federation: '' }]);
+            }
+        } catch (_) {
+            setMappingTableData([{ club: '', federation: '' }]);
+        }
+        setShowMappingModal(true);
+    };
+
+    const populateColumnFromPlayers = (columnType) => {
+        // Get unique values from visible players for the specified column
+        const uniqueFromPlayers = [...new Set(
+            visiblePlayers
+                .map(p => p[columnType]?.trim())
+                .filter(Boolean)
+        )].sort();
+
+        setMappingTableData(prev => {
+            // Collect values already present in this column so we don't create duplicates
+            const existingValues = new Set(prev.map(r => r[columnType]).filter(Boolean));
+            const newRows = uniqueFromPlayers
+                .filter(value => !existingValues.has(value))
+                .map(value => ({
+                    club: columnType === 'club' ? value : '',
+                    federation: columnType === 'federation' ? value : '',
+                }));
+            // Strip the single blank placeholder row if it's the only thing there
+            const base = prev.length === 1 && !prev[0].club && !prev[0].federation ? [] : prev;
+            return [...base, ...newRows];
+        });
+    };
+
+    const updateMappingRow = (index, field, value) => {
+        setMappingTableData(prev => {
+            const next = [...prev];
+            next[index] = { ...next[index], [field]: value };
+            return next;
+        });
+    };
+
+    const addMappingRow = () => {
+        setMappingTableData(prev => [...prev, { club: '', federation: '' }]);
+    };
+
+    const removeMappingRow = (index) => {
+        setMappingTableData(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const handleMappingPaste = (e, rowIdx, colKey) => {
+        const text = e.clipboardData.getData('text');
+        const rawRows = text.split(/\r?\n/);
+        while (rawRows.length && rawRows[rawRows.length - 1] === '') rawRows.pop();
+        // Only intercept multi-cell pastes
+        if (rawRows.length <= 1 && !(rawRows[0] ?? '').includes('\t')) return;
+        e.preventDefault();
+        const startColIdx = MAPPING_COLS.indexOf(colKey);
+        const pasteRows = rawRows.map(r => r.split('\t'));
+        setMappingTableData(prev => {
+            const next = [...prev];
+            const rowsNeeded = (rowIdx + pasteRows.length) - next.length;
+            for (let i = 0; i < rowsNeeded; i++) next.push({ club: '', federation: '' });
+            pasteRows.forEach((cells, ri) => {
+                const targetRow = rowIdx + ri;
+                const updated = { ...next[targetRow] };
+                cells.forEach((val, ci) => {
+                    const col = MAPPING_COLS[startColIdx + ci];
+                    if (col) updated[col] = val.trim();
+                });
+                next[targetRow] = updated;
+            });
+            return next;
+        });
+    };
+
+    const applyMappingToPlayers = async () => {
+        // Build a mapping lookup from club/fed pairs to both values
+        // This allows us to fill in missing values based on known pairs
+        const clubFedMap = new Map();
+
+        mappingTableData.forEach(row => {
+            const key = `${row.club || ''}|${row.federation || ''}`;
+            if (row.club || row.federation) {
+                clubFedMap.set(key, { club: row.club, federation: row.federation });
+            }
+        });
+
+        // Also create reverse lookups
+        const clubToFed = new Map();
+        const fedToClub = new Map();
+
+        mappingTableData.forEach(row => {
+            if (row.club && row.federation) {
+                clubToFed.set(row.club, row.federation);
+                fedToClub.set(row.federation, row.club);
+            }
+        });
+
+        // Apply mapping to players respecting the chosen direction and overwrite setting
+        setPlayersWithHistory(prev => {
+            const next = [...prev];
+            next.forEach(p => {
+                if (mappingDirection === 'club_to_fed' && p.club && clubToFed.has(p.club)) {
+                    if (mappingOverwrite || !p.federation) p.federation = clubToFed.get(p.club);
+                }
+                if (mappingDirection === 'fed_to_club' && p.federation && fedToClub.has(p.federation)) {
+                    if (mappingOverwrite || !p.club) p.club = fedToClub.get(p.federation);
+                }
+            });
+            return next;
+        });
+
+        // Save the mapping table
+        const mappingData = {};
+        mappingTableData.forEach(row => {
+            if (row.club && row.federation) {
+                mappingData[row.club] = { federation: row.federation };
+                mappingData[row.federation] = { club: row.club };
+            }
+        });
+        await saveClubFedMapping(mappingData);
+
+        setShowMappingModal(false);
+    };
+
     const applyAction = () => {
         if (selectedAction === 'fill_down' && actionField) {
-            setPlayers(prev => {
+            setPlayersWithHistory(prev => {
+                // Get the set of visible player IDs for filtering
+                const visibleIds = new Set(visiblePlayers.map(p => p.playerUniqueId));
+
                 let lastValue = '';
                 return prev.map(p => {
+                    // Only apply action to visible players
+                    if (!visibleIds.has(p.playerUniqueId)) {
+                        return p;
+                    }
+
                     const val = p[actionField];
                     if (val === '' || val === null || val === undefined) {
                         return { ...p, [actionField]: lastValue };
@@ -466,11 +760,41 @@ export default function PlayersTab() {
                     return p;
                 });
             });
+        } else if (selectedAction === 'auto_fill_rating') {
+            const start = parseInt(document.getElementById('rating_start')?.value, 10) || 1000;
+            const step = parseInt(document.getElementById('rating_step')?.value, 10) || 10;
+            setPlayersWithHistory(prev => {
+                const next = [...prev];
+                for (let i = 0; i < next.length; i++) {
+                    const p = next[i];
+                    const hasRating = p.rating !== '' && p.rating !== null && p.rating !== undefined;
+                    if (overwriteRating || !hasRating) {
+                        p.rating = start + Math.floor(i * step);
+                    }
+                }
+                return next;
+            });
+        } else if (selectedAction === 'auto_fill_group_gender') {
+            setPlayersWithHistory(prev => {
+                const next = [...prev];
+                for (let i = 0; i < next.length; i++) {
+                    const p = next[i];
+                    if (p.gender) {
+                        const hasGroup = p.group !== '' && p.group !== null && p.group !== undefined;
+                        if (overwriteGroup || !hasGroup) {
+                            p.group = ["nam", "m", "male"].includes((p.gender.toLowerCase())) ? 'm' : 'f';
+                        }
+                    }
+                }
+                return next;
+            });
+        } else if (selectedAction === 'auto_fill_club_fed_mapping') {
+            openMappingModal();
         }
     };
 
     const removePlayer = (id) => {
-        setPlayers(prev => prev.filter(p => p.playerUniqueId !== id));
+        setPlayersWithHistory(prev => prev.filter(p => p.playerUniqueId !== id));
     };
 
     const handleDragEnd = (event) => {
@@ -482,10 +806,10 @@ export default function PlayersTab() {
 
         if (activeIdx === -1 || overIdx === -1) return;
 
-        setPlayers(prev => arrayMove(prev, activeIdx, overIdx));
+        setPlayersWithHistory(prev => arrayMove(prev, activeIdx, overIdx));
     };
 
-    const handleClearAll = () => setPlayers([]);
+    const handleClearAll = () => setPlayersWithHistory([]);
 
     // ── Export handlers ───────────────────────────────────────────────────────
     const exportExcel = () => {
@@ -534,15 +858,15 @@ export default function PlayersTab() {
                 `PlayerUniqueId="${e(p.playerUniqueId)}"`,
                 `Lastname="${e(lastname)}"`,
                 `Firstname="${e(rest.join(' '))}"`,
-                p.rating       && `Rtg="${e(p.rating)}"`,
-                p.title        && `Title="${e(p.title)}"`,
-                p.federation   && `Federation="${e(p.federation)}"`,
-                p.fideId       && `FideId="${e(p.fideId)}"`,
-                p.club         && `Club="${e(p.club)}"`,
-                p.gender       && `Sex="${e(p.gender)}"`,
-                p.group        && `Group="${e(p.group)}"`,
+                p.rating && `Rtg="${e(p.rating)}"`,
+                p.title && `Title="${e(p.title)}"`,
+                p.federation && `Federation="${e(p.federation)}"`,
+                p.fideId && `FideId="${e(p.fideId)}"`,
+                p.club && `Club="${e(p.club)}"`,
+                p.gender && `Sex="${e(p.gender)}"`,
+                p.group && `Group="${e(p.group)}"`,
                 p.teamUniqueId && `TeamUniqueId="${e(p.teamUniqueId)}"`,
-                p.type         && `Type="${e(p.type)}"`,
+                p.type && `Type="${e(p.type)}"`,
             ].filter(Boolean).join(' ');
             return `\t<Player ${attrs}/>`;
         });
@@ -600,9 +924,9 @@ export default function PlayersTab() {
         if (!rawData) { resetImportState(); return; }
         if (mode === 'replace') {
             let id = 1;
-            setPlayers(applyMapping(rawData.rows, columnMap, () => id++));
+            setPlayersWithHistory(applyMapping(rawData.rows, columnMap, () => id++));
         } else {
-            setPlayers(prev => {
+            setPlayersWithHistory(prev => {
                 let id = prev.length + 1;
                 return [...prev, ...applyMapping(rawData.rows, columnMap, () => id++)];
             });
@@ -612,7 +936,7 @@ export default function PlayersTab() {
 
     // ── Settings ──────────────────────────────────────────────────────────────
     const [settings, setSettings] = useState({
-        warnDuplicateName:     true,
+        warnDuplicateName: true,
         warnVietnameseNoAccent: true,
     });
 
@@ -664,37 +988,152 @@ export default function PlayersTab() {
         return () => { isActive = false; };
     }, []);
 
-     useEffect(() => {
-         if (!hasLoadedRef.current) return;
-         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-         if (saveIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveIdleRef.current);
-         saveTimeoutRef.current = setTimeout(() => {
-             if (window.requestIdleCallback) {
-                 saveIdleRef.current = window.requestIdleCallback(() => savePlayers(players), { timeout: 1000 });
-             } else {
-                 // Fire save without awaiting - it's fire-and-forget now
-                 savePlayers(players);
-             }
-         }, 300);
-         return () => {
-             if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-             if (saveIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveIdleRef.current);
-             if (saveIdleRef.current && !window.cancelIdleCallback) clearTimeout(saveIdleRef.current);
-         };
-     }, [players]);
+    useEffect(() => {
+        if (!hasLoadedRef.current) return;
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        if (saveIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveIdleRef.current);
+        saveTimeoutRef.current = setTimeout(() => {
+            if (window.requestIdleCallback) {
+                saveIdleRef.current = window.requestIdleCallback(() => savePlayers(players), { timeout: 1000 });
+            } else {
+                // Fire save without awaiting - it's fire-and-forget now
+                savePlayers(players);
+            }
+        }, 300);
+        return () => {
+            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+            if (saveIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveIdleRef.current);
+            if (saveIdleRef.current && !window.cancelIdleCallback) clearTimeout(saveIdleRef.current);
+        };
+    }, [players]);
+
+    // Auto-save mapping table to IndexedDB whenever it changes (debounced)
+    useEffect(() => {
+        if (!showMappingModal) return;
+        if (mappingSaveTimeoutRef.current) clearTimeout(mappingSaveTimeoutRef.current);
+        mappingSaveTimeoutRef.current = setTimeout(() => {
+            const mappingData = {};
+            mappingTableData.forEach(row => {
+                if (row.club && row.federation) {
+                    mappingData[row.club] = { federation: row.federation };
+                    mappingData[row.federation] = { club: row.club };
+                }
+            });
+            saveClubFedMapping(mappingData);
+        }, 500);
+        return () => {
+            if (mappingSaveTimeoutRef.current) clearTimeout(mappingSaveTimeoutRef.current);
+        };
+    }, [mappingTableData, showMappingModal]);
+
+    // ── Mapping duplicates ────────────────────────────────────────────────────
+    // A row is a duplicate if its non-empty club or federation value appears in another row.
+    const mappingDuplicates = useMemo(() => {
+        const clubCounts = {};
+        const fedCounts = {};
+        mappingTableData.forEach(row => {
+            if (row.club) clubCounts[row.club] = (clubCounts[row.club] || 0) + 1;
+            if (row.federation) fedCounts[row.federation] = (fedCounts[row.federation] || 0) + 1;
+        });
+        const dupes = new Set();
+        mappingTableData.forEach((row, i) => {
+            if ((row.club && clubCounts[row.club] > 1) || (row.federation && fedCounts[row.federation] > 1)) {
+                dupes.add(i);
+            }
+        });
+        return dupes;
+    }, [mappingTableData]);
+
+    // ── Column actions ───────────────────────────────────────────────────────
+    const clearColumn = (colKey) => {
+        setPlayersWithHistory(prev => prev.map(p => ({ ...p, [colKey]: '' })));
+    };
+
+    const applyColumnTemplate = (colKey, template) => {
+        try {
+            // Create a function that evaluates the template string for each player
+            // Using Function constructor with player object destructuring for safe evaluation
+            const evalTemplate = new Function('player', `
+                const { playerUniqueId, name, gender, group, rating, title, federation, fideId, club, teamUniqueId, type } = player;
+                return \`${template}\`;
+            `);
+
+            let errorCount = 0;
+            let firstError = null;
+
+            setPlayersWithHistory(prev => prev.map(p => {
+                try {
+                    const value = evalTemplate(p);
+                    return { ...p, [colKey]: value || '' };
+                } catch (e) {
+                    errorCount++;
+                    if (!firstError) firstError = e;
+                    return p;
+                }
+            }));
+
+            if (errorCount > 0) {
+                setToastType('error');
+                const errorMsg = firstError?.message || 'Unknown error';
+                setToastMessage(`Template error: ${errorMsg}`);
+                setTimeout(() => {
+                    setToastMessage('');
+                    setToastType('');
+                }, 5000);
+                return false;
+            }
+            return true;
+        } catch (e) {
+            setToastType('error');
+            const errorMsg = e?.message || 'Invalid template format';
+            setToastMessage(`${errorMsg}. Example: \${name}_\${club}`);
+            setTimeout(() => {
+                setToastMessage('');
+                setToastType('');
+            }, 5000);
+            return false;
+        }
+    };
 
     // ── Render ────────────────────────────────────────────────────────────────
     return (
         <div className="space-y-3">
+            {/* Toast notifications */}
+            {toastMessage && (
+                <Portal>
+                    <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg flex items-start gap-2 ${toastType === 'error' ? 'bg-error-500' : 'bg-success-500'} text-white max-w-md`}>
+                        {toastType === 'error' && <AlertTriangle size={16} className="shrink-0 mt-0.5" />}
+                        <span className="text-sm wrap-break-word">{toastMessage}</span>
+                    </div>
+                </Portal>
+            )}
             {/* Toolbar */}
-            <div className="flex justify-between items-center">
-                <div className="flex items-center gap-3">
+            <div className="flex justify-between items-center gap-3">
+                <div className="flex items-center gap-3 border border-surface-200-800 rounded-lg px-3 py-2.5 bg-surface-50-950">
                     <span className="text-sm text-surface-600-400">
                         {hasActiveFilter ? `${visiblePlayers.length} of ${players.length}` : players.length} players
                     </span>
+                    <button
+                        className="p-1 rounded preset-tonal transition-opacity disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                        title="Undo (Ctrl+Z)"
+                        disabled={!mounted || pastRef.current.length === 0}
+                        onClick={undo}
+                        aria-label="Undo"
+                    >
+                        <Undo2 size={14} />
+                    </button>
+                    <button
+                        className="p-1 rounded preset-tonal transition-opacity disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                        title="Redo (Ctrl+Y)"
+                        disabled={!mounted || futureRef.current.length === 0}
+                        onClick={redo}
+                        aria-label="Redo"
+                    >
+                        <Redo2 size={14} />
+                    </button>
                     {players.length > 0 && (
                         <Dialog>
-                            <Dialog.Trigger className="flex items-center gap-1.5 text-sm px-2.5 py-1 rounded text-error-500-400 hover:bg-error-500/10 transition-colors cursor-pointer">
+                            <Dialog.Trigger className="flex items-center gap-1.5 text-sm px-2.5 py-1 preset-tonal rounded text-error-500-400 hover:bg-error-500/10 transition-colors cursor-pointer">
                                 <Trash size={13} />
                                 Clear All
                             </Dialog.Trigger>
@@ -727,18 +1166,13 @@ export default function PlayersTab() {
                             <select
                                 className="text-sm bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 outline-none cursor-pointer"
                                 value={selectedAction}
-                                onChange={e => { setSelectedAction(e.target.value); setActionField(''); }}
+                                onChange={e => { setSelectedAction(e.target.value); setActionField(''); setOverwriteRating(false); setOverwriteGroup(false); }}
                             >
                                 <option value="">Actions...</option>
                                 <option value="fill_down">Fill Downward</option>
-                                {/*
-                                TODO: + add more action
-                                 - auto fill rating in order (user input: start rating, step, direction, players to fill)
-                                 - auto fill group base on gender
-                                 - auto fill club and fed using a mapping table
-                                 - auto fill team id using fed or club
-                                 + make action apply to what shown (filtered) instead of all players
-                                    */}
+                                <option value="auto_fill_rating">Auto Fill Rating</option>
+                                <option value="auto_fill_group_gender">Fill Group by Gender</option>
+                                <option value="auto_fill_club_fed_mapping">Map Club/Fed</option>
                             </select>
                             {selectedAction === 'fill_down' && (
                                 <select
@@ -752,11 +1186,55 @@ export default function PlayersTab() {
                                     ))}
                                 </select>
                             )}
+                            {selectedAction === 'auto_fill_rating' && (
+                                <div className="flex gap-1.5 items-center">
+                                    <input type="number" placeholder="Start" className="text-sm w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 outline-none" id="rating_start" defaultValue="1000" />
+                                    <input type="number" placeholder="Step" className="text-sm w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 outline-none" id="rating_step" defaultValue="10" />
+                                    <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={overwriteRating}
+                                            onChange={e => setOverwriteRating(e.target.checked)}
+                                            className="cursor-pointer"
+                                        />
+                                        <span>Overwrite</span>
+                                    </label>
+                                </div>
+                            )}
+                            {selectedAction === 'auto_fill_group_gender' && (
+                                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={overwriteGroup}
+                                        onChange={e => setOverwriteGroup(e.target.checked)}
+                                        className="cursor-pointer"
+                                    />
+                                    <span>Overwrite</span>
+                                </label>
+                            )}
+                            {selectedAction === 'auto_fill_club_fed_mapping' && (
+                                <button
+                                    className="text-sm px-2.5 py-1 rounded preset-tonal cursor-pointer"
+                                    onClick={openMappingModal}
+                                >
+                                    Configure Mapping
+                                </button>
+                            )}
+                            {selectedAction === 'auto_fill_team_id' && (
+                                <select
+                                    className="text-sm bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 outline-none cursor-pointer"
+                                    id="target_team_field"
+                                    defaultValue="club"
+                                >
+                                    <option value="club">From Club</option>
+                                    <option value="fed">From Fed</option>
+                                </select>
+                            )}
                             {selectedAction && (
                                 <button
                                     className="text-sm px-2.5 py-1 rounded preset-tonal cursor-pointer disabled:opacity-40"
                                     onClick={applyAction}
-                                    disabled={!actionField}
+                                    disabled={selectedAction === 'fill_down' && !actionField}
                                 >
                                     Apply
                                 </button>
@@ -981,6 +1459,20 @@ export default function PlayersTab() {
             {/* Filters */}
             {players.length > 0 && FILTER_FIELDS.some(({ key }) => uniqueValues(key).length > 0) && (
                 <div className={`flex flex-wrap gap-x-4 gap-y-2 items-center px-3 py-2.5 border rounded-lg transition-colors ${hasActiveFilter ? "bg-primary-500/10 border-primary-500/30" : "bg-surface-50-950 border-surface-200-800"}`}>
+                    {hasActiveFilter ? (
+                        <button
+                            className="flex items-center gap-1.5 text-sm text-error-500-400 hover:text-error-600-300 transition-colors font-medium shrink-0"
+                            onClick={() => setFilters(EMPTY_FILTERS)}
+                        >
+                            <X size={16} />
+                            Clear filter
+                        </button>
+                    ) : (
+                        <div className="flex items-center gap-1.5 text-sm text-surface-600-400 shrink-0">
+                            <Filter size={16} />
+                            <span>Filter</span>
+                        </div>
+                    )}
                     {FILTER_FIELDS.map(({ key, label }) => {
                         const options = uniqueValues(key);
                         if (!options.length) return null;
@@ -998,14 +1490,6 @@ export default function PlayersTab() {
                             </div>
                         );
                     })}
-                    {hasActiveFilter && (
-                        <button
-                            className="ml-auto text-xs text-surface-500-400 hover:text-surface-900-100 transition-colors"
-                            onClick={() => setFilters(EMPTY_FILTERS)}
-                        >
-                            Clear filters
-                        </button>
-                    )}
                 </div>
             )}
 
@@ -1025,12 +1509,106 @@ export default function PlayersTab() {
                                 <tr>
                                     <th className="w-8" />
                                     {COLUMNS.map(col => (
-                                        <th
-                                            key={col.key}
-                                            className={`px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400 ${col.className}`}
-                                        >
-                                            {col.label}
-                                        </th>
+                                        col.editable ? (
+                                            <th
+                                                key={col.key}
+                                                className={`px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400 ${col.className}`}
+                                            >
+                                                <Menu onSelect={({ value }) => {
+                                                    if (value === 'clear_all') clearColumn(col.key);
+                                                    else if (value?.startsWith('template_')) {
+                                                        const template = value.replace('template_', '');
+                                                        applyColumnTemplate(col.key, template);
+                                                    }
+                                                }}>
+                                                    <Menu.ContextTrigger element={(attrs) => (
+                                                        <span {...attrs} className="cursor-context-menu select-none">
+                                                            {col.label}
+                                                        </span>
+                                                    )} />
+                                                    <Portal>
+                                                        <Menu.Positioner>
+                                                            <Menu.Content className="card p-1 preset-filled-surface-100-900 shadow-lg w-56">
+                                                                <Menu.Item value="clear_all" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-error">
+                                                                    <Menu.ItemText>Clear all values</Menu.ItemText>
+                                                                </Menu.Item>
+                                                                <Menu.Separator className="my-1 border-surface-200-800" />
+                                                                <div className="px-2 py-1 text-xs uppercase tracking-wider text-surface-600-400 font-semibold">Template presets</div>
+                                                                {col.key === 'teamUniqueId' && (
+                                                                    <>
+                                                                        <Menu.Item value="template_${club}" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                                            <Menu.ItemText className="font-mono text-xs">${'{club}'}</Menu.ItemText>
+                                                                        </Menu.Item>
+                                                                        <Menu.Item value="template_${federation}" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                                            <Menu.ItemText className="font-mono text-xs">${'{federation}'}</Menu.ItemText>
+                                                                        </Menu.Item>
+                                                                        <Menu.Item value="template_${club}_${name}" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                                            <Menu.ItemText className="font-mono text-xs">${'{club}_${name}'}</Menu.ItemText>
+                                                                        </Menu.Item>
+                                                                    </>
+                                                                )}
+                                                                {col.key === 'type' && (
+                                                                    <>
+                                                                        <Menu.Item value="template_OTB" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                                            <Menu.ItemText>OTB</Menu.ItemText>
+                                                                        </Menu.Item>
+                                                                        <Menu.Item value="template_Online" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                                            <Menu.ItemText>Online</Menu.ItemText>
+                                                                        </Menu.Item>
+                                                                    </>
+                                                                )}
+                                                                {col.key === 'group' && (
+                                                                    <>
+                                                                        <Menu.Item value="template_A" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                                            <Menu.ItemText>Group A</Menu.ItemText>
+                                                                        </Menu.Item>
+                                                                        <Menu.Item value="template_B" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                                            <Menu.ItemText>Group B</Menu.ItemText>
+                                                                        </Menu.Item>
+                                                                    </>
+                                                                )}
+                                                                <Menu.Separator className="my-1 border-surface-200-800" />
+                                                                <div className="px-3 py-2 space-y-2">
+                                                                    <div className="text-xs uppercase tracking-wider text-surface-600-400 font-semibold">Custom template</div>
+                                                                    <input
+                                                                        type="text"
+                                                                        placeholder="e.g. ${name}_${club}"
+                                                                        className="w-full text-xs bg-surface-50-950 border border-surface-200-800 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-primary-500"
+                                                                        id={`template_input_${col.key}`}
+                                                                        onKeyDown={(e) => {
+                                                                            e.stopPropagation();
+                                                                            if (e.key === 'Enter') {
+                                                                                const val = e.currentTarget.value.trim();
+                                                                                if (val) {
+                                                                                    const success = applyColumnTemplate(col.key, val);
+                                                                                    if (success) {
+                                                                                        e.currentTarget.value = '';
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }}
+                                                                        onKeyUp={(e) => {
+                                                                            e.stopPropagation();
+                                                                        }}
+                                                                    />
+                                                                    <p className="text-xs text-surface-600-400 leading-tight wrap-break-word">
+                                                                        Use ${'{'}{'{'}fieldName{'}'}{'}'}.{'\n'}
+                                                                        Available: name, gender, group, rating, title, federation, club, fideId, teamUniqueId, type
+                                                                    </p>
+                                                                </div>
+                                                            </Menu.Content>
+                                                        </Menu.Positioner>
+                                                    </Portal>
+                                                </Menu>
+                                            </th>
+                                        ) : (
+                                            <th
+                                                key={col.key}
+                                                className={`px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400 ${col.className}`}
+                                            >
+                                                {col.label}
+                                            </th>
+                                        )
                                     ))}
                                     <th className="w-6" />
                                     <th className="w-10" />
@@ -1092,8 +1670,8 @@ export default function PlayersTab() {
                         </Menu>
 
                         <button
-                            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-not-allowed opacity-50"
-                            disabled
+                            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer"
+                            onClick={() => setShowCardModal(true)}
                         >
                             <CreditCard size={14} />
                             Generate Player Card
@@ -1105,6 +1683,149 @@ export default function PlayersTab() {
                         Start Pairing
                     </button>
                 </div>
+            )}
+
+            {/* Generate Player Card Modal */}
+            <GeneratePlayerCardModal
+                open={showCardModal}
+                onClose={() => setShowCardModal(false)}
+                players={players}
+            />
+
+            {/* Club/Fed Mapping Modal */}
+            {showMappingModal && (
+                <Portal>
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={() => setShowMappingModal(false)} />
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <div className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-2xl space-y-4 shadow-xl max-h-[90vh] flex flex-col">
+                            <div>
+                                <h2 className="text-base font-semibold">Club & Federation Mapping</h2>
+                                <p className="text-sm text-surface-600-400 mt-1">
+                                    Set up the relationship between clubs and federations. Populate one column from your data, then fill the other manually. Click Map to apply.
+                                </p>
+                            </div>
+
+                            <div className="flex gap-2">
+                                <button
+                                    className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer"
+                                    onClick={() => populateColumnFromPlayers('club')}
+                                    title="Fill Club column with unique values from players"
+                                >
+                                    <Plus size={14} />
+                                    Fill Club from Data
+                                </button>
+                                <button
+                                    className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer"
+                                    onClick={() => populateColumnFromPlayers('federation')}
+                                    title="Fill Federation column with unique values from players"
+                                >
+                                    <Plus size={14} />
+                                    Fill Federation from Data
+                                </button>
+                                <button
+                                    className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer ml-auto"
+                                    onClick={addMappingRow}
+                                    title="Add a new row for manual entry"
+                                >
+                                    <Plus size={14} />
+                                    Add Row
+                                </button>
+                            </div>
+
+                            <div className="overflow-y-auto flex-1 border border-surface-200-800 rounded-lg">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-surface-50-950 border-b border-surface-200-800 sticky top-0">
+                                        <tr>
+                                            <th className="px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400 flex-1">Club</th>
+                                            <th className="px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400 flex-1">Federation</th>
+                                            <th className="px-3 py-2.5 text-center text-xs font-medium uppercase tracking-wider text-surface-600-400 w-12">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {mappingTableData.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="3" className="px-3 py-4 text-center text-surface-600-400">
+                                                    Click "Fill Club from Data" or "Fill Federation from Data" to start
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            mappingTableData.map((row, idx) => (
+                                                <MappingRow
+                                                    key={idx}
+                                                    row={row}
+                                                    idx={idx}
+                                                    onUpdate={updateMappingRow}
+                                                    onRemove={removeMappingRow}
+                                                    onPaste={handleMappingPaste}
+                                                    isDuplicate={mappingDuplicates.has(idx)}
+                                                />
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                                {mappingDuplicates.size > 0 && (
+                                    <div className="flex items-center gap-2 px-3 py-2 bg-warning-500/10 border border-warning-500/30 rounded-lg text-sm text-warning-600-400">
+                                        <AlertTriangle size={14} className="shrink-0" />
+                                        {mappingDuplicates.size} row{mappingDuplicates.size !== 1 ? 's' : ''} with duplicate values — resolve before applying.
+                                    </div>
+                                )}
+                                <div className="flex items-center justify-between gap-2">
+                                    {/* Direction toggle */}
+                                    <div className="flex items-center gap-1 text-xs">
+                                        <span className="text-surface-600-400 mr-1 shrink-0">Apply:</span>
+                                        {[
+                                            { value: 'club_to_fed', label: 'Club → Fed' },
+                                            { value: 'fed_to_club', label: 'Fed → Club' },
+                                        ].map(opt => (
+                                            <button
+                                                key={opt.value}
+                                                className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${mappingDirection === opt.value
+                                                        ? 'preset-filled'
+                                                        : 'preset-tonal opacity-60 hover:opacity-100'
+                                                    }`}
+                                                onClick={() => setMappingDirection(opt.value)}
+                                            >
+                                                {opt.label}
+                                            </button>
+                                        ))}
+                                        <label className="flex items-center gap-1.5 ml-3 cursor-pointer text-surface-600-400 hover:text-surface-900-100 transition-colors select-none">
+                                            <input
+                                                type="checkbox"
+                                                checked={mappingOverwrite}
+                                                onChange={e => setMappingOverwrite(e.target.checked)}
+                                                className="cursor-pointer accent-primary-500"
+                                            />
+                                            Overwrite
+                                        </label>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            className="px-4 py-1.5 text-sm rounded preset-tonal cursor-pointer"
+                                            onClick={() => setShowMappingModal(false)}
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            className="px-4 py-1.5 text-sm rounded preset-filled cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                                            onClick={applyMappingToPlayers}
+                                            disabled={
+                                                mappingTableData.length === 0 ||
+                                                !mappingTableData.some(row => row.club || row.federation) ||
+                                                mappingDuplicates.size > 0
+                                            }
+                                        >
+                                            <Play size={14} />
+                                            Map
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </Portal>
             )}
         </div>
     );
