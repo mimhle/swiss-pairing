@@ -53,6 +53,7 @@ export function TournamentProvider({ children }) {
     };
 
     const renameTournament = (id, newName) => {
+        if (id === 'default') return; // Cannot rename default tournament
         setTournaments(prev => prev.map(t => t.id === id ? { ...t, name: newName } : t));
     };
 
@@ -68,6 +69,7 @@ export function TournamentProvider({ children }) {
     };
 
     const deleteTournament = async (id) => {
+        if (id === 'default') return; // Cannot delete default tournament
         if (tournaments.length <= 1) return; // Cannot delete last tournament
         
         // Await IndexedDB cleanup

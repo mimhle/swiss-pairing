@@ -285,7 +285,7 @@ const MappingRow = memo(({ row, idx, onUpdate, onRemove, onPaste, isDuplicate })
             <td className="px-3 py-2 text-center">
                 <div className="flex items-center justify-center gap-1">
                     {isDuplicate && (
-                        <span className="text-warning-500" title="Duplicate value — resolve before applying">
+                        <span className="text-warning-500 inline-flex" title="Duplicate value — resolve before applying">
                             <AlertTriangle size={13} />
                         </span>
                     )}
@@ -441,7 +441,7 @@ const MAX_HISTORY = 100;
 
 export default function PlayersTab() {
     const { activeTournamentId, isLoaded: isTournamentLoaded } = useTournament();
-    
+
     const [players, setPlayers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [toastMessage, setToastMessage] = useState('');
@@ -983,13 +983,22 @@ export default function PlayersTab() {
         ? players.filter(p => FILTER_FIELDS.every(({ key }) => !filters[key] || p[key] === filters[key]))
         : players;
 
+    const groupCounts = useMemo(() => {
+        const counts = {};
+        visiblePlayers.forEach(p => {
+            const g = p.group?.trim() || 'Unassigned';
+            counts[g] = (counts[g] || 0) + 1;
+        });
+        return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
+    }, [visiblePlayers]);
+
     useEffect(() => {
         if (!isTournamentLoaded || !activeTournamentId) return;
-        
+
         let isActive = true;
         hasLoadedRef.current = false;
         setIsLoading(true);
-        
+
         loadPlayers(activeTournamentId).then(saved => {
             if (!isActive) return;
             const normalized = normalizePlayers(saved);
@@ -1154,9 +1163,6 @@ export default function PlayersTab() {
             {/* Toolbar */}
             <div className="flex justify-between items-center gap-3">
                 <div className="flex items-center gap-3 border border-surface-200-800 rounded-lg px-3 py-2.5 bg-surface-50-950">
-                    <span className="text-sm text-surface-600-400">
-                        {hasActiveFilter ? `${visiblePlayers.length} of ${players.length}` : players.length} players
-                    </span>
                     <button
                         className="p-1 rounded preset-tonal transition-opacity disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
                         title="Undo (Ctrl+Z)"
@@ -1182,12 +1188,12 @@ export default function PlayersTab() {
                                 Clear All
                             </Dialog.Trigger>
                             <Portal>
-                                <Dialog.Backdrop className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" />
-                                <Dialog.Positioner className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                                <Dialog.Backdrop className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100]" />
+                                <Dialog.Positioner className="fixed inset-0 z-[110] flex items-center justify-center p-4">
                                     <Dialog.Content className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-sm space-y-4 shadow-xl">
                                         <Dialog.Title className="text-base font-semibold">Clear all players?</Dialog.Title>
                                         <Dialog.Description className="text-sm text-surface-600-400">
-                                            This will permanently remove all {players.length} players from the list.
+                                            This will remove all {players.length} players from the list.
                                         </Dialog.Description>
                                         <div className="flex justify-end gap-2">
                                             <Dialog.CloseTrigger className="px-4 py-1.5 text-sm rounded preset-tonal cursor-pointer">
@@ -1500,40 +1506,72 @@ export default function PlayersTab() {
                 </div>
             )}
 
-            {/* Filters */}
-            {players.length > 0 && FILTER_FIELDS.some(({ key }) => uniqueValues(key).length > 0) && (
+            {/* Filters & Total */}
+            {players.length > 0 && (
                 <div className={`flex flex-wrap gap-x-4 gap-y-2 items-center px-3 py-2.5 border rounded-lg transition-colors ${hasActiveFilter ? "bg-primary-500/10 border-primary-500/30" : "bg-surface-50-950 border-surface-200-800"}`}>
-                    {hasActiveFilter ? (
-                        <button
-                            className="flex items-center gap-1.5 text-sm text-error-500-400 hover:text-error-600-300 transition-colors font-medium shrink-0"
-                            onClick={() => setFilters(EMPTY_FILTERS)}
-                        >
-                            <X size={16} />
-                            Clear filter
-                        </button>
-                    ) : (
-                        <div className="flex items-center gap-1.5 text-sm text-surface-600-400 shrink-0">
-                            <Filter size={16} />
-                            <span>Filter</span>
-                        </div>
-                    )}
-                    {FILTER_FIELDS.map(({ key, label }) => {
-                        const options = uniqueValues(key);
-                        if (!options.length) return null;
-                        return (
-                            <div key={key} className="flex items-center gap-1.5">
-                                <span className="text-xs text-surface-600-400 shrink-0">{label}</span>
-                                <select
-                                    className="text-sm bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 outline-none cursor-pointer"
-                                    value={filters[key]}
-                                    onChange={e => setFilters(prev => ({ ...prev, [key]: e.target.value }))}
+                    <Menu>
+                        <Menu.Trigger className="flex items-center gap-1.5 text-sm text-surface-600-400 hover:text-surface-900-100 transition-colors cursor-pointer px-1 py-0.5 rounded outline-none hover:bg-surface-200-800/50">
+                            {hasActiveFilter ? <span className="font-medium text-primary-600-400">{visiblePlayers.length} of {players.length}</span> : <span className="font-medium">{players.length}</span>}
+                            <span>players</span>
+                            <ChevronDown size={14} className="opacity-50" />
+                        </Menu.Trigger>
+                        <Portal>
+                            <Menu.Positioner>
+                                <Menu.Content className="card p-2 preset-filled-surface-100-900 shadow-lg min-w-48 text-sm outline-none z-50">
+                                    <div className="font-semibold px-2 py-1 border-b border-surface-200-800 mb-1 text-xs uppercase tracking-wider text-surface-600-400">
+                                        Group Summary
+                                    </div>
+                                    <div className="max-h-64 overflow-y-auto">
+                                        {groupCounts.length > 0 ? groupCounts.map(([g, c]) => (
+                                            <div key={g} className="flex justify-between items-center px-2 py-1.5 hover:bg-surface-200-800/50 rounded">
+                                                <span>{g}</span>
+                                                <span className="font-medium">{c}</span>
+                                            </div>
+                                        )) : (
+                                            <div className="px-2 py-1.5 text-surface-600-400 italic">No groups found</div>
+                                        )}
+                                    </div>
+                                </Menu.Content>
+                            </Menu.Positioner>
+                        </Portal>
+                    </Menu>
+
+                    {FILTER_FIELDS.some(({ key }) => uniqueValues(key).length > 0) && (
+                        <>
+                            <div className="w-px h-6 bg-surface-200-800" />
+                            {hasActiveFilter ? (
+                                <button
+                                    className="flex items-center gap-1.5 text-sm text-error-500-400 hover:text-error-600-300 transition-colors font-medium shrink-0"
+                                    onClick={() => setFilters(EMPTY_FILTERS)}
                                 >
-                                    <option value="">All</option>
-                                    {options.map(v => <option key={v} value={v}>{v}</option>)}
-                                </select>
-                            </div>
-                        );
-                    })}
+                                    <X size={16} />
+                                    Clear filter
+                                </button>
+                            ) : (
+                                <div className="flex items-center gap-1.5 text-sm text-surface-600-400 shrink-0">
+                                    <Filter size={16} />
+                                    <span>Filter</span>
+                                </div>
+                            )}
+                            {FILTER_FIELDS.map(({ key, label }) => {
+                                const options = uniqueValues(key);
+                                if (!options.length) return null;
+                                return (
+                                    <div key={key} className="flex items-center gap-1.5">
+                                        <span className="text-xs text-surface-600-400 shrink-0">{label}</span>
+                                        <select
+                                            className="text-sm bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 outline-none cursor-pointer"
+                                            value={filters[key]}
+                                            onChange={e => setFilters(prev => ({ ...prev, [key]: e.target.value }))}
+                                        >
+                                            <option value="">All</option>
+                                            {options.map(v => <option key={v} value={v}>{v}</option>)}
+                                        </select>
+                                    </div>
+                                );
+                            })}
+                        </>
+                    )}
                 </div>
             )}
 
@@ -1740,8 +1778,8 @@ export default function PlayersTab() {
             {showMappingModal && (
                 <Portal>
                     <ScrollLock />
-                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={() => setShowMappingModal(false)} />
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100]" onClick={() => setShowMappingModal(false)} />
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
                         <div className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-2xl space-y-4 shadow-xl max-h-[90vh] flex flex-col">
                             <div>
                                 <h2 className="text-base font-semibold">Club & Federation Mapping</h2>

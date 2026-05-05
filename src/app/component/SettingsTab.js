@@ -1,16 +1,27 @@
 "use client";
 
+import { useState } from "react";
 import { useTournament } from "@/app/context/TournamentContext";
 import { exportAllData, importAllData, clearAllData } from "@/app/component/indexedDbPlayers";
 import { Download, Upload, AlertTriangle, Trash2 } from 'lucide-react';
+import ConfirmationModal from "./ConfirmationModal";
 
 export default function SettingsTab() {
     const { tournaments } = useTournament();
+    const [modal, setModal] = useState({ open: false, title: '', description: '', onConfirm: null, isAlert: false, variant: 'primary', confirmText: 'Confirm' });
+
+    const showAlert = (title, description) => {
+        setModal({ open: true, title, description, onConfirm: () => setModal(prev => ({ ...prev, open: false })), isAlert: true, variant: 'primary', confirmText: 'OK' });
+    };
+
+    const showConfirm = (title, description, onConfirm, variant = 'primary', confirmText = 'Confirm') => {
+        setModal({ open: true, title, description, onConfirm: () => { onConfirm(); setModal(prev => ({ ...prev, open: false })); }, isAlert: false, variant, confirmText });
+    };
 
     const handleExport = async () => {
         const idbData = await exportAllData();
         if (!idbData) {
-            alert("Failed to export database data.");
+            showAlert("Export Failed", "Failed to export database data.");
             return;
         }
 
@@ -44,34 +55,38 @@ export default function SettingsTab() {
             try {
                 const data = JSON.parse(event.target.result);
                 if (!data.version || !data.localStorage || !data.indexedDB) {
-                    alert("Invalid backup file format.");
+                    showAlert("Invalid Backup", "Invalid backup file format.");
                     return;
                 }
 
-                if (!confirm("Are you sure you want to restore this backup? This will OVERWRITE all current tournaments and data.")) {
-                    return;
-                }
+                showConfirm(
+                    "Restore Backup?", 
+                    "Are you sure you want to restore this backup? This will OVERWRITE all current tournaments and data.",
+                    async () => {
+                        // Restore localStorage
+                        if (data.localStorage.swiss_tournaments) {
+                            localStorage.setItem("swiss_tournaments", data.localStorage.swiss_tournaments);
+                        }
+                        if (data.localStorage.swiss_active_tournament) {
+                            localStorage.setItem("swiss_active_tournament", data.localStorage.swiss_active_tournament);
+                        }
 
-                // Restore localStorage
-                if (data.localStorage.swiss_tournaments) {
-                    localStorage.setItem("swiss_tournaments", data.localStorage.swiss_tournaments);
-                }
-                if (data.localStorage.swiss_active_tournament) {
-                    localStorage.setItem("swiss_active_tournament", data.localStorage.swiss_active_tournament);
-                }
-
-                // Restore IndexedDB
-                const success = await importAllData(data.indexedDB);
-                if (success) {
-                    alert("Backup restored successfully. The page will now reload.");
-                    window.location.reload();
-                } else {
-                    alert("Failed to restore some database data.");
-                }
+                        // Restore IndexedDB
+                        const success = await importAllData(data.indexedDB);
+                        if (success) {
+                            showAlert("Success", "Backup restored successfully. The page will now reload.");
+                            setTimeout(() => window.location.reload(), 1500);
+                        } else {
+                            showAlert("Restore Failed", "Failed to restore some database data.");
+                        }
+                    },
+                    'primary',
+                    'Restore'
+                );
 
             } catch (err) {
                 console.error("Import error:", err);
-                alert("Error reading the backup file.");
+                showAlert("Error", "Error reading the backup file.");
             }
         };
         reader.readAsText(file);
@@ -79,26 +94,34 @@ export default function SettingsTab() {
     };
 
     const handleDeleteAll = async () => {
-        if (!confirm("Are you ABSOLUTELY sure you want to delete all data? This will permanently remove all tournaments, players, mappings, and configuration. This action cannot be undone.")) {
-            return;
-        }
-        
-        if (!confirm("Please confirm again: Delete ALL data forever?")) {
-            return;
-        }
+        showConfirm(
+            "Delete All Data?",
+            "Are you ABSOLUTELY sure you want to delete all data? This will permanently remove all tournaments, players, mappings, and configuration. This action cannot be undone.",
+            () => {
+                showConfirm(
+                    "Final Confirmation",
+                    "Please confirm again: Delete ALL data forever?",
+                    async () => {
+                        // Clear localStorage
+                        localStorage.removeItem("swiss_tournaments");
+                        localStorage.removeItem("swiss_active_tournament");
 
-        // Clear localStorage
-        localStorage.removeItem("swiss_tournaments");
-        localStorage.removeItem("swiss_active_tournament");
-
-        // Clear IndexedDB
-        const success = await clearAllData();
-        if (success) {
-            alert("All data has been deleted. The page will now reload.");
-            window.location.reload();
-        } else {
-            alert("Failed to delete some database data.");
-        }
+                        // Clear IndexedDB
+                        const success = await clearAllData();
+                        if (success) {
+                            showAlert("Data Deleted", "All data has been deleted. The page will now reload.");
+                            setTimeout(() => window.location.reload(), 1500);
+                        } else {
+                            showAlert("Error", "Failed to delete some database data.");
+                        }
+                    },
+                    'error',
+                    'Delete Everything'
+                );
+            },
+            'error',
+            'Yes, Delete All'
+        );
     };
 
     return (
@@ -174,6 +197,17 @@ export default function SettingsTab() {
                     Delete All Data
                 </button>
             </div>
+
+            <ConfirmationModal 
+                open={modal.open}
+                onOpenChange={(open) => setModal(prev => ({ ...prev, open }))}
+                title={modal.title}
+                description={modal.description}
+                onConfirm={modal.onConfirm}
+                isAlert={modal.isAlert}
+                variant={modal.variant}
+                confirmText={modal.confirmText}
+            />
         </div>
     );
 }

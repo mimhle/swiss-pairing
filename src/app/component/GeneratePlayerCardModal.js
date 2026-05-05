@@ -5,13 +5,16 @@ import { Portal } from '@skeletonlabs/skeleton-react';
 import {
     ChevronDown,
     ChevronRight,
+    Copy,
     CreditCard,
     Download,
     FileDown,
     FileUp,
     Image,
+    Plus,
     Redo2,
     RefreshCw,
+    Trash2,
     Type,
     Undo2,
     X,
@@ -20,8 +23,93 @@ import { loadCardGenAsset, saveCardGenAsset } from './indexedDbPlayers';
 import JSZip from 'jszip';
 import ScrollLock from '@/app/component/ScrollLock';
 import { useTournament } from '@/app/context/TournamentContext';
+import ConfirmationModal from './ConfirmationModal';
 
 // ─── Shared rendering logic ───────────────────────────────────────────────────
+
+function crc32(data) {
+    let crc = -1;
+    const table = new Int32Array(256);
+    for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let j = 0; j < 8; j++) {
+            c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        table[i] = c;
+    }
+    for (let i = 0; i < data.length; i++) {
+        crc = (crc >>> 8) ^ table[(crc ^ data[i]) & 0xFF];
+    }
+    return (crc ^ -1) >>> 0;
+}
+
+async function injectPngDpi(blob, dpiX, dpiY) {
+    if (!dpiX || !dpiY) return blob;
+    const buffer = await blob.arrayBuffer();
+    const view = new DataView(buffer);
+
+    // Check PNG signature
+    if (view.getUint32(0) !== 0x89504E47 || view.getUint32(4) !== 0x0D0A1A0A) {
+        return blob;
+    }
+
+    const ppmX = Math.round(dpiX / 0.0254);
+    const ppmY = Math.round(dpiY / 0.0254);
+
+    // Prepare pHYs chunk
+    const physChunk = new Uint8Array(21);
+    const physView = new DataView(physChunk.buffer);
+    physView.setUint32(0, 9); // length
+    physChunk.set([112, 72, 89, 115], 4); // 'pHYs'
+    physView.setUint32(8, ppmX);
+    physView.setUint32(12, ppmY);
+    physView.setUint8(16, 1); // unit = meter
+
+    const crc = crc32(physChunk.subarray(4, 17));
+    physView.setUint32(17, crc);
+
+    // Insert pHYs chunk after IHDR
+    const ihdrLength = view.getUint32(8);
+    const insertAt = 8 + 4 + 4 + ihdrLength + 4;
+
+    const newBuffer = new Uint8Array(buffer.byteLength + 21);
+    newBuffer.set(new Uint8Array(buffer.slice(0, insertAt)), 0);
+    newBuffer.set(physChunk, insertAt);
+    newBuffer.set(new Uint8Array(buffer.slice(insertAt)), insertAt + 21);
+
+    return new Blob([newBuffer], { type: 'image/png' });
+}
+
+async function injectJpegDpi(blob, dpiX, dpiY) {
+    if (!dpiX || !dpiY) return blob;
+    const buffer = await blob.arrayBuffer();
+    const view = new DataView(buffer);
+
+    // Check JPEG signature (SOI)
+    if (view.getUint16(0) !== 0xFFD8) return blob;
+
+    let offset = 2;
+    while (offset < view.byteLength) {
+        const marker = view.getUint16(offset);
+        const length = view.getUint16(offset + 2);
+
+        if (marker === 0xFFE0) {
+            // Found APP0. Check if it's JFIF.
+            const id = [view.getUint8(offset + 4), view.getUint8(offset + 5), view.getUint8(offset + 6), view.getUint8(offset + 7), view.getUint8(offset + 8)];
+            if (id[0] === 74 && id[1] === 70 && id[2] === 73 && id[3] === 70 && id[4] === 0) {
+                // Update DPI (unit=1: dots per inch)
+                // Offset 11: Units, 12: Xdensity, 14: Ydensity
+                view.setUint8(offset + 11, 1);
+                view.setUint16(offset + 12, dpiX);
+                view.setUint16(offset + 14, dpiY);
+                return new Blob([buffer], { type: 'image/jpeg' });
+            }
+        }
+        offset += 2 + length;
+        if (marker === 0xFFDA || marker === 0xFFD9) break;
+    }
+    return blob;
+}
 
 function computeDimensions(configScale, imgWidth, imgHeight) {
     const scaleW = configScale?.width || 0;
@@ -139,25 +227,27 @@ function renderCardContent(ctx, W, H, outW, player, config, fontFamily) {
             const minW = (border.minWidth || 0) * previewScale;
             const minH = (border.minHeight || 0) * previewScale;
 
-            let boxW = textWidth + pl + pr;
-            let boxH = textHeight + pt + pb;
-            if (boxW < minW) boxW = minW;
-            if (boxH < minH) boxH = minH;
+            const desiredW = textWidth + pl + pr;
+            const desiredH = textHeight + pt + pb;
+            const boxW = Math.max(desiredW, minW);
+            const boxH = Math.max(desiredH, minH);
+            const diffW = boxW - desiredW;
+            const diffH = boxH - desiredH;
 
             const x = cx + ox;
             const y = cy + oy;
 
             let boxX = x;
-            if (textAlign === 'center') boxX = x - boxW / 2;
-            else if (textAlign === 'right') boxX = x - boxW + pr;
+            if (textAlign === 'center') boxX = x - textWidth / 2 - pl - diffW / 2;
+            else if (textAlign === 'right') boxX = x - textWidth - pl - diffW;
             else boxX = x - pl;
 
             let boxY = y;
-            if (textBaseline === 'middle') boxY = y - boxH / 2;
+            if (textBaseline === 'middle') boxY = y - textHeight / 2 - pt - diffH / 2;
             else if (textBaseline === 'top') boxY = y - pt;
-            else if (textBaseline === 'bottom') boxY = y - boxH + pb;
-            else if (textBaseline === 'alphabetic') boxY = y - textAscent - pt;
-            else boxY = y - boxH / 2;
+            else if (textBaseline === 'bottom') boxY = y - textHeight - pt - diffH;
+            else if (textBaseline === 'alphabetic') boxY = y - textAscent - pt - diffH / 2;
+            else boxY = y - textHeight / 2 - pt - diffH / 2;
 
             ctx.save();
             const radius = (border.radius || 0) * previewScale;
@@ -209,11 +299,50 @@ function renderCardContent(ctx, W, H, outW, player, config, fontFamily) {
         ctx.shadowBlur = 0;
     };
 
-    renderTextLayer(config?.name);
-    renderTextLayer(config?.club);
-    renderTextLayer(config?.group);
-    renderTextLayer(config?.id);
+    config?.layers?.forEach(layer => renderTextLayer(layer));
 }
+
+function migrateConfig(config) {
+    if (!config) return null;
+    if (config.layers) return config;
+    const layersOrder = ['name', 'club', 'group', 'id'];
+    const layers = layersOrder
+        .filter(key => config[key])
+        .map(key => ({ ...config[key], id: key }));
+
+    Object.keys(config).forEach(key => {
+        if (key !== 'config' && key !== 'layers' && !layersOrder.includes(key)) {
+            if (config[key] && (config[key].template !== undefined || config[key].anchor !== undefined)) {
+                layers.push({ ...config[key], id: key });
+            }
+        }
+    });
+
+    return { config: config.config, layers };
+}
+
+const LAYER_DEFAULT = {
+    anchor: 'mm',
+    offsetX: 0,
+    offsetY: 0,
+    maxWidth: 1000,
+    maxFontSize: 60,
+    maxWidthCompensate: 1,
+    offsetXCompensate: 1,
+    offsetYCompensate: 1,
+    shadow: false,
+    color: '#000000',
+    template: 'New Layer',
+    border: {
+        strokeWeight: 0,
+        color: '#000000',
+        fill: '',
+        radius: 0,
+        padding: { top: 0, right: 0, bottom: 0, left: 0 },
+        minWidth: 0,
+        minHeight: 0,
+    },
+};
 
 // ─── Default config ───────────────────────────────────────────────────────────
 
@@ -222,99 +351,102 @@ const DEFAULT_CONFIG = {
         scale: { width: 0, height: 768 },
         dpi: { width: 300, height: 300 },
         outputFormat: 'png',
+        quality: 0.9,
     },
-    name: {
-        anchor: 'mm',
-        offsetX: 0,
-        offsetY: 20,
-        maxWidth: 1600,
-        maxFontSize: 200,
-        maxWidthCompensate: 1.001,
-        offsetXCompensate: 1,
-        offsetYCompensate: 0.9991,
-        shadow: false,
-        color: '${group === "Phong trào" ? "#c21b17" : "#004aad"}',
-        template: '${name}',
-        groupId: '',
-        border: {
-            strokeWeight: 0,
-            color: '#000000',
-            fill: '',
-            radius: 0,
-            padding: { top: 0, right: 0, bottom: 0, left: 0 },
-            minWidth: 0,
-            minHeight: 0,
+    layers: [
+        {
+            id: 'name',
+            anchor: 'mm',
+            offsetX: 0,
+            offsetY: 20,
+            maxWidth: 1600,
+            maxFontSize: 200,
+            maxWidthCompensate: 1.001,
+            offsetXCompensate: 1,
+            offsetYCompensate: 0.9991,
+            shadow: false,
+            color: '${group === "Phong trào" ? "#c21b17" : "#004aad"}',
+            template: '${name}',
+            border: {
+                strokeWeight: 0,
+                color: '#000000',
+                fill: '',
+                radius: 0,
+                padding: { top: 0, right: 0, bottom: 0, left: 0 },
+                minWidth: 0,
+                minHeight: 0,
+            },
         },
-    },
-    club: {
-        anchor: 'mm',
-        offsetX: 0,
-        offsetY: 210,
-        maxWidth: 1450,
-        maxFontSize: 80,
-        maxWidthCompensate: 1,
-        offsetXCompensate: 1,
-        offsetYCompensate: 1,
-        shadow: false,
-        color: '${group === "Phong trào" ? "#004aad" : "#c21b17"}',
-        template: '${club ? "Đơn vị: " + club : ""}',
-        groupId: '',
-        border: {
-            strokeWeight: 0,
-            color: '#000000',
-            fill: '',
-            radius: 0,
-            padding: { top: 0, right: 0, bottom: 0, left: 0 },
-            minWidth: 0,
-            minHeight: 0,
+        {
+            id: 'club',
+            anchor: 'mm',
+            offsetX: 0,
+            offsetY: 210,
+            maxWidth: 1450,
+            maxFontSize: 80,
+            maxWidthCompensate: 1,
+            offsetXCompensate: 1,
+            offsetYCompensate: 1,
+            shadow: false,
+            color: '${group === "Phong trào" ? "#004aad" : "#c21b17"}',
+            template: '${club ? "Đơn vị: " + club : ""}',
+            border: {
+                strokeWeight: 0,
+                color: '#000000',
+                fill: '',
+                radius: 0,
+                padding: { top: 0, right: 0, bottom: 0, left: 0 },
+                minWidth: 0,
+                minHeight: 0,
+            },
         },
-    },
-    group: {
-        anchor: 'mm',
-        offsetX: 0,
-        offsetY: 295,
-        maxWidth: 1600,
-        maxFontSize: 70,
-        maxWidthCompensate: 1,
-        offsetXCompensate: 1,
-        offsetYCompensate: 1,
-        shadow: false,
-        color: '${gender === "f" || gender === "nữ" ? "#c21b17" : "#004aad"}',
-        template: '${group || ""}',
-        groupId: '',
-        border: {
-            strokeWeight: 0,
-            color: '#000000',
-            fill: '',
-            radius: 0,
-            padding: { top: 0, right: 0, bottom: 0, left: 0 },
-            minWidth: 0,
-            minHeight: 0,
+        {
+            id: 'group',
+            anchor: 'mm',
+            offsetX: 0,
+            offsetY: 295,
+            maxWidth: 1600,
+            maxFontSize: 70,
+            maxWidthCompensate: 1,
+            offsetXCompensate: 1,
+            offsetYCompensate: 1,
+            shadow: false,
+            color: '${gender === "f" || gender === "nữ" ? "#c21b17" : "#004aad"}',
+            template: '${group || ""}',
+            border: {
+                strokeWeight: 0,
+                color: '#000000',
+                fill: '',
+                radius: 0,
+                padding: { top: 0, right: 0, bottom: 0, left: 0 },
+                minWidth: 0,
+                minHeight: 0,
+            },
         },
-    },
-    id: {
-        anchor: 'mm',
-        offsetX: 750,
-        offsetY: 300,
-        maxWidth: 200,
-        maxFontSize: 100,
-        maxWidthCompensate: 1,
-        offsetXCompensate: 1,
-        offsetYCompensate: 1,
-        shadow: false,
-        color: '${{"U7": "#c21b17", "U9": "#004aad", "U11": "#03670d"}[group] || "#ed9e0e"}',
-        template: '${playerUniqueId || ""}',
-        groupId: '',
-        border: {
-            strokeWeight: 10,
+        {
+            id: 'id',
+            anchor: 'mm',
+            offsetX: 750,
+            offsetY: 300,
+            maxWidth: 200,
+            maxFontSize: 100,
+            maxWidthCompensate: 1,
+            offsetXCompensate: 1,
+            offsetYCompensate: 1,
+            shadow: false,
             color: '${{"U7": "#c21b17", "U9": "#004aad", "U11": "#03670d"}[group] || "#ed9e0e"}',
-            fill: '#fff9e1',
-            radius: 20,
-            padding: { top: 30, right: 30, bottom: 30, left: 30 },
-            minWidth: 140,
-            minHeight: 0,
+            template: '${playerUniqueId || ""}',
+            border: {
+                strokeWeight: 10,
+                color: '${{"U7": "#c21b17", "U9": "#004aad", "U11": "#03670d"}[group] || "#ed9e0e"}',
+                fill: '#fff9e1',
+                radius: 20,
+                padding: { top: 30, right: 30, bottom: 30, left: 30 },
+                minWidth: 140,
+                minHeight: 0,
+            },
         },
-    },
+    ],
 };
 
 // ─── Form-based Config Editor ─────────────────────────────────────────────────
@@ -369,8 +501,8 @@ function AccordionItem({ title, isOpen, onToggle, children }) {
     );
 }
 
-function ConfigEditor({ config, onUpdate }) {
-    const [openSection, setOpenSection] = useState('name');
+function ConfigEditor({ config, onUpdate, showConfirm }) {
+    const [openSection, setOpenSection] = useState(0);
 
     const toggle = (sec) => setOpenSection(prev => prev === sec ? null : sec);
 
@@ -400,46 +532,74 @@ function ConfigEditor({ config, onUpdate }) {
         }));
     };
 
-    const updateLayer = (layer, field, value) => {
-        onUpdate(prev => ({
-            ...prev,
-            [layer]: {
-                ...prev[layer],
-                [field]: value
-            }
-        }));
+    const updateLayer = (idx, field, value) => {
+        onUpdate(prev => {
+            const newLayers = [...(prev.layers || [])];
+            newLayers[idx] = { ...newLayers[idx], [field]: value };
+            return { ...prev, layers: newLayers };
+        });
     };
 
-    const updateBorder = (layer, field, value) => {
-        onUpdate(prev => ({
-            ...prev,
-            [layer]: {
-                ...prev[layer],
+    const updateBorder = (idx, field, value) => {
+        onUpdate(prev => {
+            const newLayers = [...(prev.layers || [])];
+            newLayers[idx] = {
+                ...newLayers[idx],
+                border: { ...newLayers[idx].border, [field]: value }
+            };
+            return { ...prev, layers: newLayers };
+        });
+    };
+
+    const updatePadding = (idx, field, value) => {
+        onUpdate(prev => {
+            const newLayers = [...(prev.layers || [])];
+            newLayers[idx] = {
+                ...newLayers[idx],
                 border: {
-                    ...prev[layer].border,
-                    [field]: value
+                    ...newLayers[idx].border,
+                    padding: { ...newLayers[idx].border.padding, [field]: value }
                 }
-            }
-        }));
+            };
+            return { ...prev, layers: newLayers };
+        });
     };
 
-    const updatePadding = (layer, field, value) => {
+    const addLayer = () => {
         onUpdate(prev => ({
             ...prev,
-            [layer]: {
-                ...prev[layer],
-                border: {
-                    ...prev[layer].border,
-                    padding: {
-                        ...prev[layer].border.padding,
-                        [field]: value
-                    }
-                }
-            }
+            layers: [...(prev.layers || []), { ...LAYER_DEFAULT, id: `layer-${Date.now()}` }]
         }));
+        setOpenSection(config.layers?.length || 0);
     };
 
-    const layers = ['name', 'club', 'group', 'id'];
+    const removeLayer = (idx) => {
+        showConfirm(
+            "Remove Layer?",
+            "Are you sure you want to remove this layer?",
+            () => {
+                onUpdate(prev => ({
+                    ...prev,
+                    layers: prev.layers.filter((_, i) => i !== idx)
+                }));
+                if (openSection === idx) setOpenSection(null);
+                else if (openSection > idx) setOpenSection(openSection - 1);
+            },
+            'error',
+            'Remove'
+        );
+    };
+
+    const duplicateLayer = (idx) => {
+        onUpdate(prev => {
+            const newLayers = [...(prev.layers || [])];
+            const layerToCopy = JSON.parse(JSON.stringify(newLayers[idx]));
+            layerToCopy.id = `layer-${Date.now()}`;
+            newLayers.splice(idx + 1, 0, layerToCopy);
+            return { ...prev, layers: newLayers };
+        });
+        setOpenSection(idx + 1);
+    };
 
     return (
         <div className="flex flex-col p-2">
@@ -461,9 +621,36 @@ function ConfigEditor({ config, onUpdate }) {
                             <InputNumber value={config.config?.dpi?.height} onChange={v => updateDpi('height', v)} />
                         </Field>
                         <Field label="Format">
-                            <InputText value={config.config?.outputFormat} onChange={v => onUpdate(prev => ({ ...prev, config: { ...prev.config, outputFormat: v } }))} />
+                            <select
+                                className="bg-surface-50-950 border border-surface-200-800 rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 w-full transition-all"
+                                value={config.config?.outputFormat || 'png'}
+                                onChange={e => onUpdate(prev => ({ ...prev, config: { ...prev.config, outputFormat: e.target.value } }))}
+                            >
+                                <option value="png">PNG</option>
+                                <option value="jpg">JPG</option>
+                            </select>
                         </Field>
                     </div>
+                    {config.config?.outputFormat === 'jpg' && (
+                        <div className="mt-1">
+                            <Field label={`Output Quality (${Math.round((config.config?.quality || 0.9) * 100)}%)`}>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="range"
+                                        min="0.1"
+                                        max="1"
+                                        step="0.05"
+                                        className="flex-1 accent-primary-500 cursor-pointer h-1.5 bg-surface-200-800 rounded-lg appearance-none"
+                                        value={config.config?.quality || 0.9}
+                                        onChange={e => onUpdate(prev => ({ ...prev, config: { ...prev.config, quality: parseFloat(e.target.value) } }))}
+                                    />
+                                    <span className="text-[10px] font-mono text-surface-500-400 w-8 text-right">
+                                        {Math.round((config.config?.quality || 0.9) * 100)}%
+                                    </span>
+                                </div>
+                            </Field>
+                        </div>
+                    )}
                 </div>
                 <div className="px-3 pb-3">
                     <p className="text-[11px] text-surface-500-400 leading-relaxed bg-surface-100-900 p-2 rounded border border-surface-200-800">
@@ -472,48 +659,82 @@ function ConfigEditor({ config, onUpdate }) {
                 </div>
             </AccordionItem>
 
-            {layers.map(layer => (
-                <AccordionItem key={layer} title={`Layer: ${layer}`} isOpen={openSection === layer} onToggle={() => toggle(layer)}>
+            {config.layers?.map((layer, idx) => (
+                <AccordionItem key={layer.id || idx} title={`Layer ${idx + 1}`} isOpen={openSection === idx} onToggle={() => toggle(idx)}>
                     <div className="p-3 flex flex-col gap-4">
+                        <div className="flex justify-end gap-2">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); duplicateLayer(idx); }}
+                                className="text-primary-500 hover:text-primary-700 p-1.5 rounded hover:bg-primary-500/10 transition-colors flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider border border-primary-500/20"
+                            >
+                                <Copy size={12} />
+                                Duplicate Layer
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); removeLayer(idx); }}
+                                className="text-error-500 hover:text-error-700 p-1.5 rounded hover:bg-error-500/10 transition-colors flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider border border-error-500/20"
+                            >
+                                <Trash2 size={12} />
+                                Remove Layer
+                            </button>
+                        </div>
+
                         <Field label="Template Text / Variables">
-                            <InputText value={config[layer]?.template} onChange={v => updateLayer(layer, 'template', v)} />
+                            <InputText value={layer.template} onChange={v => updateLayer(idx, 'template', v)} />
                         </Field>
 
                         <div className="flex gap-3">
                             <Field label="Font Size (px)">
-                                <InputNumber value={config[layer]?.maxFontSize} onChange={v => updateLayer(layer, 'maxFontSize', v)} />
+                                <InputNumber value={layer.maxFontSize} onChange={v => updateLayer(idx, 'maxFontSize', v)} />
                             </Field>
                             <Field label="Color Expression">
-                                <InputText value={config[layer]?.color} onChange={v => updateLayer(layer, 'color', v)} />
+                                <InputText value={layer.color} onChange={v => updateLayer(idx, 'color', v)} />
                             </Field>
                         </div>
 
                         <div className="flex gap-3">
                             <Field label="Offset X">
-                                <InputNumber value={config[layer]?.offsetX} onChange={v => updateLayer(layer, 'offsetX', v)} />
+                                <InputNumber value={layer.offsetX} onChange={v => updateLayer(idx, 'offsetX', v)} />
                             </Field>
                             <Field label="Offset Y">
-                                <InputNumber value={config[layer]?.offsetY} onChange={v => updateLayer(layer, 'offsetY', v)} />
+                                <InputNumber value={layer.offsetY} onChange={v => updateLayer(idx, 'offsetY', v)} />
                             </Field>
                         </div>
 
                         <div className="flex gap-3">
                             <Field label="Max Width">
-                                <InputNumber value={config[layer]?.maxWidth} onChange={v => updateLayer(layer, 'maxWidth', v)} />
+                                <InputNumber value={layer.maxWidth} onChange={v => updateLayer(idx, 'maxWidth', v)} />
                             </Field>
-                            <Field label="Anchor (e.g., mm)">
-                                <InputText value={config[layer]?.anchor} onChange={v => updateLayer(layer, 'anchor', v)} />
-                            </Field>
-                            <Field label="Group ID">
-                                <InputText value={config[layer]?.groupId} onChange={v => updateLayer(layer, 'groupId', v)} />
+                            <Field label="Anchor Alignment">
+                                <select
+                                    className="bg-surface-50-950 border border-surface-200-800 rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 w-full transition-all cursor-pointer"
+                                    value={layer.anchor}
+                                    onChange={e => updateLayer(idx, 'anchor', e.target.value)}
+                                >
+                                    <optgroup label="Top">
+                                        <option value="tl">Top Left</option>
+                                        <option value="tm">Top Middle</option>
+                                        <option value="tr">Top Right</option>
+                                    </optgroup>
+                                    <optgroup label="Middle">
+                                        <option value="ml">Middle Left</option>
+                                        <option value="mm">Middle Middle</option>
+                                        <option value="mr">Middle Right</option>
+                                    </optgroup>
+                                    <optgroup label="Bottom">
+                                        <option value="bl">Bottom Left</option>
+                                        <option value="bm">Bottom Middle</option>
+                                        <option value="br">Bottom Right</option>
+                                    </optgroup>
+                                </select>
                             </Field>
                         </div>
 
                         <label className="flex items-center gap-2 text-[13px] font-medium cursor-pointer text-surface-700-300 hover:text-primary-500 transition-colors bg-surface-100-900 p-2 rounded-md border border-surface-200-800">
                             <input
                                 type="checkbox"
-                                checked={config[layer]?.shadow || false}
-                                onChange={e => updateLayer(layer, 'shadow', e.target.checked)}
+                                checked={layer.shadow || false}
+                                onChange={e => updateLayer(idx, 'shadow', e.target.checked)}
                                 className="w-4 h-4 rounded bg-surface-50-950 border-surface-300-700 text-primary-500 focus:ring-primary-500"
                             />
                             Enable Drop Shadow
@@ -527,38 +748,38 @@ function ConfigEditor({ config, onUpdate }) {
                             <div className="flex flex-col gap-3 mt-3 pl-4 border-l-2 border-surface-200-800">
                                 <div className="flex gap-3">
                                     <Field label="Stroke Weight">
-                                        <InputNumber value={config[layer]?.border?.strokeWeight} onChange={v => updateBorder(layer, 'strokeWeight', v)} />
+                                        <InputNumber value={layer.border?.strokeWeight} onChange={v => updateBorder(idx, 'strokeWeight', v)} />
                                     </Field>
                                     <Field label="Border Color">
-                                        <InputText value={config[layer]?.border?.color} onChange={v => updateBorder(layer, 'color', v)} />
+                                        <InputText value={layer.border?.color} onChange={v => updateBorder(idx, 'color', v)} />
                                     </Field>
                                     <Field label="Fill Color">
-                                        <InputText value={config[layer]?.border?.fill} onChange={v => updateBorder(layer, 'fill', v)} />
+                                        <InputText value={layer.border?.fill} onChange={v => updateBorder(idx, 'fill', v)} />
                                     </Field>
                                 </div>
                                 <div className="flex gap-3">
                                     <Field label="Radius">
-                                        <InputNumber value={config[layer]?.border?.radius} onChange={v => updateBorder(layer, 'radius', v)} />
+                                        <InputNumber value={layer.border?.radius} onChange={v => updateBorder(idx, 'radius', v)} />
                                     </Field>
                                     <Field label="Min Width">
-                                        <InputNumber value={config[layer]?.border?.minWidth} onChange={v => updateBorder(layer, 'minWidth', v)} />
+                                        <InputNumber value={layer.border?.minWidth} onChange={v => updateBorder(idx, 'minWidth', v)} />
                                     </Field>
                                     <Field label="Min Height">
-                                        <InputNumber value={config[layer]?.border?.minHeight} onChange={v => updateBorder(layer, 'minHeight', v)} />
+                                        <InputNumber value={layer.border?.minHeight} onChange={v => updateBorder(idx, 'minHeight', v)} />
                                     </Field>
                                 </div>
                                 <div className="flex gap-3">
                                     <Field label="Pad Top">
-                                        <InputNumber value={config[layer]?.border?.padding?.top} onChange={v => updatePadding(layer, 'top', v)} />
+                                        <InputNumber value={layer.border?.padding?.top} onChange={v => updatePadding(idx, 'top', v)} />
                                     </Field>
                                     <Field label="Pad Right">
-                                        <InputNumber value={config[layer]?.border?.padding?.right} onChange={v => updatePadding(layer, 'right', v)} />
+                                        <InputNumber value={layer.border?.padding?.right} onChange={v => updatePadding(idx, 'right', v)} />
                                     </Field>
                                     <Field label="Pad Bottom">
-                                        <InputNumber value={config[layer]?.border?.padding?.bottom} onChange={v => updatePadding(layer, 'bottom', v)} />
+                                        <InputNumber value={layer.border?.padding?.bottom} onChange={v => updatePadding(idx, 'bottom', v)} />
                                     </Field>
                                     <Field label="Pad Left">
-                                        <InputNumber value={config[layer]?.border?.padding?.left} onChange={v => updatePadding(layer, 'left', v)} />
+                                        <InputNumber value={layer.border?.padding?.left} onChange={v => updatePadding(idx, 'left', v)} />
                                     </Field>
                                 </div>
                             </div>
@@ -572,13 +793,13 @@ function ConfigEditor({ config, onUpdate }) {
                             <div className="flex flex-col gap-3 mt-3 pl-4 border-l-2 border-surface-200-800">
                                 <div className="flex gap-3">
                                     <Field label="Width Comp.">
-                                        <InputNumber value={config[layer]?.maxWidthCompensate} onChange={v => updateLayer(layer, 'maxWidthCompensate', v)} />
+                                        <InputNumber value={layer.maxWidthCompensate} onChange={v => updateLayer(idx, 'maxWidthCompensate', v)} />
                                     </Field>
                                     <Field label="X Comp.">
-                                        <InputNumber value={config[layer]?.offsetXCompensate} onChange={v => updateLayer(layer, 'offsetXCompensate', v)} />
+                                        <InputNumber value={layer.offsetXCompensate} onChange={v => updateLayer(idx, 'offsetXCompensate', v)} />
                                     </Field>
                                     <Field label="Y Comp.">
-                                        <InputNumber value={config[layer]?.offsetYCompensate} onChange={v => updateLayer(layer, 'offsetYCompensate', v)} />
+                                        <InputNumber value={layer.offsetYCompensate} onChange={v => updateLayer(idx, 'offsetYCompensate', v)} />
                                     </Field>
                                 </div>
                             </div>
@@ -586,6 +807,14 @@ function ConfigEditor({ config, onUpdate }) {
                     </div>
                 </AccordionItem>
             ))}
+
+            <button
+                onClick={addLayer}
+                className="mt-2 flex items-center justify-center gap-2 py-3 border-2 border-dashed border-surface-300-700 rounded-lg text-surface-500-400 hover:border-primary-500 hover:text-primary-500 transition-all font-bold uppercase tracking-widest text-xs"
+            >
+                <Plus size={16} />
+                Add New Layer
+            </button>
         </div>
     );
 }
@@ -697,9 +926,18 @@ function CardPreview({ imageDataUrl, config, player, fontFamily }) {
 const MAX_HISTORY = 50;
 
 export default function GeneratePlayerCardModal({ open, onClose, players = [] }) {
-    const { activeTournamentId, isLoaded: isTournamentLoaded } = useTournament();
-    
-    const [config, setConfig] = useState(() => JSON.parse(JSON.stringify(DEFAULT_CONFIG)));
+    const { activeTournamentId } = useTournament();
+    const [modal, setModal] = useState({ open: false, title: '', description: '', onConfirm: null, isAlert: false, variant: 'primary', confirmText: 'Confirm' });
+
+    const showAlert = (title, description) => {
+        setModal({ open: true, title, description, onConfirm: () => setModal(prev => ({ ...prev, open: false })), isAlert: true, variant: 'primary', confirmText: 'OK' });
+    };
+
+    const showConfirm = (title, description, onConfirm, variant = 'primary', confirmText = 'Confirm') => {
+        setModal({ open: true, title, description, onConfirm: () => { onConfirm(); setModal(prev => ({ ...prev, open: false })); }, isAlert: false, variant, confirmText });
+    };
+
+    const [config, setConfig] = useState(() => migrateConfig(DEFAULT_CONFIG));
 
     // Prevent Portal from rendering during SSR (avoids hydration attribute mismatch)
     const [mounted, setMounted] = useState(false);
@@ -778,7 +1016,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
     // Load persisted assets on mount
     useEffect(() => {
-        if (!isTournamentLoaded || !activeTournamentId) return;
+        if (!activeTournamentId) return;
         Promise.all([
             loadCardGenAsset('image', activeTournamentId),
             loadCardGenAsset('font', activeTournamentId),
@@ -786,23 +1024,24 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         ]).then(([loadedImage, loadedFont, loadedConfig]) => {
             setImageFile(loadedImage || null);
             setFontFile(loadedFont || null);
-            
+
             if (loadedConfig) {
-                setConfig(loadedConfig);
-                lastSavedConfigRef.current = loadedConfig;
+                const migrated = migrateConfig(loadedConfig);
+                setConfig(migrated);
+                lastSavedConfigRef.current = migrated;
             } else {
-                const defaultConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+                const defaultConfig = migrateConfig(DEFAULT_CONFIG);
                 setConfig(defaultConfig);
                 lastSavedConfigRef.current = defaultConfig;
             }
-            
+
             if (loadedImage && loadedFont) {
                 setUploadExpanded(false);
             } else {
                 setUploadExpanded(true);
             }
         })
-    }, [activeTournamentId, isTournamentLoaded]);
+    }, [activeTournamentId]);
 
     // Persist config on change
     useEffect(() => {
@@ -872,11 +1111,10 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         const reader = new FileReader();
         reader.onload = (ev) => {
             try {
-                const parsed = JSON.parse(ev.target.result);
-                commitHistory();
-                setConfig(parsed);
-            } catch {
-                alert('Invalid JSON config file.');
+                const data = JSON.parse(ev.target.result);
+                setConfig(migrateConfig(data));
+            } catch (e) {
+                showAlert('Import Failed', 'Invalid JSON config file.');
             }
         };
         reader.readAsText(file, 'utf-8');
@@ -911,7 +1149,20 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
                 renderCardContent(ctx, outW, outH, outW, player, config, loadedFontFamily);
 
-                canvas.toBlob((blob) => resolve(blob), 'image/png');
+                const isPng = config?.config?.outputFormat === 'png' || !config?.config?.outputFormat;
+                const format = isPng ? 'image/png' : 'image/jpeg';
+                const quality = config?.config?.quality ?? 0.9;
+                canvas.toBlob(async (blob) => {
+                    const dpiX = config?.config?.dpi?.width || 300;
+                    const dpiY = config?.config?.dpi?.height || 300;
+                    let finalBlob = blob;
+                    if (isPng) {
+                        finalBlob = await injectPngDpi(blob, dpiX, dpiY);
+                    } else {
+                        finalBlob = await injectJpegDpi(blob, dpiX, dpiY);
+                    }
+                    resolve(finalBlob);
+                }, format, quality);
             };
             img.src = imageDataUrl;
         });
@@ -923,10 +1174,11 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         const blob = await generateCardBlob(previewPlayer);
         if (blob) {
             const playerName = (previewPlayer?.name || 'player').replace(/\s+/g, '_');
+            const ext = config?.config?.outputFormat === 'jpg' ? 'jpg' : 'png';
             const url = URL.createObjectURL(blob);
             Object.assign(document.createElement('a'), {
                 href: url,
-                download: `${playerName}_card.png`,
+                download: `${playerName}_card.${ext}`,
             }).click();
             URL.revokeObjectURL(url);
         }
@@ -940,7 +1192,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         const endIdx = Math.min(Math.max(0, players.length - 1), (parseInt(rangeEnd) || players.length) - 1);
 
         if (startIdx > endIdx) {
-            alert('Invalid range. Check your start and end numbers.');
+            showAlert('Invalid Range', 'Invalid range. Check your start and end numbers.');
             return;
         }
 
@@ -961,7 +1213,8 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                 if (blob) {
                     const originalIndex = startIdx + j;
                     const id = p.playerUniqueId || p.id || String(originalIndex + 1);
-                    zip.file(`${id}_card.png`, blob);
+                    const ext = config?.config?.outputFormat === 'jpg' ? 'jpg' : 'png';
+                    zip.file(`${id}_card.${ext}`, blob);
                 }
 
                 setProcessedCount(j + 1);
@@ -979,10 +1232,15 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
             URL.revokeObjectURL(url);
         } catch (e) {
             console.error('Failed to generate zip', e);
-            alert('Failed to generate zip');
+            showAlert('Error', 'Failed to generate zip');
         }
 
         setIsDownloading(false);
+    };
+
+    const updateConfigWithHistory = (newConfig) => {
+        commitHistory();
+        setConfig(newConfig);
     };
 
     const computedStartIdx = Math.max(0, (parseInt(rangeStart) || 1) - 1);
@@ -992,6 +1250,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     if (!open || !mounted) return null;
 
     return (
+        <>
         <Portal>
             <ScrollLock />
 
@@ -1034,7 +1293,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                 </button>
                             </div>
                             <div className="w-px h-4 bg-surface-200-800 mx-1"></div>
-                            
+
                             <label className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
                                 <FileUp size={13} />
                                 Import config
@@ -1116,11 +1375,12 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                         <div className="w-80 flex flex-col shrink-0">
 
                             {/* Config Editor */}
-                            <div 
-                                className="flex-1 overflow-y-auto w-full custom-scrollbar"
-                                onBlurCapture={commitHistory}
-                            >
-                                <ConfigEditor config={config} onUpdate={setConfig} />
+                            <div className="flex flex-col h-full bg-surface-50-950 overflow-y-auto">
+                                <ConfigEditor
+                                    config={config}
+                                    onUpdate={updateConfigWithHistory}
+                                    showConfirm={showConfirm}
+                                />
                             </div>
 
                             {/* Preview player selector */}
@@ -1229,6 +1489,18 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                     </div>
                 </div>
             </div>
+
         </Portal>
+        <ConfirmationModal
+            open={modal.open}
+            onOpenChange={(open) => setModal(prev => ({ ...prev, open }))}
+            title={modal.title}
+            description={modal.description}
+            onConfirm={modal.onConfirm}
+            isAlert={modal.isAlert}
+            variant={modal.variant}
+            confirmText={modal.confirmText}
+        />
+        </>
     );
 }

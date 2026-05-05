@@ -23,7 +23,7 @@ export default function Header() {
                         <Link
                             key={href}
                             href={href}
-                            className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${pathname === href
+                            className={`px-3 py-1.5 rounded text-sm font-medium ${pathname === href
                                 ? "preset-filled"
                                 : "hover:preset-tonal"
                                 }`}

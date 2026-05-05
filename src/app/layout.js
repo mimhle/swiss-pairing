@@ -17,7 +17,7 @@ export default function RootLayout({ children }) {
                 document.documentElement.setAttribute('data-mode', mode);
             ` }} />
         </head>
-        <body className="min-h-screen flex flex-col">
+        <body className="min-h-screen flex flex-col bg-surface-50-950 text-surface-950-50">
             <TournamentProvider>
                 <Header />
                 <main className="flex-1">{children}</main>

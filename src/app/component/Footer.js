@@ -2,7 +2,6 @@ import { siNextdotjs, siReact, siTailwindcss, siSkeleton, siGithub } from "simpl
 
 const frameworks = [
     { name: "Next.js", url: "https://nextjs.org", icon: siNextdotjs },
-    { name: "React", url: "https://react.dev", icon: siReact },
     { name: "Tailwind CSS", url: "https://tailwindcss.com", icon: siTailwindcss },
     { name: "Skeleton", url: "https://www.skeleton.dev", icon: siSkeleton },
 ];
