@@ -10,16 +10,215 @@ import {
     FileDown,
     FileUp,
     Image,
+    Redo2,
     RefreshCw,
     Type,
+    Undo2,
     X,
 } from 'lucide-react';
+import { loadCardGenAsset, saveCardGenAsset } from './indexedDbPlayers';
+import JSZip from 'jszip';
+import ScrollLock from '@/app/component/ScrollLock';
+import { useTournament } from '@/app/context/TournamentContext';
+
+// ─── Shared rendering logic ───────────────────────────────────────────────────
+
+function computeDimensions(configScale, imgWidth, imgHeight) {
+    const scaleW = configScale?.width || 0;
+    const scaleH = configScale?.height || 0;
+    let outW, outH;
+    if (scaleW === 0 && scaleH === 0) {
+        outW = imgWidth;
+        outH = imgHeight;
+    } else if (scaleW === 0) {
+        outH = scaleH;
+        outW = Math.round(scaleH * (imgWidth / imgHeight));
+    } else if (scaleH === 0) {
+        outW = scaleW;
+        outH = Math.round(scaleW * (imgHeight / imgWidth));
+    } else {
+        outW = scaleW;
+        outH = scaleH;
+    }
+    return { outW, outH };
+}
+
+function evaluateTemplate(templateStr, player) {
+    if (!templateStr || typeof templateStr !== 'string') return '';
+    if (!templateStr.includes('${')) return templateStr;
+    try {
+        const proxy = new Proxy(player, {
+            has(target, prop) {
+                if (typeof prop !== 'string') return false;
+                if (prop in target) return true;
+                if (prop === 'lastname' || prop === 'firstname') return true;
+                if (prop in globalThis) return false;
+                return true;
+            },
+            get(target, prop) {
+                if (prop === 'lastname') return (target.name || '').split(' ')[0] || '';
+                if (prop === 'firstname') return (target.name || '').split(' ').slice(1).join(' ') || '';
+                const val = target[prop];
+                return val !== undefined && val !== null ? val : '';
+            }
+        });
+
+        const evalFunc = new Function('ctx', `
+            with(ctx) {
+                return \`${templateStr}\`;
+            }
+        `);
+        return evalFunc(proxy);
+    } catch (e) {
+        return templateStr;
+    }
+}
+
+function renderCardContent(ctx, W, H, outW, player, config, fontFamily) {
+    if (!player) return;
+    const previewScale = W / outW;
+    const cx = W / 2;
+    const cy = H / 2;
+
+    const anchorToCanvas = (anchor) => {
+        const h = (anchor || 'mm')[0];
+        const v = (anchor || 'mm')[1];
+        return {
+            textAlign: { l: 'left', m: 'center', r: 'right' }[h] ?? 'center',
+            textBaseline: {
+                t: 'top', m: 'middle', b: 'bottom',
+                s: 'alphabetic', a: 'alphabetic', d: 'ideographic'
+            }[v] ?? 'middle',
+        };
+    };
+
+    const renderTextLayer = (layerCfg) => {
+        if (!layerCfg?.template) return;
+
+        let text = evaluateTemplate(layerCfg.template, player);
+        if (!text.trim()) return;
+
+        let fontSize = (layerCfg.maxFontSize || 80) * previewScale;
+        let maxW = (layerCfg.maxWidth || 0) * previewScale;
+        let ox = (layerCfg.offsetX || 0) * previewScale;
+        let oy = (layerCfg.offsetY || 0) * previewScale;
+
+        if (maxW > 0) {
+            const step = previewScale;
+            ctx.font = `bold ${fontSize}px "${fontFamily || 'sans-serif'}"`;
+            while (ctx.measureText(text).width >= maxW && fontSize > step) {
+                fontSize -= step;
+                maxW *= (layerCfg.maxWidthCompensate || 1);
+                ox *= (layerCfg.offsetXCompensate || 1);
+                oy *= (layerCfg.offsetYCompensate || 1);
+                ctx.font = `bold ${fontSize}px "${fontFamily || 'sans-serif'}"`;
+            }
+        }
+
+        ctx.font = `bold ${fontSize}px "${fontFamily || 'sans-serif'}"`;
+
+        const { textAlign, textBaseline } = anchorToCanvas(layerCfg.anchor);
+
+        // Measure text for border bounding box
+        const metrics = ctx.measureText(text);
+        const textWidth = metrics.width;
+        const textHeight = (metrics.actualBoundingBoxAscent !== undefined && metrics.actualBoundingBoxDescent !== undefined)
+            ? (metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent)
+            : fontSize;
+        const textAscent = metrics.actualBoundingBoxAscent !== undefined ? metrics.actualBoundingBoxAscent : fontSize * 0.8;
+
+        const border = layerCfg.border || {};
+        const strokeW = (border.strokeWeight || 0) * previewScale;
+
+        if (strokeW > 0 || border.fill) {
+            const pt = (border.padding?.top || 0) * previewScale;
+            const pr = (border.padding?.right || 0) * previewScale;
+            const pb = (border.padding?.bottom || 0) * previewScale;
+            const pl = (border.padding?.left || 0) * previewScale;
+
+            const minW = (border.minWidth || 0) * previewScale;
+            const minH = (border.minHeight || 0) * previewScale;
+
+            let boxW = textWidth + pl + pr;
+            let boxH = textHeight + pt + pb;
+            if (boxW < minW) boxW = minW;
+            if (boxH < minH) boxH = minH;
+
+            const x = cx + ox;
+            const y = cy + oy;
+
+            let boxX = x;
+            if (textAlign === 'center') boxX = x - boxW / 2;
+            else if (textAlign === 'right') boxX = x - boxW + pr;
+            else boxX = x - pl;
+
+            let boxY = y;
+            if (textBaseline === 'middle') boxY = y - boxH / 2;
+            else if (textBaseline === 'top') boxY = y - pt;
+            else if (textBaseline === 'bottom') boxY = y - boxH + pb;
+            else if (textBaseline === 'alphabetic') boxY = y - textAscent - pt;
+            else boxY = y - boxH / 2;
+
+            ctx.save();
+            const radius = (border.radius || 0) * previewScale;
+            ctx.beginPath();
+            if (radius > 0 && ctx.roundRect) {
+                ctx.roundRect(boxX, boxY, boxW, boxH, radius);
+            } else {
+                ctx.rect(boxX, boxY, boxW, boxH);
+            }
+
+            if (border.fill) {
+                const fillColor = evaluateTemplate(border.fill, player);
+                if (fillColor) {
+                    ctx.fillStyle = fillColor;
+                    ctx.fill();
+                }
+            }
+
+            if (strokeW > 0 && border.color) {
+                const strokeColor = evaluateTemplate(border.color, player);
+                if (strokeColor) {
+                    ctx.strokeStyle = strokeColor;
+                    ctx.lineWidth = strokeW;
+                    ctx.stroke();
+                }
+            }
+            ctx.restore();
+        }
+
+        ctx.textAlign = textAlign;
+        ctx.textBaseline = textBaseline;
+
+        const colorStr = evaluateTemplate(layerCfg.color || '#333333', player);
+        ctx.fillStyle = colorStr || '#333333';
+
+        if (layerCfg.shadow) {
+            ctx.shadowColor = 'rgba(0,0,0,0.4)';
+            ctx.shadowBlur = fontSize * 0.06;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = fontSize * 0.04;
+        } else {
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+        }
+
+        ctx.fillText(text, cx + ox, cy + oy, maxW || undefined);
+
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+    };
+
+    renderTextLayer(config?.name);
+    renderTextLayer(config?.club);
+    renderTextLayer(config?.group);
+    renderTextLayer(config?.id);
+}
 
 // ─── Default config ───────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG = {
     config: {
-        font: './fonts\\UTM American Sans.ttf',
         scale: { width: 0, height: 768 },
         dpi: { width: 300, height: 300 },
         outputFormat: 'png',
@@ -33,8 +232,9 @@ const DEFAULT_CONFIG = {
         maxWidthCompensate: 1.001,
         offsetXCompensate: 1,
         offsetYCompensate: 0.9991,
-        color: '${\"#c21b17\" if group == \"Phong trào\" else \"#004aad\"}',
-        template: '${Lastname.upper()} ${Firstname.upper()}',
+        shadow: false,
+        color: '${group === "Phong trào" ? "#c21b17" : "#004aad"}',
+        template: '${name}',
         groupId: '',
         border: {
             strokeWeight: 0,
@@ -55,8 +255,9 @@ const DEFAULT_CONFIG = {
         maxWidthCompensate: 1,
         offsetXCompensate: 1,
         offsetYCompensate: 1,
-        color: '${\"#004aad\" if group == \"Phong trào\" else \"#c21b17\"}',
-        template: '${f\"Đơn vị: {Club}\" if club else \"\"}',
+        shadow: false,
+        color: '${group === "Phong trào" ? "#004aad" : "#c21b17"}',
+        template: '${club ? "Đơn vị: " + club : ""}',
         groupId: '',
         border: {
             strokeWeight: 0,
@@ -77,8 +278,9 @@ const DEFAULT_CONFIG = {
         maxWidthCompensate: 1,
         offsetXCompensate: 1,
         offsetYCompensate: 1,
-        color: '${\"#c21b17\" if gender == \"f\" else \"#004aad\"}',
-        template: '',
+        shadow: false,
+        color: '${gender === "f" || gender === "nữ" ? "#c21b17" : "#004aad"}',
+        template: '${group || ""}',
         groupId: '',
         border: {
             strokeWeight: 0,
@@ -99,12 +301,13 @@ const DEFAULT_CONFIG = {
         maxWidthCompensate: 1,
         offsetXCompensate: 1,
         offsetYCompensate: 1,
-        color: '${{\"U7\": \"#c21b17\", \"U9\": \"#004aad\", \"U11\": \"#03670d\"}.get(Group, \"#ed9e0e\")}',
-        template: '${}',
+        shadow: false,
+        color: '${{"U7": "#c21b17", "U9": "#004aad", "U11": "#03670d"}[group] || "#ed9e0e"}',
+        template: '${playerUniqueId || ""}',
         groupId: '',
         border: {
             strokeWeight: 10,
-            color: '${{\"U7\": \"#c21b17\", \"U9\": \"#004aad\", \"U11\": \"#03670d\"}.get(Group, \"#ed9e0e\")}',
+            color: '${{"U7": "#c21b17", "U9": "#004aad", "U11": "#03670d"}[group] || "#ed9e0e"}',
             fill: '#fff9e1',
             radius: 20,
             padding: { top: 30, right: 30, bottom: 30, left: 30 },
@@ -114,179 +317,275 @@ const DEFAULT_CONFIG = {
     },
 };
 
-// ─── Config tree node types for editor ───────────────────────────────────────
+// ─── Form-based Config Editor ─────────────────────────────────────────────────
 
-function getNodeType(value) {
-    if (value === null) return 'null';
-    if (Array.isArray(value)) return 'array';
-    if (typeof value === 'object') return 'object';
-    if (typeof value === 'number') return 'number';
-    if (typeof value === 'boolean') return 'boolean';
-    return 'string';
+function Field({ label, children }) {
+    return (
+        <label className="flex flex-col gap-1.5 w-full">
+            <span className="text-[11px] text-surface-500-400 font-semibold uppercase tracking-wider">{label}</span>
+            {children}
+        </label>
+    );
 }
 
-// ─── Inline value editor ──────────────────────────────────────────────────────
-
-function InlineValueEditor({ value, onChange }) {
-    const type = getNodeType(value);
-    const [localVal, setLocalVal] = useState(String(value ?? ''));
-
-    useEffect(() => {
-        setLocalVal(String(value ?? ''));
-    }, [value]);
-
-    const commit = () => {
-        if (type === 'number') {
-            const n = Number(localVal);
-            onChange(isNaN(n) ? value : n);
-        } else if (type === 'boolean') {
-            onChange(localVal === 'true');
-        } else {
-            onChange(localVal);
-        }
-    };
-
-    if (type === 'boolean') {
-        return (
-            <select
-                className="text-xs bg-surface-50-950 border border-surface-200-800 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-primary-500 max-w-20"
-                value={String(value)}
-                onChange={e => onChange(e.target.value === 'true')}
-            >
-                <option value="true">true</option>
-                <option value="false">false</option>
-            </select>
-        );
-    }
-
+function InputNumber({ value, onChange }) {
     return (
         <input
-            type={type === 'number' ? 'number' : 'text'}
-            className="text-xs bg-surface-50-950 border border-surface-200-800 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-primary-500 min-w-0 flex-1"
-            value={localVal}
-            onChange={e => setLocalVal(e.target.value)}
-            onBlur={commit}
-            onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); } e.stopPropagation(); }}
+            type="number"
+            className="bg-surface-50-950 border border-surface-200-800 rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 w-full transition-all"
+            value={value ?? ''}
+            onChange={e => onChange(e.target.value === '' ? 0 : Number(e.target.value))}
         />
     );
 }
 
-// ─── Config tree node ─────────────────────────────────────────────────────────
-
-function ConfigNode({ nodeKey, value, path, onUpdate, depth = 0 }) {
-    const [expanded, setExpanded] = useState(depth < 2);
-    const type = getNodeType(value);
-    const isComplex = type === 'object' || type === 'array';
-
-    const handleLeafChange = (newVal) => {
-        onUpdate([...path, nodeKey], newVal);
-    };
-
-    const indent = depth * 12;
-
-    if (isComplex) {
-        const entries = Object.entries(value);
-        return (
-            <div>
-                <button
-                    className="flex items-center gap-1 w-full text-left hover:bg-surface-100-900 rounded px-1 py-0.5 transition-colors group"
-                    style={{ paddingLeft: `${indent + 4}px` }}
-                    onClick={() => setExpanded(v => !v)}
-                >
-                    <span className="text-surface-400-600 shrink-0">
-                        {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                    </span>
-                    <span className="text-xs font-medium text-surface-700-300 shrink-0">{nodeKey}</span>
-                    <span className="text-xs text-surface-400-600 ml-1">{'{ }'}</span>
-                </button>
-                {expanded && (
-                    <div>
-                        {entries.map(([k, v]) => (
-                            <ConfigNode
-                                key={k}
-                                nodeKey={k}
-                                value={v}
-                                path={[...path, nodeKey]}
-                                onUpdate={onUpdate}
-                                depth={depth + 1}
-                            />
-                        ))}
-                    </div>
-                )}
-            </div>
-        );
-    }
-
-    // Leaf node
+function InputText({ value, onChange }) {
     return (
-        <div
-            className="flex items-center gap-2 hover:bg-surface-100-900 rounded px-1 py-0.5 transition-colors"
-            style={{ paddingLeft: `${indent + 16}px` }}
-        >
-            <span className="text-xs text-surface-600-400 shrink-0 min-w-[80px]">{nodeKey}</span>
-            <InlineValueEditor value={value} onChange={handleLeafChange} />
+        <input
+            type="text"
+            className="bg-surface-50-950 border border-surface-200-800 rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 w-full transition-all font-mono"
+            value={value ?? ''}
+            onChange={e => onChange(e.target.value)}
+        />
+    );
+}
+
+function AccordionItem({ title, isOpen, onToggle, children }) {
+    return (
+        <div className="border border-surface-200-800 rounded-lg mb-2 overflow-hidden bg-surface-100-900 shadow-sm transition-all duration-200">
+            <button
+                className="w-full flex items-center justify-between px-3 py-3 bg-surface-100-900 hover:bg-surface-200-800 transition-colors"
+                onClick={onToggle}
+            >
+                <span className="text-xs font-bold text-primary-600-400 uppercase tracking-widest">{title}</span>
+                {isOpen ? <ChevronDown size={16} className="text-surface-500-400" /> : <ChevronRight size={16} className="text-surface-500-400" />}
+            </button>
+            {isOpen && (
+                <div className="border-t border-surface-200-800">
+                    {children}
+                </div>
+            )}
         </div>
     );
 }
 
-// ─── Config tree root ─────────────────────────────────────────────────────────
+function ConfigEditor({ config, onUpdate }) {
+    const [openSection, setOpenSection] = useState('name');
 
-function ConfigTree({ config, onUpdate }) {
-    const [expanded, setExpanded] = useState({
-        config: true, name: true, club: false, group: false, id: false,
-    });
+    const toggle = (sec) => setOpenSection(prev => prev === sec ? null : sec);
 
-    // Toggle a top-level section
-    const toggleSection = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+    const updateGeneral = (field, value) => {
+        onUpdate(prev => ({
+            ...prev,
+            config: {
+                ...prev.config,
+                scale: {
+                    ...prev.config.scale,
+                    [field]: value
+                }
+            }
+        }));
+    };
 
-    // Update a value deep in config via path array
-    const handleUpdate = useCallback((path, newVal) => {
-        onUpdate(prev => {
-            const next = JSON.parse(JSON.stringify(prev));
-            let cur = next;
-            for (let i = 0; i < path.length - 1; i++) cur = cur[path[i]];
-            cur[path[path.length - 1]] = newVal;
-            return next;
-        });
-    }, [onUpdate]);
+    const updateDpi = (field, value) => {
+        onUpdate(prev => ({
+            ...prev,
+            config: {
+                ...prev.config,
+                dpi: {
+                    ...prev.config.dpi,
+                    [field]: value
+                }
+            }
+        }));
+    };
 
-    const topKeys = Object.keys(config);
+    const updateLayer = (layer, field, value) => {
+        onUpdate(prev => ({
+            ...prev,
+            [layer]: {
+                ...prev[layer],
+                [field]: value
+            }
+        }));
+    };
+
+    const updateBorder = (layer, field, value) => {
+        onUpdate(prev => ({
+            ...prev,
+            [layer]: {
+                ...prev[layer],
+                border: {
+                    ...prev[layer].border,
+                    [field]: value
+                }
+            }
+        }));
+    };
+
+    const updatePadding = (layer, field, value) => {
+        onUpdate(prev => ({
+            ...prev,
+            [layer]: {
+                ...prev[layer],
+                border: {
+                    ...prev[layer].border,
+                    padding: {
+                        ...prev[layer].border.padding,
+                        [field]: value
+                    }
+                }
+            }
+        }));
+    };
+
+    const layers = ['name', 'club', 'group', 'id'];
 
     return (
-        <div className="font-mono text-xs">
-            <div className="text-xs text-surface-500-400 px-1 py-1 font-semibold uppercase tracking-wider select-none">
-                Player Card Config {'{ }'}
-            </div>
-            {topKeys.map(sectionKey => {
-                const sectionVal = config[sectionKey];
-                const isOpen = expanded[sectionKey] ?? false;
-                const entries = Object.entries(sectionVal);
-                return (
-                    <div key={sectionKey}>
-                        <button
-                            className="flex items-center gap-1 w-full text-left hover:bg-surface-100-900 rounded px-1 py-0.5 transition-colors"
-                            style={{ paddingLeft: '4px' }}
-                            onClick={() => toggleSection(sectionKey)}
-                        >
-                            <span className="text-surface-400-600 shrink-0">
-                                {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                            </span>
-                            <span className="text-xs font-semibold text-primary-600-400">{sectionKey}</span>
-                            <span className="text-xs text-surface-400-600 ml-1">{'{ }'}</span>
-                        </button>
-                        {isOpen && entries.map(([k, v]) => (
-                            <ConfigNode
-                                key={k}
-                                nodeKey={k}
-                                value={v}
-                                path={[sectionKey]}
-                                onUpdate={handleUpdate}
-                                depth={1}
-                            />
-                        ))}
+        <div className="flex flex-col p-2">
+            <AccordionItem title="General Config" isOpen={openSection === 'general'} onToggle={() => toggle('general')}>
+                <div className="p-3 flex flex-col gap-3">
+                    <div className="flex gap-3">
+                        <Field label="Target Width">
+                            <InputNumber value={config.config?.scale?.width} onChange={v => updateGeneral('width', v)} />
+                        </Field>
+                        <Field label="Target Height">
+                            <InputNumber value={config.config?.scale?.height} onChange={v => updateGeneral('height', v)} />
+                        </Field>
                     </div>
-                );
-            })}
+                    <div className="flex gap-3">
+                        <Field label="DPI Width">
+                            <InputNumber value={config.config?.dpi?.width} onChange={v => updateDpi('width', v)} />
+                        </Field>
+                        <Field label="DPI Height">
+                            <InputNumber value={config.config?.dpi?.height} onChange={v => updateDpi('height', v)} />
+                        </Field>
+                        <Field label="Format">
+                            <InputText value={config.config?.outputFormat} onChange={v => onUpdate(prev => ({ ...prev, config: { ...prev.config, outputFormat: v } }))} />
+                        </Field>
+                    </div>
+                </div>
+                <div className="px-3 pb-3">
+                    <p className="text-[11px] text-surface-500-400 leading-relaxed bg-surface-100-900 p-2 rounded border border-surface-200-800">
+                        Set Width to <span className="font-mono text-primary-500">0</span> to auto-scale based on Height, or vice versa.
+                    </p>
+                </div>
+            </AccordionItem>
+
+            {layers.map(layer => (
+                <AccordionItem key={layer} title={`Layer: ${layer}`} isOpen={openSection === layer} onToggle={() => toggle(layer)}>
+                    <div className="p-3 flex flex-col gap-4">
+                        <Field label="Template Text / Variables">
+                            <InputText value={config[layer]?.template} onChange={v => updateLayer(layer, 'template', v)} />
+                        </Field>
+
+                        <div className="flex gap-3">
+                            <Field label="Font Size (px)">
+                                <InputNumber value={config[layer]?.maxFontSize} onChange={v => updateLayer(layer, 'maxFontSize', v)} />
+                            </Field>
+                            <Field label="Color Expression">
+                                <InputText value={config[layer]?.color} onChange={v => updateLayer(layer, 'color', v)} />
+                            </Field>
+                        </div>
+
+                        <div className="flex gap-3">
+                            <Field label="Offset X">
+                                <InputNumber value={config[layer]?.offsetX} onChange={v => updateLayer(layer, 'offsetX', v)} />
+                            </Field>
+                            <Field label="Offset Y">
+                                <InputNumber value={config[layer]?.offsetY} onChange={v => updateLayer(layer, 'offsetY', v)} />
+                            </Field>
+                        </div>
+
+                        <div className="flex gap-3">
+                            <Field label="Max Width">
+                                <InputNumber value={config[layer]?.maxWidth} onChange={v => updateLayer(layer, 'maxWidth', v)} />
+                            </Field>
+                            <Field label="Anchor (e.g., mm)">
+                                <InputText value={config[layer]?.anchor} onChange={v => updateLayer(layer, 'anchor', v)} />
+                            </Field>
+                            <Field label="Group ID">
+                                <InputText value={config[layer]?.groupId} onChange={v => updateLayer(layer, 'groupId', v)} />
+                            </Field>
+                        </div>
+
+                        <label className="flex items-center gap-2 text-[13px] font-medium cursor-pointer text-surface-700-300 hover:text-primary-500 transition-colors bg-surface-100-900 p-2 rounded-md border border-surface-200-800">
+                            <input
+                                type="checkbox"
+                                checked={config[layer]?.shadow || false}
+                                onChange={e => updateLayer(layer, 'shadow', e.target.checked)}
+                                className="w-4 h-4 rounded bg-surface-50-950 border-surface-300-700 text-primary-500 focus:ring-primary-500"
+                            />
+                            Enable Drop Shadow
+                        </label>
+
+                        <details className="mt-1 group">
+                            <summary className="text-[11px] text-surface-500-400 font-bold cursor-pointer hover:text-primary-500 flex items-center gap-1 select-none uppercase tracking-wider py-1">
+                                <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
+                                Border & Background
+                            </summary>
+                            <div className="flex flex-col gap-3 mt-3 pl-4 border-l-2 border-surface-200-800">
+                                <div className="flex gap-3">
+                                    <Field label="Stroke Weight">
+                                        <InputNumber value={config[layer]?.border?.strokeWeight} onChange={v => updateBorder(layer, 'strokeWeight', v)} />
+                                    </Field>
+                                    <Field label="Border Color">
+                                        <InputText value={config[layer]?.border?.color} onChange={v => updateBorder(layer, 'color', v)} />
+                                    </Field>
+                                    <Field label="Fill Color">
+                                        <InputText value={config[layer]?.border?.fill} onChange={v => updateBorder(layer, 'fill', v)} />
+                                    </Field>
+                                </div>
+                                <div className="flex gap-3">
+                                    <Field label="Radius">
+                                        <InputNumber value={config[layer]?.border?.radius} onChange={v => updateBorder(layer, 'radius', v)} />
+                                    </Field>
+                                    <Field label="Min Width">
+                                        <InputNumber value={config[layer]?.border?.minWidth} onChange={v => updateBorder(layer, 'minWidth', v)} />
+                                    </Field>
+                                    <Field label="Min Height">
+                                        <InputNumber value={config[layer]?.border?.minHeight} onChange={v => updateBorder(layer, 'minHeight', v)} />
+                                    </Field>
+                                </div>
+                                <div className="flex gap-3">
+                                    <Field label="Pad Top">
+                                        <InputNumber value={config[layer]?.border?.padding?.top} onChange={v => updatePadding(layer, 'top', v)} />
+                                    </Field>
+                                    <Field label="Pad Right">
+                                        <InputNumber value={config[layer]?.border?.padding?.right} onChange={v => updatePadding(layer, 'right', v)} />
+                                    </Field>
+                                    <Field label="Pad Bottom">
+                                        <InputNumber value={config[layer]?.border?.padding?.bottom} onChange={v => updatePadding(layer, 'bottom', v)} />
+                                    </Field>
+                                    <Field label="Pad Left">
+                                        <InputNumber value={config[layer]?.border?.padding?.left} onChange={v => updatePadding(layer, 'left', v)} />
+                                    </Field>
+                                </div>
+                            </div>
+                        </details>
+
+                        <details className="group">
+                            <summary className="text-[11px] text-surface-500-400 font-bold cursor-pointer hover:text-primary-500 flex items-center gap-1 select-none uppercase tracking-wider py-1">
+                                <ChevronRight size={14} className="group-open:rotate-90 transition-transform" />
+                                Advanced Auto-Scaling
+                            </summary>
+                            <div className="flex flex-col gap-3 mt-3 pl-4 border-l-2 border-surface-200-800">
+                                <div className="flex gap-3">
+                                    <Field label="Width Comp.">
+                                        <InputNumber value={config[layer]?.maxWidthCompensate} onChange={v => updateLayer(layer, 'maxWidthCompensate', v)} />
+                                    </Field>
+                                    <Field label="X Comp.">
+                                        <InputNumber value={config[layer]?.offsetXCompensate} onChange={v => updateLayer(layer, 'offsetXCompensate', v)} />
+                                    </Field>
+                                    <Field label="Y Comp.">
+                                        <InputNumber value={config[layer]?.offsetYCompensate} onChange={v => updateLayer(layer, 'offsetYCompensate', v)} />
+                                    </Field>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                </AccordionItem>
+            ))}
         </div>
     );
 }
@@ -306,11 +605,10 @@ function DropZone({ accept, label, icon: Icon, fileName, onFile }) {
 
     return (
         <label
-            className={`flex items-center gap-3 px-3 py-2.5 border border-dashed rounded-lg cursor-pointer transition-colors select-none ${
-                dragging
-                    ? 'border-primary-500 bg-primary-500/10'
-                    : 'border-surface-300-700 hover:bg-surface-50-950'
-            }`}
+            className={`flex items-center gap-3 px-3 py-2.5 border border-dashed rounded-lg cursor-pointer transition-colors select-none ${dragging
+                ? 'border-primary-500 bg-primary-500/10'
+                : 'border-surface-300-700 hover:bg-surface-50-950'
+                }`}
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
             onDrop={handleDrop}
@@ -335,101 +633,198 @@ function DropZone({ accept, label, icon: Icon, fileName, onFile }) {
 
 // ─── Canvas preview ───────────────────────────────────────────────────────────
 
-function CardPreview({ imageDataUrl, config, player }) {
+function CardPreview({ imageDataUrl, config, player, fontFamily }) {
     const canvasRef = useRef(null);
 
     useEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const W = canvas.width;
-        const H = canvas.height;
 
-        ctx.clearRect(0, 0, W, H);
-
-        // Checkerboard background (transparent indicator)
-        const sq = 12;
-        for (let y = 0; y < H; y += sq) {
-            for (let x = 0; x < W; x += sq) {
-                ctx.fillStyle = (Math.floor(x / sq) + Math.floor(y / sq)) % 2 === 0
-                    ? '#e0e0e0' : '#c8c8c8';
-                ctx.fillRect(x, y, sq, sq);
+        if (!imageDataUrl) {
+            // Reset to default size and draw checkerboard
+            canvas.width = 460;
+            canvas.height = 320;
+            const W = canvas.width;
+            const H = canvas.height;
+            const sq = 12;
+            for (let y = 0; y < H; y += sq) {
+                for (let x = 0; x < W; x += sq) {
+                    ctx.fillStyle = (Math.floor(x / sq) + Math.floor(y / sq)) % 2 === 0
+                        ? '#e0e0e0' : '#c8c8c8';
+                    ctx.fillRect(x, y, sq, sq);
+                }
             }
+            return;
         }
-
-        if (!imageDataUrl) return;
 
         const img = new window.Image();
         img.onload = () => {
-            // Fit image inside canvas preserving aspect ratio
-            const scale = Math.min(W / img.width, H / img.height);
-            const dw = img.width * scale;
-            const dh = img.height * scale;
-            const dx = (W - dw) / 2;
-            const dy = (H - dh) / 2;
-            ctx.drawImage(img, dx, dy, dw, dh);
+            // ── Step 1: compute output image dimensions from config.config.scale ──
+            const { outW, outH } = computeDimensions(config?.config?.scale, img.width, img.height);
 
-            // Draw text overlays using config (simplified preview)
-            if (!player) return;
-            const cx = W / 2;
-            const cy = H / 2;
+            // ── Step 2: size canvas to output aspect ratio at 2× for sharpness ──
+            const RENDER_W = 920;
+            const RENDER_H = Math.round(RENDER_W * (outH / outW));
+            canvas.width = RENDER_W;
+            canvas.height = RENDER_H;
+            const W = canvas.width;
+            const H = canvas.height;
 
-            const renderTextLayer = (layerCfg) => {
-                if (!layerCfg?.template) return;
-                const tmpl = layerCfg.template;
-                // Very naive template rendering for preview — just show field values
-                let text = tmpl
-                    .replace(/\$\{Lastname\.upper\(\)\}/g, (player.name || '').split(' ')[0]?.toUpperCase() || '')
-                    .replace(/\$\{Firstname\.upper\(\)\}/g, (player.name || '').split(' ').slice(1).join(' ').toUpperCase() || '')
-                    .replace(/\$\{[^}]*club[^}]*\}/gi, player.club ? `Đơn vị: ${player.club}` : '')
-                    .replace(/\$\{[^}]*\}/g, '');
-                if (!text.trim()) return;
+            // Draw the image to fill the canvas (it was already scaled to output dims)
+            ctx.drawImage(img, 0, 0, W, H);
 
-                const maxFontSize = Math.min((layerCfg.maxFontSize || 80) * scale, 36);
-                ctx.font = `bold ${maxFontSize}px sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-
-                // Simple color — try to extract first hex if it's a static color
-                const colorMatch = (layerCfg.color || '#333').match(/#[0-9a-fA-F]{6}/);
-                ctx.fillStyle = colorMatch ? colorMatch[0] : '#333333';
-
-                const ox = (layerCfg.offsetX || 0) * scale;
-                const oy = (layerCfg.offsetY || 0) * scale;
-                ctx.fillText(text, cx + dx + ox, cy + dy + oy, (layerCfg.maxWidth || 800) * scale);
-            };
-
-            renderTextLayer(config?.name);
-            renderTextLayer(config?.club);
-            renderTextLayer(config?.group);
+            renderCardContent(ctx, W, H, outW, player, config, fontFamily);
         };
         img.src = imageDataUrl;
-    }, [imageDataUrl, config, player]);
+    }, [imageDataUrl, config, player, fontFamily]);
 
     return (
-        <canvas
-            ref={canvasRef}
-            width={460}
-            height={320}
-            className="rounded border border-surface-200-800 w-full"
-            style={{ imageRendering: 'auto' }}
-        />
+        <div className="w-full h-full flex items-center justify-center min-h-0">
+            <canvas
+                ref={canvasRef}
+                width={460}
+                height={320}
+                className="rounded border border-surface-200-800"
+                style={{ imageRendering: 'auto', maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto' }}
+            />
+        </div>
     );
 }
 
 // ─── Main modal ───────────────────────────────────────────────────────────────
 
+const MAX_HISTORY = 50;
+
 export default function GeneratePlayerCardModal({ open, onClose, players = [] }) {
+    const { activeTournamentId, isLoaded: isTournamentLoaded } = useTournament();
+    
     const [config, setConfig] = useState(() => JSON.parse(JSON.stringify(DEFAULT_CONFIG)));
 
     // Prevent Portal from rendering during SSR (avoids hydration attribute mismatch)
     const [mounted, setMounted] = useState(false);
     useEffect(() => setMounted(true), []);
 
+    // ── Undo / Redo ───────────────────────────────────────────────────────────
+    const pastRef = useRef([]);
+    const futureRef = useRef([]);
+    const lastSavedConfigRef = useRef(config);
+    const [canUndoState, setCanUndoState] = useState(false);
+    const [canRedo, setCanRedo] = useState(false);
+
+    const pushHistory = useCallback((snapshot) => {
+        pastRef.current = [...pastRef.current.slice(-(MAX_HISTORY - 1)), snapshot];
+        futureRef.current = [];
+        setCanUndoState(true);
+        setCanRedo(false);
+    }, []);
+
+    const commitHistory = useCallback(() => {
+        if (JSON.stringify(lastSavedConfigRef.current) !== JSON.stringify(config)) {
+            pushHistory(lastSavedConfigRef.current);
+            lastSavedConfigRef.current = config;
+        }
+    }, [config, pushHistory]);
+
+    const undo = useCallback(() => {
+        commitHistory();
+        if (!pastRef.current.length) return;
+        const snapshot = pastRef.current[pastRef.current.length - 1];
+        pastRef.current = pastRef.current.slice(0, -1);
+        setConfig(cur => {
+            futureRef.current = [cur, ...futureRef.current.slice(0, MAX_HISTORY - 1)];
+            setCanRedo(true);
+            lastSavedConfigRef.current = snapshot;
+            return snapshot;
+        });
+        setCanUndoState(pastRef.current.length > 0);
+    }, [commitHistory]);
+
+    const redo = useCallback(() => {
+        commitHistory();
+        if (!futureRef.current.length) return;
+        const snapshot = futureRef.current[0];
+        futureRef.current = futureRef.current.slice(1);
+        setConfig(cur => {
+            pastRef.current = [...pastRef.current.slice(-(MAX_HISTORY - 1)), cur];
+            setCanUndoState(true);
+            lastSavedConfigRef.current = snapshot;
+            return snapshot;
+        });
+        setCanRedo(futureRef.current.length > 0);
+    }, [commitHistory]);
+
+    useEffect(() => {
+        if (!open) return;
+        const handler = (e) => {
+            const ctrl = e.ctrlKey || e.metaKey;
+            if (ctrl && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
+            if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [open, undo, redo]);
+
+    const isConfigDirty = JSON.stringify(lastSavedConfigRef.current) !== JSON.stringify(config);
+    const canUndoActual = canUndoState || isConfigDirty;
+
     // File states
-    const [imageFile, setImageFile]   = useState(null);
+    const [imageFile, setImageFile] = useState(null);
     const [imageDataUrl, setImageDataUrl] = useState(null);
-    const [fontFile, setFontFile]     = useState(null);
+    const [fontFile, setFontFile] = useState(null);
+    const [uploadExpanded, setUploadExpanded] = useState(true);
+
+    const isInitialLoadRef = useRef(true);
+
+    // Load persisted assets on mount
+    useEffect(() => {
+        if (!isTournamentLoaded || !activeTournamentId) return;
+        Promise.all([
+            loadCardGenAsset('image', activeTournamentId),
+            loadCardGenAsset('font', activeTournamentId),
+            loadCardGenAsset('config', activeTournamentId)
+        ]).then(([loadedImage, loadedFont, loadedConfig]) => {
+            setImageFile(loadedImage || null);
+            setFontFile(loadedFont || null);
+            
+            if (loadedConfig) {
+                setConfig(loadedConfig);
+                lastSavedConfigRef.current = loadedConfig;
+            } else {
+                const defaultConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+                setConfig(defaultConfig);
+                lastSavedConfigRef.current = defaultConfig;
+            }
+            
+            if (loadedImage && loadedFont) {
+                setUploadExpanded(false);
+            } else {
+                setUploadExpanded(true);
+            }
+        })
+    }, [activeTournamentId, isTournamentLoaded]);
+
+    // Persist config on change
+    useEffect(() => {
+        if (isInitialLoadRef.current) {
+            isInitialLoadRef.current = false;
+            return;
+        }
+        if (!activeTournamentId) return;
+        saveCardGenAsset('config', config, activeTournamentId);
+    }, [config, activeTournamentId]);
+
+    const handleImageFile = (file) => {
+        setImageFile(file);
+        saveCardGenAsset('image', file, activeTournamentId);
+        if (fontFile) setUploadExpanded(false);
+    };
+
+    const handleFontFile = (file) => {
+        setFontFile(file);
+        saveCardGenAsset('font', file, activeTournamentId);
+        if (imageFile) setUploadExpanded(false);
+    };
 
     // Preview player selector
     const [previewIdx, setPreviewIdx] = useState('');
@@ -444,6 +839,29 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         reader.readAsDataURL(imageFile);
     }, [imageFile]);
 
+    // Load custom font file
+    const [loadedFontFamily, setLoadedFontFamily] = useState('');
+    useEffect(() => {
+        if (!fontFile) {
+            setLoadedFontFamily('');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                // Generate unique name so replacing the file forces an update
+                const fontName = `CustomFont_${Date.now()}`;
+                const font = new FontFace(fontName, e.target.result);
+                const loadedFont = await font.load();
+                document.fonts.add(loadedFont);
+                setLoadedFontFamily(fontName);
+            } catch (err) {
+                console.error('Failed to load font:', err);
+            }
+        };
+        reader.readAsArrayBuffer(fontFile);
+    }, [fontFile]);
+
     // ── Config import / export ────────────────────────────────────────────────
 
     const importConfigRef = useRef(null);
@@ -455,6 +873,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         reader.onload = (ev) => {
             try {
                 const parsed = JSON.parse(ev.target.result);
+                commitHistory();
                 setConfig(parsed);
             } catch {
                 alert('Invalid JSON config file.');
@@ -473,42 +892,109 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
     // ── Download helpers ──────────────────────────────────────────────────────
 
-    const downloadCard = useCallback((player) => {
-        if (!imageDataUrl) return;
-        // For the browser preview we produce a PNG from the canvas
-        // In production this would call a server or Python process
-        const canvas = document.createElement('canvas');
-        canvas.width = 460;
-        canvas.height = 320;
-        const ctx = canvas.getContext('2d');
+    const [isDownloading, setIsDownloading] = useState(false);
+    const [processedCount, setProcessedCount] = useState(0);
+    const [rangeStart, setRangeStart] = useState('');
+    const [rangeEnd, setRangeEnd] = useState('');
 
-        const img = new window.Image();
-        img.onload = () => {
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            const playerName = (player?.name || 'player').replace(/\s+/g, '_');
-            const url = canvas.toDataURL('image/png');
+    const generateCardBlob = (player) => {
+        return new Promise((resolve) => {
+            if (!imageDataUrl) { resolve(null); return; }
+            const img = new window.Image();
+            img.onload = () => {
+                const { outW, outH } = computeDimensions(config?.config?.scale, img.width, img.height);
+                const canvas = document.createElement('canvas');
+                canvas.width = outW;
+                canvas.height = outH;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, outW, outH);
+
+                renderCardContent(ctx, outW, outH, outW, player, config, loadedFontFamily);
+
+                canvas.toBlob((blob) => resolve(blob), 'image/png');
+            };
+            img.src = imageDataUrl;
+        });
+    };
+
+    const handleDownloadCurrent = async () => {
+        if (!previewPlayer || isDownloading) return;
+        setIsDownloading(true);
+        const blob = await generateCardBlob(previewPlayer);
+        if (blob) {
+            const playerName = (previewPlayer?.name || 'player').replace(/\s+/g, '_');
+            const url = URL.createObjectURL(blob);
             Object.assign(document.createElement('a'), {
                 href: url,
                 download: `${playerName}_card.png`,
             }).click();
-        };
-        img.src = imageDataUrl;
-    }, [imageDataUrl]);
-
-    const handleDownloadCurrent = () => {
-        if (previewPlayer) downloadCard(previewPlayer);
+            URL.revokeObjectURL(url);
+        }
+        setIsDownloading(false);
     };
 
-    const handleDownloadAll = () => {
-        players.forEach((p, i) => {
-            setTimeout(() => downloadCard(p), i * 200);
-        });
+    const handleDownloadAll = async () => {
+        if (!players.length || !imageDataUrl || isDownloading) return;
+
+        const startIdx = Math.max(0, (parseInt(rangeStart) || 1) - 1);
+        const endIdx = Math.min(Math.max(0, players.length - 1), (parseInt(rangeEnd) || players.length) - 1);
+
+        if (startIdx > endIdx) {
+            alert('Invalid range. Check your start and end numbers.');
+            return;
+        }
+
+        const targetPlayers = players.slice(startIdx, endIdx + 1);
+
+        setIsDownloading(true);
+        setProcessedCount(0);
+
+        // Yield main thread to allow React to paint the 'Processing...' UI state
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        try {
+            const zip = new JSZip();
+            // Process sequentially to prevent massive memory spikes and UI locking
+            for (let j = 0; j < targetPlayers.length; j++) {
+                const p = targetPlayers[j];
+                const blob = await generateCardBlob(p);
+                if (blob) {
+                    const originalIndex = startIdx + j;
+                    const id = p.playerUniqueId || p.id || String(originalIndex + 1);
+                    zip.file(`${id}_card.png`, blob);
+                }
+
+                setProcessedCount(j + 1);
+                // Yield thread each iteration so the UI can update the counter
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+            const url = URL.createObjectURL(zipBlob);
+            const isAll = targetPlayers.length === players.length;
+            Object.assign(document.createElement('a'), {
+                href: url,
+                download: isAll ? `all_player_cards.zip` : `player_cards_${startIdx + 1}_to_${endIdx + 1}.zip`,
+            }).click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('Failed to generate zip', e);
+            alert('Failed to generate zip');
+        }
+
+        setIsDownloading(false);
     };
+
+    const computedStartIdx = Math.max(0, (parseInt(rangeStart) || 1) - 1);
+    const computedEndIdx = Math.min(Math.max(0, players.length - 1), (parseInt(rangeEnd) || players.length) - 1);
+    const targetCount = players.length > 0 ? Math.max(0, computedEndIdx - computedStartIdx + 1) : 0;
 
     if (!open || !mounted) return null;
 
     return (
         <Portal>
+            <ScrollLock />
+
             {/* Backdrop */}
             <div
                 className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
@@ -519,7 +1005,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                 <div
                     className="bg-surface-100-900 border border-surface-200-800 rounded-xl shadow-2xl flex flex-col"
-                    style={{ width: '1060px', maxWidth: '100%', maxHeight: '90vh' }}
+                    style={{ width: 'min(1060px, 100%)', maxHeight: '92vh', height: '92vh' }}
                     onClick={e => e.stopPropagation()}
                 >
                     {/* Header */}
@@ -528,46 +1014,99 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                             <CreditCard size={18} className="text-primary-500" />
                             <h2 className="text-base font-semibold">Generate player cards</h2>
                         </div>
-                        <button
-                            className="p-1.5 rounded hover:bg-surface-200-800 transition-colors cursor-pointer"
-                            onClick={onClose}
-                            aria-label="Close"
-                        >
-                            <X size={16} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1 mr-1">
+                                <button
+                                    className="p-1.5 rounded hover:bg-surface-200-800 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+                                    onClick={undo}
+                                    disabled={!canUndoActual}
+                                    title="Undo (Ctrl+Z)"
+                                >
+                                    <Undo2 size={15} />
+                                </button>
+                                <button
+                                    className="p-1.5 rounded hover:bg-surface-200-800 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+                                    onClick={redo}
+                                    disabled={!canRedo}
+                                    title="Redo (Ctrl+Y)"
+                                >
+                                    <Redo2 size={15} />
+                                </button>
+                            </div>
+                            <div className="w-px h-4 bg-surface-200-800 mx-1"></div>
+                            
+                            <label className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
+                                <FileUp size={13} />
+                                Import config
+                                <input
+                                    ref={importConfigRef}
+                                    type="file"
+                                    accept=".json"
+                                    className="hidden"
+                                    onChange={handleImportConfig}
+                                />
+                            </label>
+                            <button
+                                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
+                                onClick={handleExportConfig}
+                            >
+                                <FileDown size={13} />
+                                Export config
+                            </button>
+                            <div className="w-px h-4 bg-surface-200-800 mx-1"></div>
+                            <button
+                                className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
+                                onClick={() => setUploadExpanded(v => !v)}
+                            >
+                                {uploadExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                Uploads
+                            </button>
+                            <button
+                                className="p-1.5 rounded hover:bg-surface-200-800 transition-colors cursor-pointer ml-1"
+                                onClick={onClose}
+                                aria-label="Close"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
                     </div>
 
                     {/* Upload strip */}
-                    <div className="px-5 py-3 border-b border-surface-200-800 space-y-2 shrink-0">
-                        <DropZone
-                            accept="image/*"
-                            label="Drag and Drop or Select image"
-                            icon={Image}
-                            fileName={imageFile?.name}
-                            onFile={setImageFile}
-                        />
-                        <DropZone
-                            accept=".ttf,.otf,.woff,.woff2"
-                            label="Drag and Drop or Select font"
-                            icon={Type}
-                            fileName={fontFile?.name}
-                            onFile={setFontFile}
-                        />
-                    </div>
+                    {uploadExpanded && (
+                        <div className="px-5 py-3 border-b border-surface-200-800 space-y-2 shrink-0">
+                            <DropZone
+                                accept="image/*"
+                                label="Drag and Drop or Select image"
+                                icon={Image}
+                                fileName={imageFile?.name}
+                                onFile={handleImageFile}
+                            />
+                            <DropZone
+                                accept=".ttf,.otf,.woff,.woff2"
+                                label="Drag and Drop or Select font"
+                                icon={Type}
+                                fileName={fontFile?.name}
+                                onFile={handleFontFile}
+                            />
+                        </div>
+                    )}
 
                     {/* Body: preview | settings */}
                     <div className="flex flex-1 min-h-0 overflow-hidden">
                         {/* ── Left: Preview ── */}
-                        <div className="flex-1 flex flex-col gap-3 p-4 border-r border-surface-200-800 min-w-0">
-                            <CardPreview
-                                imageDataUrl={imageDataUrl}
-                                config={config}
-                                player={previewPlayer}
-                            />
+                        <div className="flex-1 flex flex-col gap-2 p-4 border-r border-surface-200-800 min-w-0 overflow-hidden">
+                            <div className="flex-1 min-h-0 flex items-center justify-center">
+                                <CardPreview
+                                    imageDataUrl={imageDataUrl}
+                                    config={config}
+                                    player={previewPlayer}
+                                    fontFamily={loadedFontFamily}
+                                />
+                            </div>
 
                             {/* Vertical/horizontal crosshair hint when no image */}
                             {!imageDataUrl && (
-                                <p className="text-xs text-center text-surface-400-600">
+                                <p className="text-xs text-center text-surface-400-600 shrink-0">
                                     Upload a template image to see the preview
                                 </p>
                             )}
@@ -575,31 +1114,13 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
                         {/* ── Right: Settings ── */}
                         <div className="w-80 flex flex-col shrink-0">
-                            {/* Config toolbar */}
-                            <div className="flex gap-2 px-3 py-2 border-b border-surface-200-800 shrink-0">
-                                <label className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
-                                    <FileUp size={13} />
-                                    Import config
-                                    <input
-                                        ref={importConfigRef}
-                                        type="file"
-                                        accept=".json"
-                                        className="hidden"
-                                        onChange={handleImportConfig}
-                                    />
-                                </label>
-                                <button
-                                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
-                                    onClick={handleExportConfig}
-                                >
-                                    <FileDown size={13} />
-                                    Export config
-                                </button>
-                            </div>
 
-                            {/* Config tree */}
-                            <div className="flex-1 overflow-y-auto px-2 py-1">
-                                <ConfigTree config={config} onUpdate={setConfig} />
+                            {/* Config Editor */}
+                            <div 
+                                className="flex-1 overflow-y-auto w-full custom-scrollbar"
+                                onBlurCapture={commitHistory}
+                            >
+                                <ConfigEditor config={config} onUpdate={setConfig} />
                             </div>
 
                             {/* Preview player selector */}
@@ -609,6 +1130,16 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                     className="flex-1 text-xs bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1.5 outline-none cursor-pointer"
                                     value={previewIdx}
                                     onChange={e => setPreviewIdx(e.target.value)}
+                                    title="Scroll mouse wheel to quickly change player"
+                                    onWheel={e => {
+                                        if (players.length === 0) return;
+                                        const delta = Math.sign(e.deltaY);
+                                        if (delta === 0) return;
+                                        let current = previewIdx === "" ? -1 : parseInt(previewIdx);
+                                        current += delta;
+                                        current = Math.max(0, Math.min(current, players.length - 1));
+                                        setPreviewIdx(String(current));
+                                    }}
                                 >
                                     <option value="">------</option>
                                     {players.map((p, i) => (
@@ -619,40 +1150,81 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                 </select>
                             </div>
 
-                            {/* Update preview button */}
-                            <div className="px-3 pb-2 shrink-0">
-                                <button
-                                    className="w-full flex items-center justify-center gap-1.5 text-sm px-3 py-1.5 rounded preset-filled cursor-pointer"
-                                    onClick={() => {
-                                        // Trigger re-render by toggling a dummy state (canvas effect already watches deps)
-                                        setPreviewIdx(v => v);
-                                    }}
-                                >
-                                    <RefreshCw size={14} />
-                                    Update preview
-                                </button>
-                            </div>
                         </div>
                     </div>
 
                     {/* Footer */}
                     <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-surface-200-800 shrink-0">
+                        {/* Range Selector */}
+                        <div className="flex items-center gap-1.5 mr-auto">
+                            <span className="text-sm text-surface-500-400 font-medium">Range:</span>
+                            <input
+                                type="number"
+                                min="1" max={players.length}
+                                className="w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 text-sm outline-none text-center disabled:opacity-50"
+                                placeholder="1"
+                                value={rangeStart}
+                                onChange={e => setRangeStart(e.target.value)}
+                                disabled={isDownloading}
+                            />
+                            <span className="text-sm text-surface-500-400">-</span>
+                            <input
+                                type="number"
+                                min="1" max={players.length}
+                                className="w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 text-sm outline-none text-center disabled:opacity-50"
+                                placeholder={players.length || 'All'}
+                                value={rangeEnd}
+                                onChange={e => setRangeEnd(e.target.value)}
+                                disabled={isDownloading}
+                            />
+                        </div>
+
                         <button
                             className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded preset-tonal cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                             onClick={handleDownloadCurrent}
-                            disabled={!imageDataUrl || !previewPlayer}
+                            disabled={!imageDataUrl || !previewPlayer || isDownloading}
                             title={!previewPlayer ? 'Select a player to preview first' : ''}
                         >
                             <Download size={14} />
                             Download current
                         </button>
                         <button
-                            className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded preset-filled cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            className={`relative overflow-hidden flex items-center justify-center gap-1.5 text-sm px-4 py-1.5 rounded transition-all min-w-[170px] ${isDownloading
+                                ? 'preset-filled cursor-wait'
+                                : 'preset-filled cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
+                                }`}
                             onClick={handleDownloadAll}
-                            disabled={!imageDataUrl || players.length === 0}
+                            disabled={!imageDataUrl || players.length === 0 || isDownloading}
                         >
-                            <Download size={14} />
-                            Download all
+                            {isDownloading && (
+                                <div
+                                    className="absolute inset-0 rounded pointer-events-none"
+                                    style={{
+                                        padding: '3px',
+                                        WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                        WebkitMaskComposite: 'xor',
+                                        mask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                        maskComposite: 'exclude',
+                                    }}
+                                >
+                                    <div className="absolute inset-[-1000%] animate-[spin_2s_linear_infinite] bg-[conic-gradient(from_90deg_at_50%_50%,transparent_0%,rgba(255,255,255,0.9)_15%,transparent_15%,transparent_50%,rgba(255,255,255,0.9)_65%,transparent_65%)]" />
+                                </div>
+                            )}
+
+                            {isDownloading ? (
+                                <span className="animate-pulse tracking-wide font-medium relative z-10">
+                                    {processedCount > 0
+                                        ? `Processing (${processedCount}/${targetCount})`
+                                        : 'Processing...'}
+                                </span>
+                            ) : (
+                                <>
+                                    <Download size={14} className="relative z-10" />
+                                    <span className="relative z-10">
+                                        {(!rangeStart && !rangeEnd) ? 'Download all (ZIP)' : 'Download range (ZIP)'}
+                                    </span>
+                                </>
+                            )}
                         </button>
                     </div>
                 </div>

@@ -1,6 +1,7 @@
 import "./globals.css";
 import Header from "@/app/component/Header";
 import Footer from "@/app/component/Footer";
+import { TournamentProvider } from "@/app/context/TournamentContext";
 
 export default function RootLayout({ children }) {
     return (
@@ -17,9 +18,11 @@ export default function RootLayout({ children }) {
             ` }} />
         </head>
         <body className="min-h-screen flex flex-col">
-            <Header />
-            <main className="flex-1">{children}</main>
-            <Footer />
+            <TournamentProvider>
+                <Header />
+                <main className="flex-1">{children}</main>
+                <Footer />
+            </TournamentProvider>
         </body>
         </html>
     );

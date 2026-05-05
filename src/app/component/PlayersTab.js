@@ -10,6 +10,8 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSo
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import GeneratePlayerCardModal from '@/app/component/GeneratePlayerCardModal';
+import ScrollLock from '@/app/component/ScrollLock';
+import { useTournament } from '@/app/context/TournamentContext';
 
 // ─── Column definitions ──────────────────────────────────────────────────────
 
@@ -438,7 +440,10 @@ DraggableRow.displayName = 'DraggableRow';
 const MAX_HISTORY = 100;
 
 export default function PlayersTab() {
+    const { activeTournamentId, isLoaded: isTournamentLoaded } = useTournament();
+    
     const [players, setPlayers] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
     const [toastMessage, setToastMessage] = useState('');
     const [toastType, setToastType] = useState(''); // 'error' | 'success'
     const saveTimeoutRef = useRef(null);
@@ -608,7 +613,7 @@ export default function PlayersTab() {
     const openMappingModal = async () => {
         // Load persisted mapping from IndexedDB and reconstruct rows
         try {
-            const saved = await loadClubFedMapping();
+            const saved = await loadClubFedMapping(activeTournamentId);
             const entries = Object.entries(saved)
                 // The saved format stores { club -> { federation } } entries; reconstruct pairs.
                 .filter(([key, val]) => val?.federation && key !== val?.federation)
@@ -734,7 +739,7 @@ export default function PlayersTab() {
                 mappingData[row.federation] = { club: row.club };
             }
         });
-        await saveClubFedMapping(mappingData);
+        await saveClubFedMapping(mappingData, activeTournamentId);
 
         setShowMappingModal(false);
     };
@@ -979,14 +984,26 @@ export default function PlayersTab() {
         : players;
 
     useEffect(() => {
+        if (!isTournamentLoaded || !activeTournamentId) return;
+        
         let isActive = true;
-        loadPlayers().then(saved => {
+        hasLoadedRef.current = false;
+        setIsLoading(true);
+        
+        loadPlayers(activeTournamentId).then(saved => {
             if (!isActive) return;
-            setPlayers(normalizePlayers(saved));
+            const normalized = normalizePlayers(saved);
+            setPlayers(normalized);
+            // Reset history when switching tournaments
+            pastRef.current = [];
+            futureRef.current = [];
+            setCanUndo(false);
+            setCanRedo(false);
             hasLoadedRef.current = true;
+            setIsLoading(false);
         });
         return () => { isActive = false; };
-    }, []);
+    }, [activeTournamentId, isTournamentLoaded]);
 
     useEffect(() => {
         if (!hasLoadedRef.current) return;
@@ -994,10 +1011,10 @@ export default function PlayersTab() {
         if (saveIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveIdleRef.current);
         saveTimeoutRef.current = setTimeout(() => {
             if (window.requestIdleCallback) {
-                saveIdleRef.current = window.requestIdleCallback(() => savePlayers(players), { timeout: 1000 });
+                saveIdleRef.current = window.requestIdleCallback(() => savePlayers(players, activeTournamentId), { timeout: 1000 });
             } else {
                 // Fire save without awaiting - it's fire-and-forget now
-                savePlayers(players);
+                savePlayers(players, activeTournamentId);
             }
         }, 300);
         return () => {
@@ -1019,7 +1036,7 @@ export default function PlayersTab() {
                     mappingData[row.federation] = { club: row.club };
                 }
             });
-            saveClubFedMapping(mappingData);
+            saveClubFedMapping(mappingData, activeTournamentId);
         }, 500);
         return () => {
             if (mappingSaveTimeoutRef.current) clearTimeout(mappingSaveTimeoutRef.current);
@@ -1051,21 +1068,39 @@ export default function PlayersTab() {
 
     const applyColumnTemplate = (colKey, template) => {
         try {
-            // Create a function that evaluates the template string for each player
-            // Using Function constructor with player object destructuring for safe evaluation
-            const evalTemplate = new Function('player', `
-                const { playerUniqueId, name, gender, group, rating, title, federation, fideId, club, teamUniqueId, type } = player;
-                return \`${template}\`;
+            const evalTemplate = new Function('ctx', `
+                with(ctx) {
+                    return \`${template}\`;
+                }
             `);
+
+            const createProxy = (player) => new Proxy(player, {
+                has(target, prop) {
+                    if (typeof prop !== 'string') return false;
+                    if (prop in target) return true;
+                    if (prop === 'lastname' || prop === 'firstname') return true;
+                    if (prop in globalThis) return false;
+                    return true;
+                },
+                get(target, prop) {
+                    if (prop === 'lastname') return (target.name || '').split(' ')[0] || '';
+                    if (prop === 'firstname') return (target.name || '').split(' ').slice(1).join(' ') || '';
+                    const val = target[prop];
+                    return val !== undefined && val !== null ? val : '';
+                }
+            });
 
             let errorCount = 0;
             let firstError = null;
 
             setPlayersWithHistory(prev => prev.map(p => {
                 try {
-                    const value = evalTemplate(p);
+                    const value = evalTemplate(createProxy(p));
                     return { ...p, [colKey]: value || '' };
                 } catch (e) {
+                    if (e.message?.includes('is not defined')) {
+                        return { ...p, [colKey]: '' };
+                    }
                     errorCount++;
                     if (!firstError) firstError = e;
                     return p;
@@ -1096,6 +1131,15 @@ export default function PlayersTab() {
     };
 
     // ── Render ────────────────────────────────────────────────────────────────
+    if (!isTournamentLoaded || isLoading) {
+        return (
+            <div className="flex flex-col items-center justify-center py-24 space-y-4">
+                <div className="w-12 h-12 border-4 border-surface-200-800 border-t-primary-500 rounded-full animate-spin"></div>
+                <p className="text-surface-600-400 font-medium">Loading data...</p>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-3">
             {/* Toast notifications */}
@@ -1695,6 +1739,7 @@ export default function PlayersTab() {
             {/* Club/Fed Mapping Modal */}
             {showMappingModal && (
                 <Portal>
+                    <ScrollLock />
                     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={() => setShowMappingModal(false)} />
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                         <div className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-2xl space-y-4 shadow-xl max-h-[90vh] flex flex-col">
@@ -1783,8 +1828,8 @@ export default function PlayersTab() {
                                             <button
                                                 key={opt.value}
                                                 className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${mappingDirection === opt.value
-                                                        ? 'preset-filled'
-                                                        : 'preset-tonal opacity-60 hover:opacity-100'
+                                                    ? 'preset-filled'
+                                                    : 'preset-tonal opacity-60 hover:opacity-100'
                                                     }`}
                                                 onClick={() => setMappingDirection(opt.value)}
                                             >
