@@ -1251,256 +1251,256 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
     return (
         <>
-        <Portal>
-            <ScrollLock />
+            <Portal>
+                <ScrollLock />
 
-            {/* Backdrop */}
-            <div
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
-                onClick={onClose}
-            />
-
-            {/* Modal */}
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                {/* Backdrop */}
                 <div
-                    className="bg-surface-100-900 border border-surface-200-800 rounded-xl shadow-2xl flex flex-col"
-                    style={{ width: 'min(1060px, 100%)', maxHeight: '92vh', height: '92vh' }}
-                    onClick={e => e.stopPropagation()}
-                >
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-surface-200-800 shrink-0">
-                        <div className="flex items-center gap-2">
-                            <CreditCard size={18} className="text-primary-500" />
-                            <h2 className="text-base font-semibold">Generate player cards</h2>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1 mr-1">
-                                <button
-                                    className="p-1.5 rounded hover:bg-surface-200-800 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
-                                    onClick={undo}
-                                    disabled={!canUndoActual}
-                                    title="Undo (Ctrl+Z)"
-                                >
-                                    <Undo2 size={15} />
-                                </button>
-                                <button
-                                    className="p-1.5 rounded hover:bg-surface-200-800 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
-                                    onClick={redo}
-                                    disabled={!canRedo}
-                                    title="Redo (Ctrl+Y)"
-                                >
-                                    <Redo2 size={15} />
-                                </button>
+                    className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+                    onClick={onClose}
+                />
+
+                {/* Modal */}
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div
+                        className="bg-surface-100-900 border border-surface-200-800 rounded-xl shadow-2xl flex flex-col"
+                        style={{ width: 'min(1060px, 100%)', maxHeight: '92vh', height: '92vh' }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-5 py-3.5 border-b border-surface-200-800 shrink-0">
+                            <div className="flex items-center gap-2">
+                                <CreditCard size={18} className="text-primary-500" />
+                                <h2 className="text-base font-semibold">Generate player cards</h2>
                             </div>
-                            <div className="w-px h-4 bg-surface-200-800 mx-1"></div>
-
-                            <label className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
-                                <FileUp size={13} />
-                                Import config
-                                <input
-                                    ref={importConfigRef}
-                                    type="file"
-                                    accept=".json"
-                                    className="hidden"
-                                    onChange={handleImportConfig}
-                                />
-                            </label>
-                            <button
-                                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
-                                onClick={handleExportConfig}
-                            >
-                                <FileDown size={13} />
-                                Export config
-                            </button>
-                            <div className="w-px h-4 bg-surface-200-800 mx-1"></div>
-                            <button
-                                className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
-                                onClick={() => setUploadExpanded(v => !v)}
-                            >
-                                {uploadExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                Uploads
-                            </button>
-                            <button
-                                className="p-1.5 rounded hover:bg-surface-200-800 transition-colors cursor-pointer ml-1"
-                                onClick={onClose}
-                                aria-label="Close"
-                            >
-                                <X size={16} />
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Upload strip */}
-                    {uploadExpanded && (
-                        <div className="px-5 py-3 border-b border-surface-200-800 space-y-2 shrink-0">
-                            <DropZone
-                                accept="image/*"
-                                label="Drag and Drop or Select image"
-                                icon={Image}
-                                fileName={imageFile?.name}
-                                onFile={handleImageFile}
-                            />
-                            <DropZone
-                                accept=".ttf,.otf,.woff,.woff2"
-                                label="Drag and Drop or Select font"
-                                icon={Type}
-                                fileName={fontFile?.name}
-                                onFile={handleFontFile}
-                            />
-                        </div>
-                    )}
-
-                    {/* Body: preview | settings */}
-                    <div className="flex flex-1 min-h-0 overflow-hidden">
-                        {/* ── Left: Preview ── */}
-                        <div className="flex-1 flex flex-col gap-2 p-4 border-r border-surface-200-800 min-w-0 overflow-hidden">
-                            <div className="flex-1 min-h-0 flex items-center justify-center">
-                                <CardPreview
-                                    imageDataUrl={imageDataUrl}
-                                    config={config}
-                                    player={previewPlayer}
-                                    fontFamily={loadedFontFamily}
-                                />
-                            </div>
-
-                            {/* Vertical/horizontal crosshair hint when no image */}
-                            {!imageDataUrl && (
-                                <p className="text-xs text-center text-surface-400-600 shrink-0">
-                                    Upload a template image to see the preview
-                                </p>
-                            )}
-                        </div>
-
-                        {/* ── Right: Settings ── */}
-                        <div className="w-80 flex flex-col shrink-0">
-
-                            {/* Config Editor */}
-                            <div className="flex flex-col h-full bg-surface-50-950 overflow-y-auto">
-                                <ConfigEditor
-                                    config={config}
-                                    onUpdate={updateConfigWithHistory}
-                                    showConfirm={showConfirm}
-                                />
-                            </div>
-
-                            {/* Preview player selector */}
-                            <div className="border-t border-surface-200-800 px-3 py-2 flex items-center gap-2 shrink-0">
-                                <span className="text-xs text-surface-500-400 shrink-0">Preview</span>
-                                <select
-                                    className="flex-1 text-xs bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1.5 outline-none cursor-pointer"
-                                    value={previewIdx}
-                                    onChange={e => setPreviewIdx(e.target.value)}
-                                    title="Scroll mouse wheel to quickly change player"
-                                    onWheel={e => {
-                                        if (players.length === 0) return;
-                                        const delta = Math.sign(e.deltaY);
-                                        if (delta === 0) return;
-                                        let current = previewIdx === "" ? -1 : parseInt(previewIdx);
-                                        current += delta;
-                                        current = Math.max(0, Math.min(current, players.length - 1));
-                                        setPreviewIdx(String(current));
-                                    }}
-                                >
-                                    <option value="">------</option>
-                                    {players.map((p, i) => (
-                                        <option key={i} value={i}>
-                                            {p.name || `Player ${p.playerUniqueId}`}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                        </div>
-                    </div>
-
-                    {/* Footer */}
-                    <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-surface-200-800 shrink-0">
-                        {/* Range Selector */}
-                        <div className="flex items-center gap-1.5 mr-auto">
-                            <span className="text-sm text-surface-500-400 font-medium">Range:</span>
-                            <input
-                                type="number"
-                                min="1" max={players.length}
-                                className="w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 text-sm outline-none text-center disabled:opacity-50"
-                                placeholder="1"
-                                value={rangeStart}
-                                onChange={e => setRangeStart(e.target.value)}
-                                disabled={isDownloading}
-                            />
-                            <span className="text-sm text-surface-500-400">-</span>
-                            <input
-                                type="number"
-                                min="1" max={players.length}
-                                className="w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 text-sm outline-none text-center disabled:opacity-50"
-                                placeholder={players.length || 'All'}
-                                value={rangeEnd}
-                                onChange={e => setRangeEnd(e.target.value)}
-                                disabled={isDownloading}
-                            />
-                        </div>
-
-                        <button
-                            className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded preset-tonal cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                            onClick={handleDownloadCurrent}
-                            disabled={!imageDataUrl || !previewPlayer || isDownloading}
-                            title={!previewPlayer ? 'Select a player to preview first' : ''}
-                        >
-                            <Download size={14} />
-                            Download current
-                        </button>
-                        <button
-                            className={`relative overflow-hidden flex items-center justify-center gap-1.5 text-sm px-4 py-1.5 rounded transition-all min-w-[170px] ${isDownloading
-                                ? 'preset-filled cursor-wait'
-                                : 'preset-filled cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
-                                }`}
-                            onClick={handleDownloadAll}
-                            disabled={!imageDataUrl || players.length === 0 || isDownloading}
-                        >
-                            {isDownloading && (
-                                <div
-                                    className="absolute inset-0 rounded pointer-events-none"
-                                    style={{
-                                        padding: '3px',
-                                        WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-                                        WebkitMaskComposite: 'xor',
-                                        mask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-                                        maskComposite: 'exclude',
-                                    }}
-                                >
-                                    <div className="absolute inset-[-1000%] animate-[spin_2s_linear_infinite] bg-[conic-gradient(from_90deg_at_50%_50%,transparent_0%,rgba(255,255,255,0.9)_15%,transparent_15%,transparent_50%,rgba(255,255,255,0.9)_65%,transparent_65%)]" />
+                            <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1 mr-1">
+                                    <button
+                                        className="p-1.5 rounded hover:bg-surface-200-800 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+                                        onClick={undo}
+                                        disabled={!canUndoActual}
+                                        title="Undo (Ctrl+Z)"
+                                    >
+                                        <Undo2 size={15} />
+                                    </button>
+                                    <button
+                                        className="p-1.5 rounded hover:bg-surface-200-800 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+                                        onClick={redo}
+                                        disabled={!canRedo}
+                                        title="Redo (Ctrl+Y)"
+                                    >
+                                        <Redo2 size={15} />
+                                    </button>
                                 </div>
-                            )}
+                                <div className="w-px h-4 bg-surface-200-800 mx-1"></div>
 
-                            {isDownloading ? (
-                                <span className="animate-pulse tracking-wide font-medium relative z-10">
-                                    {processedCount > 0
-                                        ? `Processing (${processedCount}/${targetCount})`
-                                        : 'Processing...'}
-                                </span>
-                            ) : (
-                                <>
-                                    <Download size={14} className="relative z-10" />
-                                    <span className="relative z-10">
-                                        {(!rangeStart && !rangeEnd) ? 'Download all (ZIP)' : 'Download range (ZIP)'}
+                                <label className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
+                                    <FileUp size={13} />
+                                    Import config
+                                    <input
+                                        ref={importConfigRef}
+                                        type="file"
+                                        accept=".json"
+                                        className="hidden"
+                                        onChange={handleImportConfig}
+                                    />
+                                </label>
+                                <button
+                                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
+                                    onClick={handleExportConfig}
+                                >
+                                    <FileDown size={13} />
+                                    Export config
+                                </button>
+                                <div className="w-px h-4 bg-surface-200-800 mx-1"></div>
+                                <button
+                                    className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
+                                    onClick={() => setUploadExpanded(v => !v)}
+                                >
+                                    {uploadExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                    Uploads
+                                </button>
+                                <button
+                                    className="p-1.5 rounded hover:bg-surface-200-800 transition-colors cursor-pointer ml-1"
+                                    onClick={onClose}
+                                    aria-label="Close"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Upload strip */}
+                        {uploadExpanded && (
+                            <div className="px-5 py-3 border-b border-surface-200-800 space-y-2 shrink-0">
+                                <DropZone
+                                    accept="image/*"
+                                    label="Drag and Drop or Select image"
+                                    icon={Image}
+                                    fileName={imageFile?.name}
+                                    onFile={handleImageFile}
+                                />
+                                <DropZone
+                                    accept=".ttf,.otf,.woff,.woff2"
+                                    label="Drag and Drop or Select font"
+                                    icon={Type}
+                                    fileName={fontFile?.name}
+                                    onFile={handleFontFile}
+                                />
+                            </div>
+                        )}
+
+                        {/* Body: preview | settings */}
+                        <div className="flex flex-1 min-h-0 overflow-hidden">
+                            {/* ── Left: Preview ── */}
+                            <div className="flex-1 flex flex-col gap-2 p-4 border-r border-surface-200-800 min-w-0 overflow-hidden">
+                                <div className="flex-1 min-h-0 flex items-center justify-center">
+                                    <CardPreview
+                                        imageDataUrl={imageDataUrl}
+                                        config={config}
+                                        player={previewPlayer}
+                                        fontFamily={loadedFontFamily}
+                                    />
+                                </div>
+
+                                {/* Vertical/horizontal crosshair hint when no image */}
+                                {!imageDataUrl && (
+                                    <p className="text-xs text-center text-surface-400-600 shrink-0">
+                                        Upload a template image to see the preview
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* ── Right: Settings ── */}
+                            <div className="w-80 flex flex-col shrink-0">
+
+                                {/* Config Editor */}
+                                <div className="flex flex-col h-full bg-surface-100-900 overflow-y-auto">
+                                    <ConfigEditor
+                                        config={config}
+                                        onUpdate={updateConfigWithHistory}
+                                        showConfirm={showConfirm}
+                                    />
+                                </div>
+
+                                {/* Preview player selector */}
+                                <div className="border-t border-surface-200-800 px-3 py-2 flex items-center gap-2 shrink-0">
+                                    <span className="text-xs text-surface-500-400 shrink-0">Preview</span>
+                                    <select
+                                        className="flex-1 text-xs bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1.5 outline-none cursor-pointer"
+                                        value={previewIdx}
+                                        onChange={e => setPreviewIdx(e.target.value)}
+                                        title="Scroll mouse wheel to quickly change player"
+                                        onWheel={e => {
+                                            if (players.length === 0) return;
+                                            const delta = Math.sign(e.deltaY);
+                                            if (delta === 0) return;
+                                            let current = previewIdx === "" ? -1 : parseInt(previewIdx);
+                                            current += delta;
+                                            current = Math.max(0, Math.min(current, players.length - 1));
+                                            setPreviewIdx(String(current));
+                                        }}
+                                    >
+                                        <option value="">------</option>
+                                        {players.map((p, i) => (
+                                            <option key={i} value={i}>
+                                                {p.name || `Player ${p.playerUniqueId}`}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-surface-200-800 shrink-0">
+                            {/* Range Selector */}
+                            <div className="flex items-center gap-1.5 mr-auto">
+                                <span className="text-sm text-surface-500-400 font-medium">Range:</span>
+                                <input
+                                    type="number"
+                                    min="1" max={players.length}
+                                    className="w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 text-sm outline-none text-center disabled:opacity-50"
+                                    placeholder="1"
+                                    value={rangeStart}
+                                    onChange={e => setRangeStart(e.target.value)}
+                                    disabled={isDownloading}
+                                />
+                                <span className="text-sm text-surface-500-400">-</span>
+                                <input
+                                    type="number"
+                                    min="1" max={players.length}
+                                    className="w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 text-sm outline-none text-center disabled:opacity-50"
+                                    placeholder={players.length || 'All'}
+                                    value={rangeEnd}
+                                    onChange={e => setRangeEnd(e.target.value)}
+                                    disabled={isDownloading}
+                                />
+                            </div>
+
+                            <button
+                                className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded preset-tonal cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                onClick={handleDownloadCurrent}
+                                disabled={!imageDataUrl || !previewPlayer || isDownloading}
+                                title={!previewPlayer ? 'Select a player to preview first' : ''}
+                            >
+                                <Download size={14} />
+                                Download current
+                            </button>
+                            <button
+                                className={`relative overflow-hidden flex items-center justify-center gap-1.5 text-sm px-4 py-1.5 rounded transition-all min-w-[170px] ${isDownloading
+                                    ? 'preset-filled cursor-wait'
+                                    : 'preset-filled cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
+                                    }`}
+                                onClick={handleDownloadAll}
+                                disabled={!imageDataUrl || players.length === 0 || isDownloading}
+                            >
+                                {isDownloading && (
+                                    <div
+                                        className="absolute inset-0 rounded pointer-events-none"
+                                        style={{
+                                            padding: '3px',
+                                            WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                            WebkitMaskComposite: 'xor',
+                                            mask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                            maskComposite: 'exclude',
+                                        }}
+                                    >
+                                        <div className="absolute inset-[-1000%] animate-[spin_2s_linear_infinite] bg-[conic-gradient(from_90deg_at_50%_50%,transparent_0%,rgba(255,255,255,0.9)_15%,transparent_15%,transparent_50%,rgba(255,255,255,0.9)_65%,transparent_65%)]" />
+                                    </div>
+                                )}
+
+                                {isDownloading ? (
+                                    <span className="animate-pulse tracking-wide font-medium relative z-10">
+                                        {processedCount > 0
+                                            ? `Processing (${processedCount}/${targetCount})`
+                                            : 'Processing...'}
                                     </span>
-                                </>
-                            )}
-                        </button>
+                                ) : (
+                                    <>
+                                        <Download size={14} className="relative z-10" />
+                                        <span className="relative z-10">
+                                            {(!rangeStart && !rangeEnd) ? 'Download all (ZIP)' : 'Download range (ZIP)'}
+                                        </span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-        </Portal>
-        <ConfirmationModal
-            open={modal.open}
-            onOpenChange={(open) => setModal(prev => ({ ...prev, open }))}
-            title={modal.title}
-            description={modal.description}
-            onConfirm={modal.onConfirm}
-            isAlert={modal.isAlert}
-            variant={modal.variant}
-            confirmText={modal.confirmText}
-        />
+            </Portal>
+            <ConfirmationModal
+                open={modal.open}
+                onOpenChange={(open) => setModal(prev => ({ ...prev, open }))}
+                title={modal.title}
+                description={modal.description}
+                onConfirm={modal.onConfirm}
+                isAlert={modal.isAlert}
+                variant={modal.variant}
+                confirmText={modal.confirmText}
+            />
         </>
     );
 }
