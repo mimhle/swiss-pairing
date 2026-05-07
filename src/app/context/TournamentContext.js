@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { duplicateTournamentData, deleteTournamentData } from "@/app/component/indexedDbPlayers";
+import { duplicateTournamentData, deleteTournamentData, loadTournamentConfig, saveTournamentConfig, loadRounds, saveRounds } from "@/app/component/tournamentStore";
 
 const TournamentContext = createContext();
 
@@ -9,6 +9,10 @@ export function TournamentProvider({ children }) {
     const [tournaments, setTournaments] = useState([]);
     const [activeTournamentId, setActiveTournamentId] = useState(null);
     const [isLoaded, setIsLoaded] = useState(false);
+    const [activeTab, setActiveTab] = useState("players");
+    const [tournamentConfig, setTournamentConfig] = useState(null);
+    const [rounds, setRounds] = useState([]);
+    const [isLoadingConfig, setIsLoadingConfig] = useState(true);
 
     useEffect(() => {
         // Load from local storage
@@ -43,7 +47,29 @@ export function TournamentProvider({ children }) {
     useEffect(() => {
         if (!isLoaded || !activeTournamentId) return;
         localStorage.setItem("swiss_active_tournament", activeTournamentId);
+        
+        // Load tournament specific data
+        setIsLoadingConfig(true);
+        Promise.all([
+            loadTournamentConfig(activeTournamentId),
+            loadRounds(activeTournamentId)
+        ]).then(([config, roundsData]) => {
+            setTournamentConfig(config);
+            setRounds(roundsData);
+            setIsLoadingConfig(false);
+        });
+        setActiveTab("players");
     }, [activeTournamentId, isLoaded]);
+
+    const updateTournamentConfig = (config) => {
+        setTournamentConfig(config);
+        saveTournamentConfig(config, activeTournamentId);
+    };
+
+    const updateRounds = (newRounds) => {
+        setRounds(newRounds);
+        saveRounds(newRounds, activeTournamentId);
+    };
 
     const addTournament = (name) => {
         const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
@@ -93,7 +119,14 @@ export function TournamentProvider({ children }) {
             renameTournament,
             duplicateTournament,
             deleteTournament,
-            isLoaded
+            isLoaded,
+            activeTab,
+            setActiveTab,
+            tournamentConfig,
+            updateTournamentConfig,
+            rounds,
+            updateRounds,
+            isLoadingConfig
         }}>
             {children}
         </TournamentContext.Provider>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useTournament } from "@/app/context/TournamentContext";
-import { exportAllData, importAllData, clearAllData } from "@/app/component/indexedDbPlayers";
+import { exportAllData, importAllData, clearAllData } from "@/app/component/tournamentStore";
 import { Download, Upload, AlertTriangle, Trash2 } from 'lucide-react';
 import ConfirmationModal from "./ConfirmationModal";
 

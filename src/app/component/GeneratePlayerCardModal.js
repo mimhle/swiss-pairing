@@ -19,7 +19,7 @@ import {
     Undo2,
     X,
 } from 'lucide-react';
-import { loadCardGenAsset, saveCardGenAsset } from './indexedDbPlayers';
+import { loadCardGenAsset, saveCardGenAsset } from './tournamentStore';
 import JSZip from 'jszip';
 import ScrollLock from '@/app/component/ScrollLock';
 import { useTournament } from '@/app/context/TournamentContext';

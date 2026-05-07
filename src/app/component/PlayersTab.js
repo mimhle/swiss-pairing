@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, memo, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { Dialog, Menu, Portal, Tooltip } from '@skeletonlabs/skeleton-react';
 import { AlertTriangle, ArrowLeft, ArrowRight, ChevronDown, CreditCard, FileDown, FileUp, Filter, GripVertical, Play, Plus, Redo2, Settings, Trash, Trash2, Undo2, Upload, X } from 'lucide-react';
-import { loadPlayers, savePlayers, loadClubFedMapping, saveClubFedMapping } from '@/app/component/indexedDbPlayers';
+import { loadPlayers, savePlayers, loadClubFedMapping, saveClubFedMapping } from '@/app/component/tournamentStore';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
@@ -440,7 +440,7 @@ DraggableRow.displayName = 'DraggableRow';
 const MAX_HISTORY = 100;
 
 export default function PlayersTab() {
-    const { activeTournamentId, isLoaded: isTournamentLoaded } = useTournament();
+    const { activeTournamentId, isLoaded: isTournamentLoaded, setActiveTab, tournamentConfig } = useTournament();
 
     const [players, setPlayers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -942,6 +942,8 @@ export default function PlayersTab() {
     // ── Settings ──────────────────────────────────────────────────────────────
     const [settings, setSettings] = useState({
         warnDuplicateName: true,
+        warnInconsistentCapitalization: true,
+        warnEmptyName: true,
         warnVietnameseNoAccent: true,
     });
 
@@ -949,25 +951,53 @@ export default function PlayersTab() {
         setSettings(prev => ({ ...prev, [key]: !prev[key] }));
 
     // Per-player warning messages (keyed by playerUniqueId)
-    const playerWarnings = (() => {
+    const playerWarnings = useMemo(() => {
         const warns = {};
         const nameCounts = {};
         if (settings.warnDuplicateName) {
             players.forEach(p => {
-                const k = p.name.trim().toLowerCase();
+                const k = (p.name || '').trim().toLowerCase();
                 if (k) nameCounts[k] = (nameCounts[k] || 0) + 1;
             });
         }
         players.forEach(p => {
             const msgs = [];
-            if (settings.warnDuplicateName && nameCounts[p.name.trim().toLowerCase()] > 1)
-                msgs.push('Duplicate name');
-            if (settings.warnVietnameseNoAccent && looksLikeVietnameseAscii(p.name))
-                msgs.push('Vietnamese name may be missing accent marks');
+            const name = (p.name || '').trim();
+
+            if (settings.warnEmptyName && !name) {
+                msgs.push('Name is required');
+            }
+
+            if (name) {
+                if (settings.warnDuplicateName && nameCounts[name.toLowerCase()] > 1) {
+                    msgs.push('Duplicate name');
+                }
+
+                if (settings.warnInconsistentCapitalization) {
+                    const words = name.split(/\s+/).filter(Boolean);
+                    const isAllUpper = name === name.toUpperCase() && /[a-zA-Z]/.test(name);
+                    const isTitleCase = words.every(w =>
+                        w.length > 0 &&
+                        w[0] === w[0].toUpperCase() &&
+                        w.slice(1) === w.slice(1).toLowerCase()
+                    );
+
+                    if (isAllUpper) {
+                        msgs.push('Name is all capitalized');
+                    } else if (!isTitleCase) {
+                        msgs.push('Inconsistent capitalization (should be Title Case, e.g. John Doe)');
+                    }
+                }
+
+                if (settings.warnVietnameseNoAccent && looksLikeVietnameseAscii(name)) {
+                    msgs.push('Vietnamese name may be missing accent marks');
+                }
+            }
+
             if (msgs.length) warns[p.playerUniqueId] = msgs;
         });
         return warns;
-    })();
+    }, [players, settings]);
 
     const warningCount = Object.keys(playerWarnings).length;
 
@@ -1474,6 +1504,34 @@ export default function PlayersTab() {
                                             <input
                                                 type="checkbox"
                                                 className="mt-0.5 accent-primary-500"
+                                                checked={settings.warnInconsistentCapitalization}
+                                                onChange={() => toggleSetting('warnInconsistentCapitalization')}
+                                            />
+                                            <div>
+                                                <p className="text-sm font-medium">Warn about inconsistent capitalization</p>
+                                                <p className="text-xs text-surface-600-400 mt-0.5">
+                                                    Flag names that are all uppercase or missing capital letters at the start of words.
+                                                </p>
+                                            </div>
+                                        </label>
+                                        <label className="flex items-start gap-3 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="mt-0.5 accent-primary-500"
+                                                checked={settings.warnEmptyName}
+                                                onChange={() => toggleSetting('warnEmptyName')}
+                                            />
+                                            <div>
+                                                <p className="text-sm font-medium">Warn about empty names</p>
+                                                <p className="text-xs text-surface-600-400 mt-0.5">
+                                                    Highlight players where the name field is blank.
+                                                </p>
+                                            </div>
+                                        </label>
+                                        <label className="flex items-start gap-3 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="mt-0.5 accent-primary-500"
                                                 checked={settings.warnVietnameseNoAccent}
                                                 onChange={() => toggleSetting('warnVietnameseNoAccent')}
                                             />
@@ -1760,9 +1818,23 @@ export default function PlayersTab() {
                         </button>
                     </div>
 
-                    <button className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-filled cursor-pointer">
-                        <Play size={14} />
-                        Start Pairing
+                    <button 
+                        className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded cursor-pointer transition-all ${
+                            tournamentConfig ? 'bg-primary-500/10 text-primary-500 border border-primary-500/20 hover:bg-primary-500/20' : 'preset-filled'
+                        }`}
+                        onClick={() => setActiveTab('rounds')}
+                    >
+                        {tournamentConfig ? (
+                            <>
+                                <ArrowRight size={14} />
+                                Go to Rounds
+                            </>
+                        ) : (
+                            <>
+                                <Play size={14} />
+                                Start Pairing
+                            </>
+                        )}
                     </button>
                 </div>
             )}
