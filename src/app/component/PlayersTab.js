@@ -40,6 +40,22 @@ const TARGET_OPTIONS = [
     })),
 ];
 
+function nextUniqueColumnMap(prev, columnIndex, field) {
+    const next = { ...prev, [columnIndex]: field };
+    if (field) {
+        Object.keys(next).forEach(key => {
+            if (key !== String(columnIndex) && next[key] === field) next[key] = '';
+        });
+    }
+    return next;
+}
+
+function mappingOptionLabel(option, columnMap) {
+    return option.value && Object.values(columnMap).includes(option.value)
+        ? `✓ ${option.label}`
+        : option.label;
+}
+
 const emptyPlayer = (id) => {
     const p = { playerUniqueId: id };
     EDITABLE_KEYS.forEach(k => { p[k] = ''; });
@@ -1419,10 +1435,10 @@ export default function PlayersTab() {
                                                                         <select
                                                                             className="w-full text-sm bg-surface-50-950 border border-surface-200-800 rounded px-2 py-1 outline-none cursor-pointer"
                                                                             value={columnMap[i] ?? ''}
-                                                                            onChange={e => setColumnMap(prev => ({ ...prev, [i]: e.target.value }))}
+                                                                            onChange={e => setColumnMap(prev => nextUniqueColumnMap(prev, i, e.target.value))}
                                                                         >
                                                                             {TARGET_OPTIONS.map(opt => (
-                                                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                                                <option key={opt.value} value={opt.value}>{mappingOptionLabel(opt, columnMap)}</option>
                                                                             ))}
                                                                         </select>
                                                                     </td>
@@ -1985,4 +2001,3 @@ export default function PlayersTab() {
         </div>
     );
 }
-

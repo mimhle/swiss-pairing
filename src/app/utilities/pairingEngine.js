@@ -1,4 +1,4 @@
-import { generatePairings as engineGeneratePairings } from './javafoWrapper';
+import { generatePairings as engineGeneratePairings } from './pairingEngineWrapper';
 
 /**
  * Pairs players for a round.
@@ -16,11 +16,13 @@ export async function generatePairings(players, options = {}, previousRounds = [
 
     if (onProgress) onProgress(50);
 
-    // Use the pairing engine wrapper (bbPairings or alternative)
-    const pairings = await engineGeneratePairings(players, options, previousRounds);
+    const pairings = await engineGeneratePairings(
+        players,
+        { ...options, totalRounds: tournamentConfig?.numRounds },
+        previousRounds
+    );
 
     if (onProgress) onProgress(100);
 
     return pairings;
 }
-

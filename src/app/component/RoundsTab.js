@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useMemo, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
+import * as XLSX from 'xlsx';
 import { useTournament } from '@/app/context/TournamentContext';
-import { Swords, Play, Settings, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Trash2 } from 'lucide-react';
-import { Tooltip, Portal } from '@skeletonlabs/skeleton-react';
+import { Swords, Play, Settings, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Trash2, Upload, FileUp, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Dialog, Tooltip, Portal } from '@skeletonlabs/skeleton-react';
 import TournamentConfigModal from './TournamentConfigModal';
 import RoundSetupModal from './RoundSetupModal';
 import ConfirmationModal from './ConfirmationModal';
@@ -19,6 +20,173 @@ const RESULT_OPTIONS = [
     { value: '0-1f', label: '- : +' },
     { value: '0-0', label: '0 - 0' },
 ];
+
+const SCORE_TARGET_OPTIONS = [
+    { value: '', label: 'Ignore' },
+    { value: 'round', label: 'Round' },
+    { value: 'board', label: 'Board' },
+    { value: 'whiteId', label: 'White ID' },
+    { value: 'blackId', label: 'Black ID' },
+    { value: 'whiteScore', label: 'White score' },
+    { value: 'blackScore', label: 'Black score' },
+    { value: 'result', label: 'Result' },
+];
+
+const SCORE_HEADER_MAP = new Map([
+    ['round', 'round'],
+    ['rd', 'round'],
+    ['r', 'round'],
+    ['vong', 'round'],
+    ['vòng', 'round'],
+    ['bd', 'board'],
+    ['board', 'board'],
+    ['ban', 'board'],
+    ['bàn', 'board'],
+    ['white id', 'whiteId'],
+    ['whiteid', 'whiteId'],
+    ['white', 'whiteId'],
+    ['w id', 'whiteId'],
+    ['id white', 'whiteId'],
+    ['black id', 'blackId'],
+    ['blackid', 'blackId'],
+    ['black', 'blackId'],
+    ['b id', 'blackId'],
+    ['id black', 'blackId'],
+    ['white score', 'whiteScore'],
+    ['white points', 'whiteScore'],
+    ['w score', 'whiteScore'],
+    ['w pts', 'whiteScore'],
+    ['score white', 'whiteScore'],
+    ['diem trang', 'whiteScore'],
+    ['điểm trắng', 'whiteScore'],
+    ['black score', 'blackScore'],
+    ['black points', 'blackScore'],
+    ['b score', 'blackScore'],
+    ['b pts', 'blackScore'],
+    ['score black', 'blackScore'],
+    ['diem den', 'blackScore'],
+    ['điểm đen', 'blackScore'],
+    ['result', 'result'],
+    ['results', 'result'],
+    ['score', 'result'],
+    ['kq', 'result'],
+    ['ket qua', 'result'],
+    ['kết quả', 'result'],
+]);
+
+const DEFAULT_SCORE_ROUND_OPTIONS = {
+    overwritePrevious: false,
+    importAllRounds: false,
+    roundLimitAction: 'cap',
+};
+
+function nextUniqueScoreColumnMap(prev, columnIndex, field) {
+    const next = { ...prev, [columnIndex]: field };
+    if (field) {
+        Object.keys(next).forEach(key => {
+            if (key !== String(columnIndex) && next[key] === field) next[key] = '';
+        });
+    }
+    return next;
+}
+
+function scoreMappingOptionLabel(option, columnMap) {
+    return option.value && Object.values(columnMap).includes(option.value)
+        ? `✓ ${option.label}`
+        : option.label;
+}
+
+function parseScoreRawData(text) {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return null;
+    const sep = lines[0].includes(';') ? ';' : ',';
+    const headers = lines[0].split(sep).map(h => h.trim());
+    const rows = lines.slice(1).filter(l => l.trim()).map(l => {
+        const parts = l.split(sep);
+        while (parts.length < headers.length) parts.push('');
+        return parts.map(s => s.trim());
+    });
+    return { headers, rows };
+}
+
+function parseScoreExcel(arrayBuffer) {
+    const wb = XLSX.read(arrayBuffer, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    if (data.length < 2) return null;
+    const headers = (data[0] || []).map(c => String(c ?? ''));
+    const rows = data.slice(1)
+        .filter(row => row.some(c => c !== '' && c !== null && c !== undefined))
+        .map(row => {
+            const padded = [...row];
+            while (padded.length < headers.length) padded.push('');
+            return padded.map(c => String(c ?? ''));
+        });
+    return { headers, rows };
+}
+
+function suggestScoreMapping(headers) {
+    const mapping = {};
+    const used = new Set();
+    headers.forEach((header, i) => {
+        const key = header.toLowerCase().trim();
+        const field = SCORE_HEADER_MAP.get(key) ?? '';
+        if (field && !used.has(field)) {
+            mapping[i] = field;
+            used.add(field);
+        } else {
+            mapping[i] = '';
+        }
+    });
+    return mapping;
+}
+
+function parseImportedScore(value) {
+    const normalized = String(value ?? '').trim().replace(',', '.');
+    if (!normalized) return null;
+    if (normalized === '½' || normalized.toLowerCase() === 'half') return 0.5;
+    const n = Number(normalized);
+    return [0, 0.5, 1].includes(n) ? n : null;
+}
+
+function parseImportedRound(value) {
+    const n = parseInt(String(value ?? '').trim(), 10);
+    return n > 0 ? n : null;
+}
+
+function parseImportedResult(value) {
+    const normalized = String(value ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '')
+        .replace(/[–—]/g, '-')
+        .replace(/½/g, '0.5')
+        .replace(/1\/2/g, '0.5');
+
+    if (!normalized) return '';
+    if (['1-0', '1:0', 'w', 'white', 'whitewins'].includes(normalized)) return '1-0';
+    if (['0-1', '0:1', 'b', 'black', 'blackwins'].includes(normalized)) return '0-1';
+    if (['0.5-0.5', '0.5:0.5', 'draw', 'd', '='].includes(normalized)) return '0.5-0.5';
+    if (['+-', '+:-', '1-0f'].includes(normalized)) return '1-0f';
+    if (['-+', '-:+', '0-1f'].includes(normalized)) return '0-1f';
+    if (['0-0', '0:0'].includes(normalized)) return '0-0';
+    return '';
+}
+
+function resultFromScores(whiteScore, blackScore) {
+    if (whiteScore === 1 && blackScore === 0) return '1-0';
+    if (whiteScore === 0 && blackScore === 1) return '0-1';
+    if (whiteScore === 0.5 && blackScore === 0.5) return '0.5-0.5';
+    if (whiteScore === 0 && blackScore === 0) return '0-0';
+    return '';
+}
+
+function scoreResultFromRow(row) {
+    const importedResult = parseImportedResult(row.result);
+    const whiteScore = parseImportedScore(row.whiteScore);
+    const blackScore = parseImportedScore(row.blackScore);
+    return importedResult || resultFromScores(whiteScore, blackScore);
+}
 
 export default function RoundsTab() {
     const {
@@ -39,6 +207,14 @@ export default function RoundsTab() {
     const [isPairing, setIsPairing] = useState(false);
     const [pairingProgress, setPairingProgress] = useState(0);
     const [players, setPlayers] = useState([]);
+    const [scoreImportPhase, setScoreImportPhase] = useState('input');
+    const [scoreRawData, setScoreRawData] = useState(null);
+    const [scoreColumnMap, setScoreColumnMap] = useState({});
+    const [scoreImportText, setScoreImportText] = useState('');
+    const [scoreFileName, setScoreFileName] = useState('');
+    const [scoreImportOpen, setScoreImportOpen] = useState(false);
+    const [scoreRoundOptions, setScoreRoundOptions] = useState(DEFAULT_SCORE_ROUND_OPTIONS);
+    const scoreFileInputRef = useRef(null);
 
     // Load players for lookup
     useEffect(() => {
@@ -127,6 +303,235 @@ export default function RoundsTab() {
         updateRounds(updatedRounds);
     };
 
+    const advanceToScoreMapping = (data) => {
+        setScoreRawData(data);
+        setScoreColumnMap(suggestScoreMapping(data.headers));
+        setScoreImportPhase('mapping');
+    };
+
+    const handleScoreFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setScoreFileName(file.name);
+        setScoreImportText('');
+
+        if (/\.(xlsx|xls)$/i.test(file.name)) {
+            file.arrayBuffer().then(buf => {
+                const data = parseScoreExcel(buf);
+                if (data) advanceToScoreMapping(data);
+            });
+        } else {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const text = ev.target.result ?? '';
+                setScoreImportText(text);
+                const data = parseScoreRawData(text);
+                if (data) advanceToScoreMapping(data);
+            };
+            reader.readAsText(file, 'utf-8');
+        }
+    };
+
+    const resetScoreImportState = () => {
+        setScoreImportPhase('input');
+        setScoreRawData(null);
+        setScoreColumnMap({});
+        setScoreImportText('');
+        setScoreFileName('');
+        setScoreRoundOptions(DEFAULT_SCORE_ROUND_OPTIONS);
+        if (scoreFileInputRef.current) scoreFileInputRef.current.value = '';
+    };
+
+    const getScoreImportRows = () => {
+        if (!scoreRawData) return [];
+        return scoreRawData.rows.map((row, index) => {
+            const values = { __index: index };
+            Object.entries(scoreColumnMap).forEach(([idxStr, field]) => {
+                if (!field) return;
+                values[field] = String(row[parseInt(idxStr, 10)] ?? '').trim();
+            });
+            values.roundNumber = parseImportedRound(values.round);
+            return values;
+        });
+    };
+
+    const applyRowsToPairings = (pairings, rowsForRound) => {
+        const byBoard = new Map();
+        const byPlayers = new Map();
+
+        rowsForRound.forEach(row => {
+            if (row.board) byBoard.set(String(parseInt(row.board, 10)), row);
+            if (row.whiteId) byPlayers.set(`${row.whiteId}|${row.blackId || ''}`, row);
+        });
+
+        let imported = 0;
+        let skipped = 0;
+        const pairingsWithResults = pairings.map((pairing, index) => {
+            const row = byBoard.get(String(index + 1))
+                ?? byPlayers.get(`${pairing.whiteId}|${pairing.blackId || ''}`)
+                ?? rowsForRound[index];
+
+            if (!row) {
+                skipped += 1;
+                return pairing;
+            }
+
+            const result = scoreResultFromRow(row);
+            if (!result) {
+                skipped += 1;
+                return pairing;
+            }
+
+            imported += 1;
+            return { ...pairing, result };
+        });
+
+        return { pairings: pairingsWithResults, imported, skipped };
+    };
+
+    const createRoundFromRows = (roundNumber, rowsForRound) => {
+        let imported = 0;
+        let skipped = 0;
+        const sortedRows = [...rowsForRound].sort((a, b) => {
+            const aBoard = parseInt(a.board, 10);
+            const bBoard = parseInt(b.board, 10);
+            if (Number.isFinite(aBoard) && Number.isFinite(bBoard)) return aBoard - bBoard;
+            return a.__index - b.__index;
+        });
+
+        const pairings = sortedRows.map((row, index) => {
+            const result = scoreResultFromRow(row);
+            if (!row.whiteId || !result) {
+                skipped += 1;
+                return null;
+            }
+
+            imported += 1;
+            return {
+                id: `r${roundNumber}-p${index + 1}`,
+                whiteId: row.whiteId,
+                blackId: row.blackId || null,
+                isBye: !row.blackId,
+                result
+            };
+        }).filter(Boolean);
+
+        return {
+            round: {
+                roundNumber,
+                pairings,
+                status: 'in-progress',
+                timestamp: Date.now(),
+                options: { imported: true }
+            },
+            imported,
+            skipped
+        };
+    };
+
+    const handleScoreImportDecision = () => {
+        const rows = getScoreImportRows();
+        const roundNumbers = [...new Set(rows.map(row => row.roundNumber).filter(Boolean))];
+        const configuredRounds = tournamentConfig?.numRounds || 0;
+        const maxImportedRound = Math.max(0, ...roundNumbers);
+
+        if (roundNumbers.length > 1 || maxImportedRound > configuredRounds) {
+            setScoreRoundOptions({
+                ...DEFAULT_SCORE_ROUND_OPTIONS,
+                importAllRounds: maxImportedRound > configuredRounds
+            });
+            setScoreImportPhase('round-options');
+            return;
+        }
+
+        applyScoreImport({ importAllRounds: false, overwritePrevious: true });
+    };
+
+    const applyScoreImport = ({ importAllRounds = false, overwritePrevious = false, roundLimitAction = 'cap' } = {}) => {
+        if (!currentRound || !scoreRawData) {
+            resetScoreImportState();
+            return;
+        }
+
+        const rows = getScoreImportRows();
+        const configuredRounds = tournamentConfig?.numRounds || 0;
+        const importedRoundNumbers = [...new Set(rows.map(row => row.roundNumber).filter(Boolean))];
+        const maxImportedRound = Math.max(0, ...importedRoundNumbers);
+        const shouldIncreaseRounds = importAllRounds && roundLimitAction === 'increase' && maxImportedRound > configuredRounds;
+        const effectiveRows = importAllRounds && roundLimitAction === 'cap' && configuredRounds > 0
+            ? rows.filter(row => !row.roundNumber || row.roundNumber <= configuredRounds)
+            : rows;
+        let imported = 0;
+        let skipped = rows.length - effectiveRows.length;
+        let updatedRounds;
+
+        if (importAllRounds) {
+            const rowsByRound = new Map();
+            effectiveRows.forEach(row => {
+                if (!row.roundNumber) {
+                    skipped += 1;
+                    return;
+                }
+                if (!rowsByRound.has(row.roundNumber)) rowsByRound.set(row.roundNumber, []);
+                rowsByRound.get(row.roundNumber).push(row);
+            });
+
+            updatedRounds = rounds.map((round, roundIdx) => {
+                const roundNumber = round.roundNumber || roundIdx + 1;
+                const rowsForRound = rowsByRound.get(roundNumber);
+                if (!rowsForRound) return round;
+                if (roundIdx < currentRoundIdx && !overwritePrevious) return round;
+
+                const applied = applyRowsToPairings(round.pairings, rowsForRound);
+                imported += applied.imported;
+                skipped += applied.skipped;
+                return { ...round, pairings: applied.pairings };
+            });
+
+            const existingRoundNumbers = new Set(updatedRounds.map((round, idx) => round.roundNumber || idx + 1));
+            const missingRoundNumbers = [...rowsByRound.keys()]
+                .filter(roundNumber => !existingRoundNumbers.has(roundNumber))
+                .sort((a, b) => a - b);
+
+            missingRoundNumbers.forEach(roundNumber => {
+                const created = createRoundFromRows(roundNumber, rowsByRound.get(roundNumber));
+                imported += created.imported;
+                skipped += created.skipped;
+                if (created.round.pairings.length > 0) updatedRounds.push(created.round);
+            });
+
+            updatedRounds.sort((a, b) => a.roundNumber - b.roundNumber);
+        } else {
+            const currentRoundNumber = currentRound.roundNumber || currentRoundIdx + 1;
+            const rowsForCurrentRound = effectiveRows.some(row => row.roundNumber)
+                ? effectiveRows.filter(row => row.roundNumber === currentRoundNumber)
+                : effectiveRows;
+
+            updatedRounds = rounds.map((round, roundIdx) => {
+                if (roundIdx !== currentRoundIdx) return round;
+
+                const applied = applyRowsToPairings(round.pairings, rowsForCurrentRound);
+                imported += applied.imported;
+                skipped += applied.skipped;
+                return { ...round, pairings: applied.pairings };
+            });
+        }
+
+        if (shouldIncreaseRounds) {
+            updateTournamentConfig({
+                ...tournamentConfig,
+                numRounds: maxImportedRound
+            });
+        }
+        updateRounds(updatedRounds);
+        setScoreImportOpen(false);
+        resetScoreImportState();
+        showAlert(
+            'Scores imported',
+            `Imported ${imported} result${imported !== 1 ? 's' : ''}${skipped ? ` and skipped ${skipped} row${skipped !== 1 ? 's' : ''}` : ''}.`
+        );
+    };
+
     const nextRound = () => {
         if (currentRoundIdx < rounds.length - 1) {
             setCurrentRoundIdx(prev => prev + 1);
@@ -158,9 +563,13 @@ export default function RoundsTab() {
                 const wId = p.whiteId;
                 const bId = p.blackId;
 
+                if (p.isBye && wId) {
+                    scores[wId] = (scores[wId] || 0) + 1;
+                    return;
+                }
+
                 if (wId) scores[wId] = (scores[wId] || 0) + (result === '1-0' || result === '1-0f' ? 1 : result === '0.5-0.5' ? 0.5 : 0);
                 if (bId) scores[bId] = (scores[bId] || 0) + (result === '0-1' || result === '0-1f' ? 1 : result === '0.5-0.5' ? 0.5 : 0);
-                if (p.isBye && wId) scores[wId] = (scores[wId] || 0) + 1;
             });
         });
         return scores;
@@ -305,6 +714,11 @@ export default function RoundsTab() {
             return acc;
         }, {});
     }, [players]);
+    const scoreImportRows = getScoreImportRows();
+    const scoreImportRoundNumbers = [...new Set(scoreImportRows.map(row => row.roundNumber).filter(Boolean))];
+    const maxScoreImportRound = Math.max(0, ...scoreImportRoundNumbers);
+    const configuredScoreRounds = tournamentConfig?.numRounds || 0;
+    const scoreImportExceedsConfig = maxScoreImportRound > configuredScoreRounds;
 
     if (isLoadingConfig) {
         return (
@@ -369,6 +783,249 @@ export default function RoundsTab() {
                     )}
                 </div>
                 <div className="flex gap-2">
+                    {currentRound && (
+                        <Dialog
+                            open={scoreImportOpen}
+                            onOpenChange={({ open }) => {
+                                setScoreImportOpen(open);
+                                if (!open) resetScoreImportState();
+                            }}
+                        >
+                            <Dialog.Trigger className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer">
+                                <Upload size={14} />
+                                Import Scores
+                            </Dialog.Trigger>
+                            <Portal>
+                                <Dialog.Backdrop className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" />
+                                <Dialog.Positioner className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                                    <Dialog.Content className={`bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full space-y-4 shadow-xl transition-all ${scoreImportPhase === 'mapping' ? 'max-w-2xl' : 'max-w-lg'}`}>
+                                        {scoreImportPhase === 'input' ? (
+                                            <>
+                                                <Dialog.Title className="text-base font-semibold">Import Scores</Dialog.Title>
+                                                <Dialog.Description className="text-sm text-surface-600-400">
+                                                    Supports Excel (.xlsx, .xls), CSV, and semicolon-delimited files.
+                                                    You will map columns on the next step.
+                                                </Dialog.Description>
+
+                                                <label className="flex items-center gap-3 px-3 py-2.5 border border-dashed border-surface-300-700 rounded-lg cursor-pointer hover:bg-surface-50-950 transition-colors">
+                                                    <FileUp size={18} className="text-surface-500-400 shrink-0" />
+                                                    <span className="text-sm truncate">
+                                                        {scoreFileName
+                                                            ? <span className="text-primary-600-400 font-medium">{scoreFileName}</span>
+                                                            : <span className="text-surface-500-400">Choose file — .xlsx, .xls, .csv, .txt</span>
+                                                        }
+                                                    </span>
+                                                    <input
+                                                        ref={scoreFileInputRef}
+                                                        type="file"
+                                                        accept=".xlsx,.xls,.csv,.txt,.tsv"
+                                                        className="hidden"
+                                                        onChange={handleScoreFileSelect}
+                                                    />
+                                                </label>
+
+                                                <div className="space-y-1">
+                                                    <p className="text-xs text-surface-500-400">or paste text directly</p>
+                                                    <textarea
+                                                        className="w-full h-32 bg-surface-50-950 border border-surface-200-800 rounded p-2 font-mono text-xs outline-none resize-none focus:ring-1 focus:ring-primary-500"
+                                                        placeholder={"Round,Board,White ID,Black ID,White Score,Black Score\n1,1,4,8,1,0\n1,2,2,6,0.5,0.5\n2,1,4,2,0,1"}
+                                                        value={scoreImportText}
+                                                        onChange={e => { setScoreImportText(e.target.value); setScoreFileName(''); }}
+                                                    />
+                                                </div>
+
+                                                <div className="flex justify-between">
+                                                    <Dialog.CloseTrigger className="px-4 py-1.5 text-sm rounded preset-tonal cursor-pointer">
+                                                        Cancel
+                                                    </Dialog.CloseTrigger>
+                                                    <button
+                                                        className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded preset-filled disabled:opacity-40"
+                                                        disabled={!scoreImportText.trim()}
+                                                        onClick={() => {
+                                                            const data = parseScoreRawData(scoreImportText);
+                                                            if (data) advanceToScoreMapping(data);
+                                                        }}
+                                                    >
+                                                        Map columns
+                                                        <ArrowRight size={14} />
+                                                    </button>
+                                                </div>
+                                            </>
+                                        ) : scoreImportPhase === 'mapping' ? (
+                                            <>
+                                                <Dialog.Title className="text-base font-semibold">Map score columns</Dialog.Title>
+                                                <Dialog.Description className="text-sm text-surface-600-400">
+                                                    {scoreRawData?.rows.length} rows detected from <span className="font-medium">{scoreFileName || 'pasted text'}</span>.
+                                                    Map Round for multi-round files. Map a Result column, or map White score and Black score.
+                                                </Dialog.Description>
+
+                                                <div className="overflow-y-auto max-h-80 border border-surface-200-800 rounded-lg">
+                                                    <table className="w-full text-sm">
+                                                        <thead className="bg-surface-100-900 border-b border-surface-200-800 sticky top-0">
+                                                            <tr>
+                                                                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400 w-36">Source column</th>
+                                                                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400">Sample</th>
+                                                                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-surface-600-400 w-36">Maps to</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {scoreRawData?.headers.map((header, i) => {
+                                                                const sample = scoreRawData.rows
+                                                                    .slice(0, 3)
+                                                                    .map(r => r[i])
+                                                                    .filter(Boolean)
+                                                                    .join(', ');
+                                                                return (
+                                                                    <tr key={i} className="border-b border-surface-200-800 last:border-0">
+                                                                        <td className="px-3 py-2 font-medium truncate max-w-36">{header}</td>
+                                                                        <td className="px-3 py-2 text-xs text-surface-600-400 truncate max-w-48">
+                                                                            {sample.length > 50 ? sample.slice(0, 50) + '...' : sample || '-'}
+                                                                        </td>
+                                                                        <td className="px-3 py-2">
+                                                                            <select
+                                                                                className="w-full text-sm bg-surface-50-950 border border-surface-200-800 rounded px-2 py-1 outline-none cursor-pointer"
+                                                                                value={scoreColumnMap[i] ?? ''}
+                                                                                onChange={e => setScoreColumnMap(prev => nextUniqueScoreColumnMap(prev, i, e.target.value))}
+                                                                            >
+                                                                                {SCORE_TARGET_OPTIONS.map(opt => (
+                                                                                    <option key={opt.value} value={opt.value}>{scoreMappingOptionLabel(opt, scoreColumnMap)}</option>
+                                                                                ))}
+                                                                            </select>
+                                                                        </td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+
+                                                <div className="flex justify-between items-center">
+                                                    <button
+                                                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded preset-tonal"
+                                                        onClick={() => setScoreImportPhase('input')}
+                                                    >
+                                                        <ArrowLeft size={14} />
+                                                        Back
+                                                    </button>
+                                                    <div className="flex gap-2">
+                                                        <Dialog.CloseTrigger className="px-4 py-1.5 text-sm rounded preset-tonal cursor-pointer">
+                                                            Cancel
+                                                        </Dialog.CloseTrigger>
+                                                        <button
+                                                            className="px-4 py-1.5 text-sm rounded preset-filled cursor-pointer"
+                                                            onClick={handleScoreImportDecision}
+                                                        >
+                                                            Import
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Dialog.Title className="text-base font-semibold">Multi-round import</Dialog.Title>
+                                                <Dialog.Description className="text-sm text-surface-600-400">
+                                                    The mapped data contains more than one round. Choose how much of the imported score data should be applied.
+                                                </Dialog.Description>
+
+                                                <div className="space-y-3">
+                                                    <label className="flex items-start gap-3 p-3 rounded-lg bg-surface-50-950 border border-surface-200-800 cursor-pointer hover:bg-surface-100-900 transition-colors">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={scoreRoundOptions.overwritePrevious}
+                                                            onChange={(e) => setScoreRoundOptions(prev => ({ ...prev, overwritePrevious: e.target.checked }))}
+                                                            className="mt-1 accent-primary-500"
+                                                        />
+                                                        <div>
+                                                            <p className="text-sm font-medium">Overwrite previous round scores</p>
+                                                            <p className="text-xs text-surface-600-400 mt-0.5">
+                                                                Update score results in rounds before the currently selected round when those rounds appear in the import file.
+                                                            </p>
+                                                        </div>
+                                                    </label>
+
+                                                    <label className="flex items-start gap-3 p-3 rounded-lg bg-surface-50-950 border border-surface-200-800 cursor-pointer hover:bg-surface-100-900 transition-colors">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={scoreRoundOptions.importAllRounds}
+                                                            onChange={(e) => setScoreRoundOptions(prev => ({ ...prev, importAllRounds: e.target.checked }))}
+                                                            className="mt-1 accent-primary-500"
+                                                        />
+                                                        <div>
+                                                            <p className="text-sm font-medium">Use import data for all rounds</p>
+                                                            <p className="text-xs text-surface-600-400 mt-0.5">
+                                                                Apply every mapped round and create missing rounds when the file includes player IDs and scores.
+                                                            </p>
+                                                        </div>
+                                                    </label>
+
+                                                    {scoreImportExceedsConfig && (
+                                                        <div className="space-y-2 p-3 rounded-lg bg-warning-500/10 border border-warning-500/30">
+                                                            <p className="text-sm font-medium text-warning-700-300">
+                                                                Imported data reaches round {maxScoreImportRound}, but this tournament is set to {configuredScoreRounds} round{configuredScoreRounds !== 1 ? 's' : ''}.
+                                                            </p>
+                                                            <label className="flex items-start gap-3 cursor-pointer">
+                                                                <input
+                                                                    type="radio"
+                                                                    name="score-round-limit"
+                                                                    value="increase"
+                                                                    checked={scoreRoundOptions.roundLimitAction === 'increase'}
+                                                                    onChange={() => setScoreRoundOptions(prev => ({ ...prev, roundLimitAction: 'increase', importAllRounds: true }))}
+                                                                    className="mt-1 accent-primary-500"
+                                                                />
+                                                                <div>
+                                                                    <p className="text-sm font-medium">Increase tournament rounds</p>
+                                                                    <p className="text-xs text-surface-600-400 mt-0.5">
+                                                                        Set tournament rounds to {maxScoreImportRound} and import all mapped rounds.
+                                                                    </p>
+                                                                </div>
+                                                            </label>
+                                                            <label className="flex items-start gap-3 cursor-pointer">
+                                                                <input
+                                                                    type="radio"
+                                                                    name="score-round-limit"
+                                                                    value="cap"
+                                                                    checked={scoreRoundOptions.roundLimitAction === 'cap'}
+                                                                    onChange={() => setScoreRoundOptions(prev => ({ ...prev, roundLimitAction: 'cap' }))}
+                                                                    className="mt-1 accent-primary-500"
+                                                                />
+                                                                <div>
+                                                                    <p className="text-sm font-medium">Import up to current round setting</p>
+                                                                    <p className="text-xs text-surface-600-400 mt-0.5">
+                                                                        Ignore imported rows after round {configuredScoreRounds}.
+                                                                    </p>
+                                                                </div>
+                                                            </label>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className="flex justify-between items-center">
+                                                    <button
+                                                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded preset-tonal"
+                                                        onClick={() => setScoreImportPhase('mapping')}
+                                                    >
+                                                        <ArrowLeft size={14} />
+                                                        Back
+                                                    </button>
+                                                    <div className="flex gap-2">
+                                                        <Dialog.CloseTrigger className="px-4 py-1.5 text-sm rounded preset-tonal cursor-pointer">
+                                                            Cancel
+                                                        </Dialog.CloseTrigger>
+                                                        <button
+                                                            className="px-4 py-1.5 text-sm rounded preset-filled cursor-pointer"
+                                                            onClick={() => applyScoreImport(scoreRoundOptions)}
+                                                        >
+                                                            Apply Import
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+                                    </Dialog.Content>
+                                </Dialog.Positioner>
+                            </Portal>
+                        </Dialog>
+                    )}
                     <button
                         onClick={() => setShowConfigModal(true)}
                         className="p-2 hover:bg-surface-200-800 rounded-lg transition-colors text-surface-500 hover:text-primary-500"
