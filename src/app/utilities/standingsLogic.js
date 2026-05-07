@@ -37,12 +37,22 @@ export function calculateStandings(players, rounds, tiebreakerPriority = ['bh', 
         round.pairings.forEach((pairing) => {
             const { whiteId, blackId, result, isBye } = pairing;
 
-            if (isBye) {
+            if (pairing.isTournamentForfeit) {
+                if (playerMap[whiteId]) {
+                    playerMap[whiteId].results.push({ opponentId: null, result: '0-0', pointsEarned: 0, isSkip: true, isTournamentForfeit: true });
+                    playerMap[whiteId].unplayedRounds += 1;
+                }
+            } else if (isBye && !pairing.isSkip) {
                 if (playerMap[whiteId]) {
                     playerMap[whiteId].points += 1;
                     playerMap[whiteId].results.push({ opponentId: null, result: '1-0', pointsEarned: 1, isBye: true });
                     playerMap[whiteId].unplayedRounds += 1;
                     playerMap[whiteId].unplayedPoints += 1;
+                }
+            } else if (isBye && pairing.isSkip) {
+                if (playerMap[whiteId]) {
+                    playerMap[whiteId].results.push({ opponentId: null, result: '0-0', pointsEarned: 0, isSkip: true });
+                    playerMap[whiteId].unplayedRounds += 1;
                 }
             } else if (result) {
                 const wPoints = (result === '1-0' || result === '1-0f') ? 1 : (result === '0.5-0.5' ? 0.5 : 0);
@@ -104,7 +114,9 @@ export function calculateStandings(players, rounds, tiebreakerPriority = ['bh', 
         const contributions = []; // List of scores contributing to BH
 
         p.results.forEach(res => {
-            if (res.isBye) {
+            if (res.isSkip) {
+                contributions.push(p.points);
+            } else if (res.isBye) {
                 // Bye: Draw against himself
                 contributions.push(p.points);
                 p.tiebreakers.sb += (0.5 * p.points);

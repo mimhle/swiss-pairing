@@ -90,6 +90,28 @@ function normalizePlayers(players) {
     return { sortedPlayers, byAppId, byPairingId };
 }
 
+function getPlayerId(player) {
+    return String(player?.playerUniqueId ?? player?.id ?? "");
+}
+
+function getForfeitedPlayerIds(rounds = []) {
+    const forfeitedIds = new Set();
+
+    rounds.forEach((round) => {
+        round.pairings?.forEach((pairing) => {
+            if (pairing.isTournamentForfeit && pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
+            if (pairing.result === "1-0f" && pairing.blackId) forfeitedIds.add(String(pairing.blackId));
+            if (pairing.result === "0-1f" && pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
+            if (!pairing.isBye && pairing.result === "0-0") {
+                if (pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
+                if (pairing.blackId) forfeitedIds.add(String(pairing.blackId));
+            }
+        });
+    });
+
+    return forfeitedIds;
+}
+
 function padLeft(value, width) {
     return String(value ?? "").slice(0, width).padStart(width, " ");
 }
@@ -129,6 +151,7 @@ function resultCodeForPlayer(pairing, playerColor) {
     if (result === "0-1") return isWhite ? "0" : "1";
     if (result === "1-0f") return isWhite ? "+" : "-";
     if (result === "0-1f") return isWhite ? "-" : "+";
+    if (result === "0-0") return "-";
     return " ";
 }
 
@@ -140,7 +163,9 @@ function calculateScores(players, previousRounds) {
             const whiteKey = String(pairing.whiteId);
             const blackKey = String(pairing.blackId);
 
-            if (pairing.isBye) {
+            if (pairing.isTournamentForfeit) return;
+
+            if (pairing.isBye && !pairing.isSkip) {
                 scores.set(whiteKey, (scores.get(whiteKey) || 0) + 1);
                 return;
             }
@@ -153,18 +178,26 @@ function calculateScores(players, previousRounds) {
     return scores;
 }
 
-function buildRoundLookup(playerId, round) {
+function buildRoundLookup(playerId, round, activePlayerLookup) {
     const pairing = round.pairings?.find((candidate) => (
         String(candidate.whiteId) === playerId ||
         (!candidate.isBye && String(candidate.blackId) === playerId)
     ));
 
     if (!pairing) return null;
-    if (pairing.isBye) return { opponentId: 0, color: "-", result: "U" };
+    if (pairing.isTournamentForfeit || (pairing.isBye && pairing.isSkip)) {
+        return { opponentId: "0000", color: "-", result: "Z" };
+    }
+    if (pairing.isBye) return { opponentId: "0000", color: "-", result: "U" };
 
     const isWhite = String(pairing.whiteId) === playerId;
+    const opponentId = String(isWhite ? pairing.blackId : pairing.whiteId);
+    if (!activePlayerLookup.has(opponentId)) {
+        return { opponentId: "0000", color: "-", result: "Z" };
+    }
+
     return {
-        opponentId: isWhite ? pairing.blackId : pairing.whiteId,
+        opponentId,
         color: isWhite ? "w" : "b",
         result: resultCodeForPlayer(pairing, isWhite ? "w" : "b"),
     };
@@ -204,17 +237,17 @@ function buildTrf(players, previousRounds, options = {}) {
 
         previousRounds.forEach((round, roundIndex) => {
             const fieldStart = 92 + roundIndex * 10;
-            const roundData = buildRoundLookup(String(player.playerUniqueId), round);
+            const roundData = buildRoundLookup(String(player.playerUniqueId), round, byAppId);
 
             if (!roundData) {
-                putField(chars, fieldStart, 4, 0);
+                putField(chars, fieldStart, 4, "0000");
                 putField(chars, fieldStart + 5, 1, "-", "left");
                 putField(chars, fieldStart + 7, 1, "Z", "left");
                 return;
             }
 
             const opponent = byAppId.get(String(roundData.opponentId));
-            putField(chars, fieldStart, 4, opponent ? opponent.pairingId : 0);
+            putField(chars, fieldStart, 4, opponent ? opponent.pairingId : "0000");
             putField(chars, fieldStart + 5, 1, roundData.color, "left");
             putField(chars, fieldStart + 7, 1, roundData.result, "left");
         });
@@ -278,16 +311,19 @@ function parseBbpOutput(output, byPairingId) {
 export async function generatePairings(players, options = {}, previousRounds = []) {
     console.log("[Pairing Engine] Generating pairings for round", previousRounds.length + 1);
 
-    if (!players || players.length < 2) {
-        return players?.length === 1
-            ? [{ whiteId: players[0].playerUniqueId, blackId: null, isBye: true }]
+    const forfeitedIds = getForfeitedPlayerIds(previousRounds);
+    const eligiblePlayers = (players || []).filter(player => !forfeitedIds.has(getPlayerId(player)));
+
+    if (!eligiblePlayers || eligiblePlayers.length < 2) {
+        return eligiblePlayers?.length === 1
+            ? [{ whiteId: getPlayerId(eligiblePlayers[0]), blackId: null, isBye: true }]
             : [];
     }
 
     await initPairingEngine();
 
-    const { byPairingId } = normalizePlayers(players);
-    const trf = buildTrf(players, previousRounds, options);
+    const { byPairingId } = normalizePlayers(eligiblePlayers);
+    const trf = buildTrf(eligiblePlayers, previousRounds, options);
 
     try {
         const { bbpRuntime, stderr } = await createBbpInstance();

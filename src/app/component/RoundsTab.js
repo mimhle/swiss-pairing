@@ -3,13 +3,14 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import * as XLSX from 'xlsx';
 import { useTournament } from '@/app/context/TournamentContext';
-import { Swords, Play, Settings, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Trash2, Upload, FileUp, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Swords, Play, Settings, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft } from 'lucide-react';
 import { Dialog, Tooltip, Portal } from '@skeletonlabs/skeleton-react';
 import TournamentConfigModal from './TournamentConfigModal';
 import RoundSetupModal from './RoundSetupModal';
 import ConfirmationModal from './ConfirmationModal';
+import ManualPairingModal from './ManualPairingModal';
 import { generatePairings } from '@/app/utilities/pairingEngine';
-import { loadPlayers, deleteTournamentConfig, deleteRounds } from './tournamentStore';
+import { loadPlayers } from './tournamentStore';
 
 const RESULT_OPTIONS = [
     { value: '', label: 'Pending' },
@@ -38,6 +39,7 @@ const SCORE_HEADER_MAP = new Map([
     ['r', 'round'],
     ['vong', 'round'],
     ['vòng', 'round'],
+    ['ván', 'round'],
     ['bd', 'board'],
     ['board', 'board'],
     ['ban', 'board'],
@@ -47,11 +49,15 @@ const SCORE_HEADER_MAP = new Map([
     ['white', 'whiteId'],
     ['w id', 'whiteId'],
     ['id white', 'whiteId'],
+    ['id-t', null],
+    ['sốt', 'whiteId'],
     ['black id', 'blackId'],
     ['blackid', 'blackId'],
     ['black', 'blackId'],
     ['b id', 'blackId'],
     ['id black', 'blackId'],
+    ['id-đ', null],
+    ['sốđ', 'blackId'],
     ['white score', 'whiteScore'],
     ['white points', 'whiteScore'],
     ['w score', 'whiteScore'],
@@ -59,6 +65,8 @@ const SCORE_HEADER_MAP = new Map([
     ['score white', 'whiteScore'],
     ['diem trang', 'whiteScore'],
     ['điểm trắng', 'whiteScore'],
+    ['kq t', 'whiteScore'],
+    ['kq rtgt', null],
     ['black score', 'blackScore'],
     ['black points', 'blackScore'],
     ['b score', 'blackScore'],
@@ -66,17 +74,23 @@ const SCORE_HEADER_MAP = new Map([
     ['score black', 'blackScore'],
     ['diem den', 'blackScore'],
     ['điểm đen', 'blackScore'],
+    ['kq đ', 'blackScore'],
+    ['kq rtgđ', null],
     ['result', 'result'],
     ['results', 'result'],
     ['score', 'result'],
     ['kq', 'result'],
     ['ket qua', 'result'],
     ['kết quả', 'result'],
+    ['kquả', 'result'],
+    ['vắng', null],
+    ['đsố', null],
 ]);
 
 const DEFAULT_SCORE_ROUND_OPTIONS = {
     overwritePrevious: false,
     importAllRounds: false,
+    selectedRoundNumbers: [],
     roundLimitAction: 'cap',
 };
 
@@ -129,7 +143,7 @@ function suggestScoreMapping(headers) {
     const mapping = {};
     const used = new Set();
     headers.forEach((header, i) => {
-        const key = header.toLowerCase().trim();
+        const key = header.normalize('NFC').toLowerCase().trim();
         const field = SCORE_HEADER_MAP.get(key) ?? '';
         if (field && !used.has(field)) {
             mapping[i] = field;
@@ -152,6 +166,12 @@ function parseImportedScore(value) {
 function parseImportedRound(value) {
     const n = parseInt(String(value ?? '').trim(), 10);
     return n > 0 ? n : null;
+}
+
+function parseImportedPlayerId(value) {
+    const normalized = String(value ?? '').trim();
+    const n = parseInt(normalized, 10);
+    return n > 0 ? String(n) : '';
 }
 
 function parseImportedResult(value) {
@@ -185,7 +205,251 @@ function scoreResultFromRow(row) {
     const importedResult = parseImportedResult(row.result);
     const whiteScore = parseImportedScore(row.whiteScore);
     const blackScore = parseImportedScore(row.blackScore);
+    if (!row.blackId && whiteScore === 1) return '1-0';
     return importedResult || resultFromScores(whiteScore, blackScore);
+}
+
+const pairingKey = (a, b) => [String(a), String(b)].sort().join('|');
+
+function getPlayerScoreMap(roundsBeforeTarget) {
+    const scores = {};
+    roundsBeforeTarget.forEach(round => {
+        round.pairings?.forEach(pairing => {
+            const whiteId = pairing.whiteId;
+            const blackId = pairing.blackId;
+            const result = pairing.result;
+
+            if (pairing.isTournamentForfeit) return;
+
+            if (pairing.isBye && !pairing.isSkip && whiteId) {
+                scores[whiteId] = (scores[whiteId] || 0) + 1;
+                return;
+            }
+
+            if (!result) return;
+            if (whiteId) scores[whiteId] = (scores[whiteId] || 0) + (result === '1-0' || result === '1-0f' ? 1 : result === '0.5-0.5' ? 0.5 : 0);
+            if (blackId) scores[blackId] = (scores[blackId] || 0) + (result === '0-1' || result === '0-1f' ? 1 : result === '0.5-0.5' ? 0.5 : 0);
+        });
+    });
+    return scores;
+}
+
+function getPreviousOpponentSet(roundsBeforeTarget) {
+    const opponents = new Set();
+    roundsBeforeTarget.forEach(round => {
+        round.pairings?.forEach(pairing => {
+            if (!pairing.isBye && pairing.whiteId && pairing.blackId) {
+                opponents.add(pairingKey(pairing.whiteId, pairing.blackId));
+            }
+        });
+    });
+    return opponents;
+}
+
+function getPlayersWithBye(roundsBeforeTarget) {
+    const byes = new Set();
+    roundsBeforeTarget.forEach(round => {
+        round.pairings?.forEach(pairing => {
+            if (pairing.isBye && !pairing.isSkip && pairing.whiteId) byes.add(String(pairing.whiteId));
+        });
+    });
+    return byes;
+}
+
+function getTournamentForfeitSet(roundsBeforeTarget) {
+    const forfeits = new Set();
+    roundsBeforeTarget.forEach(round => {
+        round.pairings?.forEach(pairing => {
+            if (pairing.isTournamentForfeit && pairing.whiteId) forfeits.add(String(pairing.whiteId));
+            if (pairing.result === '1-0f' && pairing.blackId) forfeits.add(String(pairing.blackId));
+            if (pairing.result === '0-1f' && pairing.whiteId) forfeits.add(String(pairing.whiteId));
+            if (!pairing.isBye && pairing.result === '0-0') {
+                if (pairing.whiteId) forfeits.add(String(pairing.whiteId));
+                if (pairing.blackId) forfeits.add(String(pairing.blackId));
+            }
+        });
+    });
+    return forfeits;
+}
+
+function validateManualPairings(manualBoards, previousRounds) {
+    const errors = [];
+    const usedIds = new Set();
+    const previousOpponents = getPreviousOpponentSet(previousRounds);
+    const previousByes = getPlayersWithBye(previousRounds);
+    let hasTrueBye = false;
+
+    manualBoards.forEach((board, index) => {
+        const boardNumber = index + 1;
+        const whiteId = board.whiteId ? String(board.whiteId) : null;
+        const blackId = board.blackId ? String(board.blackId) : null;
+        const byeId = board.byeId ? String(board.byeId) : null;
+        const forfeitId = board.forfeitId ? String(board.forfeitId) : null;
+        const isSkip = Boolean(board.isSkip);
+        const playerIds = [whiteId, blackId, byeId, forfeitId].filter(Boolean);
+
+        playerIds.forEach(playerId => {
+            if (usedIds.has(playerId)) {
+                errors.push(`Player #${playerId} is assigned more than once.`);
+            }
+            usedIds.add(playerId);
+        });
+
+        if (forfeitId) {
+            if (whiteId || blackId || byeId) {
+                errors.push(`Board ${boardNumber} cannot have a forfeit and another assignment.`);
+            }
+            return;
+        }
+
+        if (byeId) {
+            if (whiteId || blackId) {
+                errors.push(`Board ${boardNumber} cannot have a skip/bye and regular players.`);
+            }
+            if (!isSkip && !hasTrueBye && previousByes.has(byeId)) {
+                errors.push(`Player #${byeId} already received a bye in an earlier round.`);
+            }
+            if (!isSkip) hasTrueBye = true;
+            return;
+        }
+
+        if (whiteId || blackId) {
+            if (!whiteId || !blackId) {
+                errors.push(`Board ${boardNumber} needs both White and Black.`);
+                return;
+            }
+            if (whiteId === blackId) {
+                errors.push(`Board ${boardNumber} has the same player on both sides.`);
+                return;
+            }
+            if (previousOpponents.has(pairingKey(whiteId, blackId))) {
+                errors.push(`Board ${boardNumber} repeats an earlier pairing.`);
+            }
+        }
+    });
+
+    return errors;
+}
+
+function unchangedPairingManualValue(board, originalPairings = []) {
+    const whiteId = board.whiteId ? String(board.whiteId) : null;
+    const blackId = board.blackId ? String(board.blackId) : null;
+    const byeId = board.byeId ? String(board.byeId) : null;
+    const forfeitId = board.forfeitId ? String(board.forfeitId) : null;
+
+    const original = originalPairings.find(pairing => {
+        if (forfeitId) {
+            return pairing.isTournamentForfeit && String(pairing.whiteId) === forfeitId;
+        }
+        if (byeId) {
+            return pairing.isBye &&
+                !pairing.isTournamentForfeit &&
+                String(pairing.whiteId) === byeId &&
+                Boolean(pairing.isSkip) === Boolean(board.isSkip);
+        }
+        return !pairing.isBye &&
+            String(pairing.whiteId) === whiteId &&
+            String(pairing.blackId) === blackId;
+    });
+
+    return original ? Boolean(original.manual) : true;
+}
+
+function findMatchingPairing(board, originalPairings = []) {
+    const whiteId = board.whiteId ? String(board.whiteId) : null;
+    const blackId = board.blackId ? String(board.blackId) : null;
+    const byeId = board.byeId ? String(board.byeId) : null;
+    const forfeitId = board.forfeitId ? String(board.forfeitId) : null;
+
+    return originalPairings.find(pairing => {
+        if (forfeitId) {
+            return pairing.isTournamentForfeit && String(pairing.whiteId) === forfeitId;
+        }
+        if (byeId) {
+            return pairing.isBye &&
+                !pairing.isTournamentForfeit &&
+                String(pairing.whiteId) === byeId &&
+                Boolean(pairing.isSkip) === Boolean(board.isSkip);
+        }
+        return !pairing.isBye &&
+            String(pairing.whiteId) === whiteId &&
+            String(pairing.blackId) === blackId;
+    });
+}
+
+function unchangedPairingResultValue(board, originalPairings = []) {
+    return findMatchingPairing(board, originalPairings)?.result || '';
+}
+
+function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundNumber, originalPairings = []) {
+    let hasTrueBye = false;
+    const manualPairings = manualBoards
+        .filter(board => board.forfeitId || board.byeId || (board.whiteId && board.blackId))
+        .map(board => {
+            const manual = unchangedPairingManualValue(board, originalPairings);
+            const result = unchangedPairingResultValue(board, originalPairings);
+            if (board.forfeitId) {
+                return {
+                    whiteId: String(board.forfeitId),
+                    blackId: null,
+                    isBye: true,
+                    isSkip: true,
+                    isTournamentForfeit: true,
+                    manual,
+                    result: '0-0',
+                };
+            }
+            if (board.byeId) {
+                const isSkip = Boolean(board.isSkip) || hasTrueBye;
+                if (!isSkip) hasTrueBye = true;
+                return {
+                    whiteId: String(board.byeId),
+                    blackId: null,
+                    isBye: true,
+                    isSkip,
+                    manual,
+                    result,
+                };
+            }
+            return {
+                whiteId: String(board.whiteId),
+                blackId: String(board.blackId),
+                isBye: false,
+                manual,
+                result,
+            };
+        });
+
+    const regularPairings = [...manualPairings, ...generatedPairings].filter(pairing => !pairing.isBye);
+    const specialPairings = [...manualPairings, ...generatedPairings].filter(pairing => pairing.isBye);
+
+    let seenTrueBye = false;
+    return [...regularPairings, ...specialPairings].map((pairing, index) => {
+        let isSkip = false;
+        if (pairing.isBye) {
+            isSkip = typeof pairing.isSkip === 'boolean' ? pairing.isSkip : seenTrueBye;
+            if (!isSkip && !pairing.isTournamentForfeit) seenTrueBye = true;
+        }
+        return {
+            ...pairing,
+            isSkip,
+            id: `r${roundNumber}-p${index + 1}`,
+            result: pairing.result || '',
+        };
+    });
+}
+
+function buildContinuingForfeitPairings(forfeitedIds, usedIds = new Set()) {
+    return [...forfeitedIds]
+        .filter(playerId => !usedIds.has(String(playerId)))
+        .map(playerId => ({
+            whiteId: String(playerId),
+            blackId: null,
+            isBye: true,
+            isSkip: true,
+            isTournamentForfeit: true,
+            result: '0-0',
+        }));
 }
 
 export default function RoundsTab() {
@@ -202,9 +466,14 @@ export default function RoundsTab() {
 
     const [showConfigModal, setShowConfigModal] = useState(false);
     const [showSetupModal, setShowSetupModal] = useState(false);
-    const [modal, setModal] = useState({ open: false, title: '', description: '', onConfirm: null, isAlert: false, variant: 'primary', confirmText: 'Confirm' });
+    const [showManualPairingModal, setShowManualPairingModal] = useState(false);
+    const [manualPairingMode, setManualPairingMode] = useState('create');
+    const [pendingManualBoards, setPendingManualBoards] = useState(null);
+    const [roundModalMode, setRoundModalMode] = useState('setup');
+    const [modal, setModal] = useState({ open: false, title: '', description: '', details: [], onConfirm: null, isAlert: false, variant: 'primary', confirmText: 'Confirm' });
     const [currentRoundIdx, setCurrentRoundIdx] = useState(0);
     const [isPairing, setIsPairing] = useState(false);
+    const [isManualPairing, setIsManualPairing] = useState(false);
     const [pairingProgress, setPairingProgress] = useState(0);
     const [players, setPlayers] = useState([]);
     const [scoreImportPhase, setScoreImportPhase] = useState('input');
@@ -247,6 +516,49 @@ export default function RoundsTab() {
         return currentRound.pairings.every(p => p.result !== '');
     }, [currentRound]);
 
+    const pairingBusy = isPairing || isManualPairing;
+
+    const manualTargetRoundNumber = manualPairingMode === 'edit' && currentRound
+        ? (currentRound.roundNumber || currentRoundIdx + 1)
+        : rounds.length + 1;
+
+    const manualPreviousRounds = manualPairingMode === 'edit'
+        ? rounds.slice(0, currentRoundIdx)
+        : rounds;
+
+    const manualPlayerScores = useMemo(() => {
+        return getPlayerScoreMap(manualPreviousRounds);
+    }, [manualPreviousRounds]);
+
+    const forfeitedPlayerIds = useMemo(() => {
+        return getTournamentForfeitSet(manualPreviousRounds);
+    }, [manualPreviousRounds]);
+
+    const manualInitialBoards = useMemo(() => {
+        if (manualPairingMode !== 'edit' || !currentRound) return [];
+        return currentRound.pairings.map(pairing => ({
+            id: pairing.id,
+            whiteId: pairing.isBye ? null : pairing.whiteId,
+            blackId: pairing.isBye ? null : pairing.blackId,
+            byeId: pairing.isBye && !pairing.isTournamentForfeit ? pairing.whiteId : null,
+            forfeitId: pairing.isTournamentForfeit ? pairing.whiteId : null,
+            isSkip: pairing.isSkip || false,
+            manual: Boolean(pairing.manual),
+        }));
+    }, [currentRound, manualPairingMode]);
+
+    const nextRoundExcludedPlayers = useMemo(() => {
+        const forfeitSet = getTournamentForfeitSet(rounds);
+        const playerById = players.reduce((acc, player) => {
+            acc[String(player.playerUniqueId)] = player;
+            return acc;
+        }, {});
+
+        return [...forfeitSet]
+            .map(playerId => playerById[playerId] || { playerUniqueId: playerId, name: `Player #${playerId}` })
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [players, rounds]);
+
     const handleStartPairing = async (options) => {
         setIsPairing(true);
         setShowSetupModal(false);
@@ -255,11 +567,14 @@ export default function RoundsTab() {
             // 1. Get current players
             const latestPlayers = await loadPlayers(activeTournamentId);
             setPlayers(latestPlayers); // Sync local state for lookup
+            const forfeitedIds = getTournamentForfeitSet(rounds);
+            const activePlayers = latestPlayers.filter(player => !forfeitedIds.has(String(player.playerUniqueId)));
+            const continuingForfeits = buildContinuingForfeitPairings(forfeitedIds);
 
             // 2. Generate pairings
             const tournamentName = tournamentConfig?.name || "Tournament";
             const newPairings = await generatePairings(
-                latestPlayers, 
+                activePlayers, 
                 options, 
                 rounds, 
                 tournamentConfig, 
@@ -270,10 +585,10 @@ export default function RoundsTab() {
             // 3. Add new round
             const newRound = {
                 roundNumber: rounds.length + 1,
-                pairings: newPairings.map((p, idx) => ({
+                pairings: [...newPairings, ...continuingForfeits].map((p, idx) => ({
                     ...p,
                     id: `r${rounds.length + 1}-p${idx + 1}`,
-                    result: ''
+                    result: p.isTournamentForfeit ? '0-0' : ''
                 })),
                 status: 'in-progress',
                 timestamp: Date.now(),
@@ -288,13 +603,146 @@ export default function RoundsTab() {
         }
     };
 
+    const handleRoundSetupStart = (options) => {
+        if (roundModalMode === 'manual-options' && pendingManualBoards) {
+            handleManualPairingSave(pendingManualBoards, options);
+            return;
+        }
+        handleStartPairing(options);
+    };
+
+    const handleRoundSetupClose = () => {
+        if (roundModalMode === 'manual-options') {
+            setPendingManualBoards(null);
+            setRoundModalMode('setup');
+        }
+        setShowSetupModal(false);
+    };
+
+    const openManualPairing = async (mode) => {
+        if (mode === 'edit' && !isLatestRound) {
+            showAlert('Cannot Change Pairing', 'Pairings can only be changed on the latest round. Delete later rounds first.');
+            return;
+        }
+
+        const latestPlayers = await loadPlayers(activeTournamentId);
+        setPlayers(latestPlayers);
+        setManualPairingMode(mode);
+        setShowManualPairingModal(true);
+    };
+
+    const stageManualPairingSave = (boards) => {
+        if (manualPairingMode === 'edit') {
+            handleManualPairingSave(boards, currentRound?.options || {});
+            return;
+        }
+        setPendingManualBoards(boards);
+        setShowManualPairingModal(false);
+        setRoundModalMode('manual-options');
+        setShowSetupModal(true);
+    };
+
+    const handleManualPairingSave = async (boards, options = {}) => {
+        setIsManualPairing(true);
+        setPairingProgress(0);
+        setShowSetupModal(false);
+
+        try {
+            const latestPlayers = await loadPlayers(activeTournamentId);
+            setPlayers(latestPlayers);
+
+            const normalizedBoards = boards
+                .map(board => ({
+                    whiteId: board.whiteId ? String(board.whiteId) : null,
+                    blackId: board.blackId ? String(board.blackId) : null,
+                    byeId: board.byeId ? String(board.byeId) : null,
+                    forfeitId: board.forfeitId ? String(board.forfeitId) : null,
+                    isSkip: Boolean(board.isSkip),
+                }))
+                .filter(board => board.whiteId || board.blackId || board.byeId || board.forfeitId);
+
+            const usedIds = new Set();
+            normalizedBoards.forEach(board => {
+                [board.whiteId, board.blackId, board.byeId, board.forfeitId].filter(Boolean).forEach(id => usedIds.add(String(id)));
+            });
+
+            const previousRounds = manualPairingMode === 'edit' ? rounds.slice(0, currentRoundIdx) : rounds;
+            const alreadyForfeited = getTournamentForfeitSet(previousRounds);
+            const remainingPlayers = latestPlayers.filter(player => (
+                !usedIds.has(String(player.playerUniqueId)) &&
+                !alreadyForfeited.has(String(player.playerUniqueId))
+            ));
+            const errors = validateManualPairings(normalizedBoards, previousRounds);
+
+            if (errors.length > 0) {
+                showAlert('Manual Pairing Blocked', 'Fix these pairing issues before saving.', errors.map((reason, index) => ({ line: index + 1, reason })));
+                return;
+            }
+
+            const tournamentName = tournamentConfig?.name || 'Tournament';
+            const generatedPairings = remainingPlayers.length > 0
+                ? await generatePairings(
+                    remainingPlayers,
+                    { ...options, manualRemainder: true },
+                    previousRounds,
+                    tournamentConfig,
+                    tournamentName,
+                    (p) => setPairingProgress(p)
+                )
+                : [];
+            const continuingForfeits = manualPairingMode === 'edit'
+                ? []
+                : buildContinuingForfeitPairings(alreadyForfeited, usedIds);
+
+            const roundNumber = manualPairingMode === 'edit' && currentRound
+                ? (currentRound.roundNumber || currentRoundIdx + 1)
+                : rounds.length + 1;
+            const mergedPairings = mergeManualAndGeneratedPairings(
+                normalizedBoards,
+                [...generatedPairings, ...continuingForfeits],
+                roundNumber,
+                manualPairingMode === 'edit' ? (currentRound?.pairings || []) : []
+            );
+
+            if (manualPairingMode === 'edit') {
+                const updatedRounds = rounds.map((round, index) => index === currentRoundIdx
+                    ? {
+                        ...round,
+                        pairings: mergedPairings,
+                        options: { ...(round.options || {}), ...options, manualPairing: true },
+                    }
+                    : round
+                );
+                updateRounds(updatedRounds);
+            } else {
+                const newRound = {
+                    roundNumber,
+                    pairings: mergedPairings,
+                    status: 'in-progress',
+                    options: { ...options, manualPairing: true }
+                };
+                updateRounds([...rounds, newRound]);
+            }
+
+            setShowManualPairingModal(false);
+            setPendingManualBoards(null);
+            setRoundModalMode('setup');
+        } catch (error) {
+            console.error('Manual pairing failed:', error);
+            showAlert('Manual Pairing Failed', error?.message || 'Could not generate the automatic remainder.');
+        } finally {
+            setIsManualPairing(false);
+            setPairingProgress(0);
+        }
+    };
+
     const updateResult = (pairingId, result) => {
         const updatedRounds = rounds.map((r, rIdx) => {
             if (rIdx === currentRoundIdx) {
                 return {
                     ...r,
                     pairings: r.pairings.map(p =>
-                        p.id === pairingId ? { ...p, result } : p
+                        p.id === pairingId && !p.isTournamentForfeit ? { ...p, result } : p
                     )
                 };
             }
@@ -345,19 +793,29 @@ export default function RoundsTab() {
     const getScoreImportRows = () => {
         if (!scoreRawData) return [];
         return scoreRawData.rows.map((row, index) => {
-            const values = { __index: index };
+            const values = { __index: index, __raw: row };
             Object.entries(scoreColumnMap).forEach(([idxStr, field]) => {
                 if (!field) return;
                 values[field] = String(row[parseInt(idxStr, 10)] ?? '').trim();
             });
             values.roundNumber = parseImportedRound(values.round);
+            values.whiteId = parseImportedPlayerId(values.whiteId);
+            values.blackId = parseImportedPlayerId(values.blackId);
             return values;
         });
     };
 
+    const formatSkippedScoreRow = (row, reason) => ({
+        line: row.__index + 2,
+        reason,
+        raw: (row.__raw || []).join(';')
+    });
+
     const applyRowsToPairings = (pairings, rowsForRound) => {
         const byBoard = new Map();
         const byPlayers = new Map();
+        const matchedRows = new Set();
+        const skippedRows = [];
 
         rowsForRound.forEach(row => {
             if (row.board) byBoard.set(String(parseInt(row.board, 10)), row);
@@ -372,13 +830,14 @@ export default function RoundsTab() {
                 ?? rowsForRound[index];
 
             if (!row) {
-                skipped += 1;
                 return pairing;
             }
+            matchedRows.add(row.__index);
 
             const result = scoreResultFromRow(row);
             if (!result) {
                 skipped += 1;
+                skippedRows.push(formatSkippedScoreRow(row, 'No valid result'));
                 return pairing;
             }
 
@@ -386,12 +845,20 @@ export default function RoundsTab() {
             return { ...pairing, result };
         });
 
-        return { pairings: pairingsWithResults, imported, skipped };
+        rowsForRound.forEach(row => {
+            if (!matchedRows.has(row.__index)) {
+                skipped += 1;
+                skippedRows.push(formatSkippedScoreRow(row, 'No matching pairing'));
+            }
+        });
+
+        return { pairings: pairingsWithResults, imported, skipped, skippedRows };
     };
 
     const createRoundFromRows = (roundNumber, rowsForRound) => {
         let imported = 0;
         let skipped = 0;
+        const skippedRows = [];
         const sortedRows = [...rowsForRound].sort((a, b) => {
             const aBoard = parseInt(a.board, 10);
             const bBoard = parseInt(b.board, 10);
@@ -403,6 +870,7 @@ export default function RoundsTab() {
             const result = scoreResultFromRow(row);
             if (!row.whiteId || !result) {
                 skipped += 1;
+                skippedRows.push(formatSkippedScoreRow(row, !row.whiteId ? 'Missing player ID' : 'No valid result'));
                 return null;
             }
 
@@ -425,20 +893,23 @@ export default function RoundsTab() {
                 options: { imported: true }
             },
             imported,
-            skipped
+            skipped,
+            skippedRows
         };
     };
 
     const handleScoreImportDecision = () => {
         const rows = getScoreImportRows();
-        const roundNumbers = [...new Set(rows.map(row => row.roundNumber).filter(Boolean))];
+        const roundNumbers = [...new Set(rows.map(row => row.roundNumber).filter(Boolean))].sort((a, b) => a - b);
         const configuredRounds = tournamentConfig?.numRounds || 0;
         const maxImportedRound = Math.max(0, ...roundNumbers);
 
         if (roundNumbers.length > 1 || maxImportedRound > configuredRounds) {
             setScoreRoundOptions({
                 ...DEFAULT_SCORE_ROUND_OPTIONS,
-                importAllRounds: maxImportedRound > configuredRounds
+                importAllRounds: true,
+                selectedRoundNumbers: roundNumbers,
+                roundLimitAction: maxImportedRound > configuredRounds ? 'cap' : DEFAULT_SCORE_ROUND_OPTIONS.roundLimitAction
             });
             setScoreImportPhase('round-options');
             return;
@@ -447,7 +918,7 @@ export default function RoundsTab() {
         applyScoreImport({ importAllRounds: false, overwritePrevious: true });
     };
 
-    const applyScoreImport = ({ importAllRounds = false, overwritePrevious = false, roundLimitAction = 'cap' } = {}) => {
+    const applyScoreImport = ({ importAllRounds = false, overwritePrevious = false, selectedRoundNumbers = [], roundLimitAction = 'cap' } = {}) => {
         if (!currentRound || !scoreRawData) {
             resetScoreImportState();
             return;
@@ -457,19 +928,41 @@ export default function RoundsTab() {
         const configuredRounds = tournamentConfig?.numRounds || 0;
         const importedRoundNumbers = [...new Set(rows.map(row => row.roundNumber).filter(Boolean))];
         const maxImportedRound = Math.max(0, ...importedRoundNumbers);
-        const shouldIncreaseRounds = importAllRounds && roundLimitAction === 'increase' && maxImportedRound > configuredRounds;
-        const effectiveRows = importAllRounds && roundLimitAction === 'cap' && configuredRounds > 0
+        const selectedRoundSet = new Set(selectedRoundNumbers);
+        const hasSelectedRounds = selectedRoundSet.size > 0;
+        const multiRoundImport = importAllRounds || hasSelectedRounds;
+        const selectedMaxRound = hasSelectedRounds ? Math.max(...selectedRoundSet) : maxImportedRound;
+        const shouldIncreaseRounds = multiRoundImport && roundLimitAction === 'increase' && selectedMaxRound > configuredRounds;
+        const cappedRows = multiRoundImport && roundLimitAction === 'cap' && configuredRounds > 0
             ? rows.filter(row => !row.roundNumber || row.roundNumber <= configuredRounds)
             : rows;
+        const effectiveRows = hasSelectedRounds
+            ? cappedRows.filter(row => row.roundNumber && selectedRoundSet.has(row.roundNumber))
+            : cappedRows;
         let imported = 0;
-        let skipped = rows.length - effectiveRows.length;
+        let skipped = 0;
         let updatedRounds;
+        const importedRounds = new Set();
+        const skippedRows = [];
+        const cappedIndexes = new Set(cappedRows.map(row => row.__index));
+        const effectiveIndexes = new Set(effectiveRows.map(row => row.__index));
 
-        if (importAllRounds) {
+        rows.forEach(row => {
+            if (!cappedIndexes.has(row.__index)) {
+                skipped += 1;
+                skippedRows.push(formatSkippedScoreRow(row, `Round exceeds configured limit (${configuredRounds})`));
+            } else if (!effectiveIndexes.has(row.__index)) {
+                skipped += 1;
+                skippedRows.push(formatSkippedScoreRow(row, hasSelectedRounds ? 'Round not selected' : 'Not included in import'));
+            }
+        });
+
+        if (multiRoundImport) {
             const rowsByRound = new Map();
             effectiveRows.forEach(row => {
                 if (!row.roundNumber) {
                     skipped += 1;
+                    skippedRows.push(formatSkippedScoreRow(row, 'Missing round number'));
                     return;
                 }
                 if (!rowsByRound.has(row.roundNumber)) rowsByRound.set(row.roundNumber, []);
@@ -485,6 +978,8 @@ export default function RoundsTab() {
                 const applied = applyRowsToPairings(round.pairings, rowsForRound);
                 imported += applied.imported;
                 skipped += applied.skipped;
+                skippedRows.push(...applied.skippedRows);
+                if (applied.imported > 0) importedRounds.add(roundNumber);
                 return { ...round, pairings: applied.pairings };
             });
 
@@ -497,6 +992,8 @@ export default function RoundsTab() {
                 const created = createRoundFromRows(roundNumber, rowsByRound.get(roundNumber));
                 imported += created.imported;
                 skipped += created.skipped;
+                skippedRows.push(...created.skippedRows);
+                if (created.imported > 0) importedRounds.add(roundNumber);
                 if (created.round.pairings.length > 0) updatedRounds.push(created.round);
             });
 
@@ -506,6 +1003,13 @@ export default function RoundsTab() {
             const rowsForCurrentRound = effectiveRows.some(row => row.roundNumber)
                 ? effectiveRows.filter(row => row.roundNumber === currentRoundNumber)
                 : effectiveRows;
+            const currentRoundIndexes = new Set(rowsForCurrentRound.map(row => row.__index));
+            effectiveRows.forEach(row => {
+                if (row.roundNumber && !currentRoundIndexes.has(row.__index)) {
+                    skipped += 1;
+                    skippedRows.push(formatSkippedScoreRow(row, `Not for current round (${currentRoundNumber})`));
+                }
+            });
 
             updatedRounds = rounds.map((round, roundIdx) => {
                 if (roundIdx !== currentRoundIdx) return round;
@@ -513,6 +1017,8 @@ export default function RoundsTab() {
                 const applied = applyRowsToPairings(round.pairings, rowsForCurrentRound);
                 imported += applied.imported;
                 skipped += applied.skipped;
+                skippedRows.push(...applied.skippedRows);
+                if (applied.imported > 0) importedRounds.add(currentRoundNumber);
                 return { ...round, pairings: applied.pairings };
             });
         }
@@ -520,15 +1026,19 @@ export default function RoundsTab() {
         if (shouldIncreaseRounds) {
             updateTournamentConfig({
                 ...tournamentConfig,
-                numRounds: maxImportedRound
+                numRounds: selectedMaxRound
             });
         }
         updateRounds(updatedRounds);
         setScoreImportOpen(false);
         resetScoreImportState();
+        const importedRoundLabel = importedRounds.size
+            ? ` Imported round${importedRounds.size !== 1 ? 's' : ''}: ${[...importedRounds].sort((a, b) => a - b).join(', ')}.`
+            : '';
         showAlert(
             'Scores imported',
-            `Imported ${imported} result${imported !== 1 ? 's' : ''}${skipped ? ` and skipped ${skipped} row${skipped !== 1 ? 's' : ''}` : ''}.`
+            `Imported ${imported} result${imported !== 1 ? 's' : ''}${skipped ? ` and skipped ${skipped} row${skipped !== 1 ? 's' : ''}` : ''}.${importedRoundLabel}`,
+            skippedRows
         );
     };
 
@@ -544,12 +1054,12 @@ export default function RoundsTab() {
         }
     };
 
-    const showAlert = (title, description) => {
-        setModal({ open: true, title, description, onConfirm: () => setModal(prev => ({ ...prev, open: false })), isAlert: true, variant: 'primary', confirmText: 'OK' });
+    const showAlert = (title, description, details = []) => {
+        setModal({ open: true, title, description, details, onConfirm: () => setModal(prev => ({ ...prev, open: false })), isAlert: true, variant: 'primary', confirmText: 'OK' });
     };
 
     const showConfirm = (title, description, onConfirm, variant = 'primary', confirmText = 'Confirm') => {
-        setModal({ open: true, title, description, onConfirm: () => { onConfirm(); setModal(prev => ({ ...prev, open: false })); }, isAlert: false, variant, confirmText });
+        setModal({ open: true, title, description, details: [], onConfirm: () => { onConfirm(); setModal(prev => ({ ...prev, open: false })); }, isAlert: false, variant, confirmText });
     };
 
     const playerScores = useMemo(() => {
@@ -563,7 +1073,9 @@ export default function RoundsTab() {
                 const wId = p.whiteId;
                 const bId = p.blackId;
 
-                if (p.isBye && wId) {
+                if (p.isTournamentForfeit) return;
+
+                if (p.isBye && !p.isSkip && wId) {
                     scores[wId] = (scores[wId] || 0) + 1;
                     return;
                 }
@@ -653,30 +1165,47 @@ export default function RoundsTab() {
         );
     };
 
-    const handleResetTournament = async () => {
+    const handleDeleteRounds = ({ mode, selectedRoundIndexes }) => {
+        const indexesToDelete = mode === 'all'
+            ? rounds.map((_, index) => index)
+            : selectedRoundIndexes;
+
+        if (!indexesToDelete.length) {
+            showAlert("No Rounds Selected", "Choose at least one round to delete.");
+            return;
+        }
+
+        const deleteSet = new Set(indexesToDelete);
+        const description = mode === 'all'
+            ? "Delete all rounds from this tournament? Tournament configuration and players will be kept."
+            : `Delete ${indexesToDelete.length} selected round${indexesToDelete.length !== 1 ? 's' : ''}?`;
+
         showConfirm(
-            "Reset Tournament?",
-            "Are you sure you want to reset this tournament? This will delete ALL rounds and the configuration. This action cannot be undone.",
+            "Delete Rounds?",
+            `${description} This action cannot be undone.`,
             async () => {
                 try {
-                    await deleteTournamentConfig(activeTournamentId);
-                    await deleteRounds(activeTournamentId);
+                    const remainingRounds = rounds
+                        .filter((_, index) => !deleteSet.has(index))
+                        .map((round, index) => ({
+                            ...round,
+                            roundNumber: index + 1,
+                            pairings: round.pairings.map((pairing, pairingIndex) => ({
+                                ...pairing,
+                                id: `r${index + 1}-p${pairingIndex + 1}`
+                            }))
+                        }));
 
-                    // Update local state via context
-                    updateTournamentConfig(null);
-                    updateRounds([]);
-                    setCurrentRoundIdx(0);
-
-                    // Re-fetch players just in case
-                    const updatedPlayers = await loadPlayers(activeTournamentId);
-                    setPlayers(updatedPlayers);
+                    updateRounds(remainingRounds);
+                    setCurrentRoundIdx(remainingRounds.length ? remainingRounds.length - 1 : 0);
+                    setShowSetupModal(false);
                 } catch (error) {
-                    console.error("Failed to reset tournament:", error);
-                    showAlert("Error", "Failed to reset tournament. Please try again.");
+                    console.error("Failed to delete rounds:", error);
+                    showAlert("Error", "Failed to delete rounds. Please try again.");
                 }
             },
             'error',
-            'Reset Tournament'
+            mode === 'all' ? 'Delete All Rounds' : 'Delete Selected'
         );
     };
 
@@ -715,7 +1244,7 @@ export default function RoundsTab() {
         }, {});
     }, [players]);
     const scoreImportRows = getScoreImportRows();
-    const scoreImportRoundNumbers = [...new Set(scoreImportRows.map(row => row.roundNumber).filter(Boolean))];
+    const scoreImportRoundNumbers = [...new Set(scoreImportRows.map(row => row.roundNumber).filter(Boolean))].sort((a, b) => a - b);
     const maxScoreImportRound = Math.max(0, ...scoreImportRoundNumbers);
     const configuredScoreRounds = tournamentConfig?.numRounds || 0;
     const scoreImportExceedsConfig = maxScoreImportRound > configuredScoreRounds;
@@ -798,7 +1327,7 @@ export default function RoundsTab() {
                             <Portal>
                                 <Dialog.Backdrop className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" />
                                 <Dialog.Positioner className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                                    <Dialog.Content className={`bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full space-y-4 shadow-xl transition-all ${scoreImportPhase === 'mapping' ? 'max-w-2xl' : 'max-w-lg'}`}>
+                                    <Dialog.Content className={`bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full min-w-0 max-h-[90vh] overflow-y-auto overflow-x-hidden space-y-4 shadow-xl transition-all ${scoreImportPhase === 'mapping' ? 'max-w-2xl' : 'max-w-lg'}`}>
                                         {scoreImportPhase === 'input' ? (
                                             <>
                                                 <Dialog.Title className="text-base font-semibold">Import Scores</Dialog.Title>
@@ -924,7 +1453,7 @@ export default function RoundsTab() {
                                             <>
                                                 <Dialog.Title className="text-base font-semibold">Multi-round import</Dialog.Title>
                                                 <Dialog.Description className="text-sm text-surface-600-400">
-                                                    The mapped data contains more than one round. Choose how much of the imported score data should be applied.
+                                                    The mapped data contains round {scoreImportRoundNumbers.join(', ')}. Choose which rounds should be imported.
                                                 </Dialog.Description>
 
                                                 <div className="space-y-3">
@@ -943,20 +1472,67 @@ export default function RoundsTab() {
                                                         </div>
                                                     </label>
 
-                                                    <label className="flex items-start gap-3 p-3 rounded-lg bg-surface-50-950 border border-surface-200-800 cursor-pointer hover:bg-surface-100-900 transition-colors">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={scoreRoundOptions.importAllRounds}
-                                                            onChange={(e) => setScoreRoundOptions(prev => ({ ...prev, importAllRounds: e.target.checked }))}
-                                                            className="mt-1 accent-primary-500"
-                                                        />
-                                                        <div>
-                                                            <p className="text-sm font-medium">Use import data for all rounds</p>
-                                                            <p className="text-xs text-surface-600-400 mt-0.5">
-                                                                Apply every mapped round and create missing rounds when the file includes player IDs and scores.
-                                                            </p>
+                                                    <div className="space-y-2">
+                                                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                                            <p className="text-sm font-medium">Rounds to import</p>
+                                                            <div className="flex flex-wrap gap-x-3 gap-y-1">
+                                                                <button
+                                                                    type="button"
+                                                                    className="text-xs text-primary-600-400 hover:underline whitespace-nowrap"
+                                                                    onClick={() => setScoreRoundOptions(prev => ({
+                                                                        ...prev,
+                                                                        importAllRounds: true,
+                                                                        selectedRoundNumbers: [currentRound.roundNumber || currentRoundIdx + 1]
+                                                                    }))}
+                                                                >
+                                                                    Current round
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="text-xs text-primary-600-400 hover:underline whitespace-nowrap"
+                                                                    onClick={() => setScoreRoundOptions(prev => ({ ...prev, importAllRounds: true, selectedRoundNumbers: scoreImportRoundNumbers }))}
+                                                                >
+                                                                    Select all
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="text-xs text-surface-500-400 hover:underline whitespace-nowrap"
+                                                                    onClick={() => setScoreRoundOptions(prev => ({ ...prev, selectedRoundNumbers: [] }))}
+                                                                >
+                                                                    Clear
+                                                                </button>
+                                                            </div>
                                                         </div>
-                                                    </label>
+                                                        <div className="bg-surface-50-950 border border-surface-200-800 rounded-lg divide-y divide-surface-200-800 max-h-48 overflow-y-auto">
+                                                            {scoreImportRoundNumbers.map(roundNumber => {
+                                                                const rowCount = scoreImportRows.filter(row => row.roundNumber === roundNumber).length;
+                                                                const checked = scoreRoundOptions.selectedRoundNumbers.includes(roundNumber);
+                                                                return (
+                                                                    <label key={roundNumber} className="flex items-center justify-between gap-3 px-3 py-2 cursor-pointer hover:bg-surface-100-900 transition-colors">
+                                                                        <div>
+                                                                            <p className="text-sm font-medium">Round {roundNumber}</p>
+                                                                            <p className="text-xs text-surface-600-400">{rowCount} row{rowCount !== 1 ? 's' : ''} detected</p>
+                                                                        </div>
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={checked}
+                                                                            onChange={() => setScoreRoundOptions(prev => ({
+                                                                                ...prev,
+                                                                                importAllRounds: true,
+                                                                                selectedRoundNumbers: checked
+                                                                                    ? prev.selectedRoundNumbers.filter(value => value !== roundNumber)
+                                                                                    : [...prev.selectedRoundNumbers, roundNumber].sort((a, b) => a - b)
+                                                                            }))}
+                                                                            className="accent-primary-500"
+                                                                        />
+                                                                    </label>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                        <p className="text-xs text-surface-600-400">
+                                                            Missing selected rounds can be created when the file includes player IDs and scores.
+                                                        </p>
+                                                    </div>
 
                                                     {scoreImportExceedsConfig && (
                                                         <div className="space-y-2 p-3 rounded-lg bg-warning-500/10 border border-warning-500/30">
@@ -1012,7 +1588,8 @@ export default function RoundsTab() {
                                                             Cancel
                                                         </Dialog.CloseTrigger>
                                                         <button
-                                                            className="px-4 py-1.5 text-sm rounded preset-filled cursor-pointer"
+                                                            className="px-4 py-1.5 text-sm rounded preset-filled cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                                            disabled={scoreRoundOptions.selectedRoundNumbers.length === 0}
                                                             onClick={() => applyScoreImport(scoreRoundOptions)}
                                                         >
                                                             Apply Import
@@ -1033,13 +1610,16 @@ export default function RoundsTab() {
                     >
                         <Settings size={20} />
                     </button>
-                    {tournamentConfig && (
+                    {tournamentConfig && rounds.length > 0 && (
                         <button
-                            onClick={handleResetTournament}
-                            className="p-2 hover:bg-error-500/10 rounded-lg transition-colors text-surface-500 hover:text-error-500"
-                            title="Reset Tournament"
+                            onClick={() => {
+                                setRoundModalMode('settings');
+                                setShowSetupModal(true);
+                            }}
+                            className="p-2 hover:bg-surface-200-800 rounded-lg transition-colors text-surface-500 hover:text-primary-500"
+                            title="Round Settings"
                         >
-                            <Trash2 size={20} />
+                            <Swords size={20} />
                         </button>
                     )}
                     {isLatestRound && (
@@ -1051,10 +1631,10 @@ export default function RoundsTab() {
                                 </div>
                             )}
                             
-                            {isPairing ? (
+                            {pairingBusy ? (
                                 <div className="flex flex-col items-end gap-1 min-w-48">
                                     <div className="flex justify-between w-full text-[10px] font-bold uppercase tracking-widest text-primary-500">
-                                        <span>Engine {pairingProgress < 90 ? 'Initializing' : 'Pairing'}</span>
+                                        <span>{isManualPairing ? 'Manual' : 'Engine'} {pairingProgress < 90 ? 'Initializing' : 'Pairing'}</span>
                                         <span>{pairingProgress}%</span>
                                     </div>
                                     <div className="w-full h-1.5 bg-surface-200-800 rounded-full overflow-hidden">
@@ -1074,14 +1654,29 @@ export default function RoundsTab() {
                                     View Standings
                                 </button>
                             ) : (
-                                <button
-                                    onClick={() => setShowSetupModal(true)}
-                                    disabled={isPairing || (!isRoundComplete && rounds.length > 0)}
-                                    className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors text-sm font-bold shadow-lg shadow-primary-500/20 disabled:opacity-50"
-                                >
-                                    <Play size={16} />
-                                    {rounds.length === 0 ? 'Start Tournament' : 'Next Round'}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    {isRoundComplete && (
+                                        <button
+                                            onClick={() => openManualPairing('create')}
+                                            disabled={pairingBusy || (!isRoundComplete && rounds.length > 0)}
+                                            className="flex items-center gap-2 px-4 py-2 rounded preset-tonal text-sm font-bold disabled:opacity-50"
+                                        >
+                                            <Swords size={16} />
+                                            Manual Pairing
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => {
+                                            setRoundModalMode('setup');
+                                            setShowSetupModal(true);
+                                        }}
+                                        disabled={pairingBusy || (!isRoundComplete && rounds.length > 0)}
+                                        className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors text-sm font-bold shadow-lg shadow-primary-500/20 disabled:opacity-50"
+                                    >
+                                        <Play size={16} />
+                                        {rounds.length === 0 ? 'Start Tournament' : 'Next Round'}
+                                    </button>
+                                </div>
                             )}
                         </div>
                     )}
@@ -1100,10 +1695,20 @@ export default function RoundsTab() {
                 </div>
             ) : (
                 <div className="space-y-4">
-                    <div className="flex items-center gap-4 text-sm">
+                    <div className="flex items-center justify-between gap-4 text-sm">
                         <div className="text-surface-600-400">
                             {currentRound.pairings.length} boards paired
                         </div>
+                        {isLatestRound && (
+                            <button
+                                onClick={() => openManualPairing('edit')}
+                                disabled={pairingBusy}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold disabled:opacity-50"
+                            >
+                                <Swords size={14} />
+                                Change Pairing
+                            </button>
+                        )}
                     </div>
 
                     <div className="border border-surface-200-800 rounded-xl overflow-hidden bg-surface-100-900 shadow-sm">
@@ -1135,7 +1740,17 @@ export default function RoundsTab() {
                                             className="hover:bg-surface-200-800/30 transition-colors focus:bg-primary-500/10 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary-500 outline-none cursor-pointer"
                                         >
                                             <td className="px-3 py-2 font-mono text-surface-500 text-[11px]">
-                                                {idx + 1}
+                                                <div className="flex items-center gap-2">
+                                                    <span>{idx + 1}</span>
+                                                    {pairing.manual && (
+                                                        <span
+                                                            className="rounded bg-primary-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400"
+                                                            title="Manually paired"
+                                                        >
+                                                            M
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-3 py-2 text-[11px] font-mono text-surface-400">
                                                 {pairing.whiteId}
@@ -1153,9 +1768,10 @@ export default function RoundsTab() {
                                             </td>
                                             <td className="px-3 py-2">
                                                 <select
-                                                    value={pairing.result}
+                                                    value={pairing.isTournamentForfeit ? '0-0' : pairing.result}
                                                     onChange={(e) => updateResult(pairing.id, e.target.value)}
-                                                    className="w-full bg-surface-50-950 border border-surface-200-800 rounded px-1.5 py-1 text-center font-bold text-xs outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer"
+                                                    disabled={pairing.isTournamentForfeit}
+                                                    className="w-full bg-surface-50-950 border border-surface-200-800 rounded px-1.5 py-1 text-center font-bold text-xs outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                                                 >
                                                     {RESULT_OPTIONS.map(opt => (
                                                         <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1173,7 +1789,9 @@ export default function RoundsTab() {
                                             <td className="px-3 py-2 text-right">
                                                 {pairing.isBye ? (
                                                     <div className="flex flex-col items-end pr-2">
-                                                        <span className="font-bold text-primary-500 uppercase tracking-widest italic text-xs">BYE</span>
+                                                        <span className={`font-bold uppercase tracking-widest italic text-xs ${pairing.isTournamentForfeit ? 'text-error-500' : pairing.isSkip ? 'text-warning-500' : 'text-primary-500'}`}>
+                                                            {pairing.isTournamentForfeit ? 'FORFEIT' : pairing.isSkip ? 'SKIP' : 'BYE'}
+                                                        </span>
                                                     </div>
                                                 ) : (
                                                     <PlayerInfo player={blackPlayer} side="black" />
@@ -1200,9 +1818,30 @@ export default function RoundsTab() {
 
             <RoundSetupModal
                 open={showSetupModal}
-                onClose={() => setShowSetupModal(false)}
-                onStart={handleStartPairing}
-                roundNumber={rounds.length + 1}
+                onClose={handleRoundSetupClose}
+                onStart={handleRoundSetupStart}
+                roundNumber={roundModalMode === 'manual-options' ? manualTargetRoundNumber : rounds.length + 1}
+                rounds={rounds}
+                canStart={roundModalMode === 'manual-options' || (roundModalMode === 'setup' && isLatestRound && isRoundComplete && rounds.length < tournamentConfig.numRounds)}
+                showDelete={roundModalMode === 'settings'}
+                excludedPlayers={nextRoundExcludedPlayers}
+                onDeleteRounds={handleDeleteRounds}
+            />
+
+            <ManualPairingModal
+                key={`${showManualPairingModal}-${manualPairingMode}-${manualTargetRoundNumber}`}
+                open={showManualPairingModal}
+                mode={manualPairingMode}
+                roundNumber={manualTargetRoundNumber}
+                players={players}
+                playerScores={manualPlayerScores}
+                initialBoards={manualInitialBoards}
+                previousOpponentSet={getPreviousOpponentSet(manualPreviousRounds)}
+                previousByeSet={getPlayersWithBye(manualPreviousRounds)}
+                forfeitedPlayerIds={forfeitedPlayerIds}
+                isSaving={isManualPairing}
+                onClose={() => setShowManualPairingModal(false)}
+                onSave={stageManualPairingSave}
             />
 
             <ConfirmationModal
@@ -1214,6 +1853,7 @@ export default function RoundsTab() {
                 isAlert={modal.isAlert}
                 variant={modal.variant}
                 confirmText={modal.confirmText}
+                details={modal.details}
             />
         </div>
     );

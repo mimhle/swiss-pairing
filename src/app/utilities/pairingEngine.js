@@ -1,5 +1,27 @@
 import { generatePairings as engineGeneratePairings } from './pairingEngineWrapper';
 
+function getPlayerId(player) {
+    return String(player?.playerUniqueId ?? player?.id ?? "");
+}
+
+function getForfeitedPlayerIds(rounds = []) {
+    const forfeitedIds = new Set();
+
+    rounds.forEach((round) => {
+        round.pairings?.forEach((pairing) => {
+            if (pairing.isTournamentForfeit && pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
+            if (pairing.result === "1-0f" && pairing.blackId) forfeitedIds.add(String(pairing.blackId));
+            if (pairing.result === "0-1f" && pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
+            if (!pairing.isBye && pairing.result === "0-0") {
+                if (pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
+                if (pairing.blackId) forfeitedIds.add(String(pairing.blackId));
+            }
+        });
+    });
+
+    return forfeitedIds;
+}
+
 /**
  * Pairs players for a round.
  * 
@@ -12,12 +34,15 @@ import { generatePairings as engineGeneratePairings } from './pairingEngineWrapp
  * @returns {Promise<Array>} - List of pairings: [{ whiteId, blackId, isBye }, ...]
  */
 export async function generatePairings(players, options = {}, previousRounds = [], tournamentConfig = {}, tournamentName = "Tournament", onProgress = null) {
-    console.log("[Pairing] Generating pairings. Players:", players.length, "Round:", previousRounds.length + 1);
+    const forfeitedIds = getForfeitedPlayerIds(previousRounds);
+    const eligiblePlayers = (players || []).filter(player => !forfeitedIds.has(getPlayerId(player)));
+
+    console.log("[Pairing] Generating pairings. Players:", eligiblePlayers.length, "Round:", previousRounds.length + 1);
 
     if (onProgress) onProgress(50);
 
     const pairings = await engineGeneratePairings(
-        players,
+        eligiblePlayers,
         { ...options, totalRounds: tournamentConfig?.numRounds },
         previousRounds
     );

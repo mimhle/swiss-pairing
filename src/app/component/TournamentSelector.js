@@ -3,7 +3,8 @@
 import { useState, Fragment } from "react";
 import { useTournament } from "@/app/context/TournamentContext";
 import { Dialog, Menu, Portal } from '@skeletonlabs/skeleton-react';
-import { ChevronDown, Plus, Copy, Edit2, Trash2 } from 'lucide-react';
+import { ChevronDown, Plus, Copy, Edit2, Trash2, Database } from 'lucide-react';
+import GlobalDataSettingsModal from "@/app/component/GlobalDataSettingsModal";
 
 export default function TournamentSelector() {
     const {
@@ -18,6 +19,7 @@ export default function TournamentSelector() {
     } = useTournament();
 
     const [modalConfig, setModalConfig] = useState({ isOpen: false, type: '', id: '', defaultValue: '' });
+    const [dataSettingsOpen, setDataSettingsOpen] = useState(false);
     const [inputValue, setInputValue] = useState('');
 
     const openModal = (type, id = '', defaultValue = '') => {
@@ -52,7 +54,7 @@ export default function TournamentSelector() {
 
     return (
         <>
-            <div className="flex items-center gap-4 py-2 mb-2">
+            <div className="flex items-center gap-3 py-2 mb-2">
                 <h1 className="h2">Tournament:</h1>
                 {isLoaded && activeTournament && (
                     <Menu>
@@ -106,6 +108,15 @@ export default function TournamentSelector() {
                         </Portal>
                     </Menu>
                 )}
+                <button
+                    type="button"
+                    onClick={() => setDataSettingsOpen(true)}
+                    className="ml-auto p-2 rounded preset-tonal cursor-pointer"
+                    title="Page data settings"
+                    aria-label="Page data settings"
+                >
+                    <Database size={18} />
+                </button>
             </div>
 
             <Dialog open={modalConfig.isOpen} onOpenChange={({ open }) => !open && closeModal()}>
@@ -163,6 +174,8 @@ export default function TournamentSelector() {
                     </Dialog.Positioner>
                 </Portal>
             </Dialog>
+
+            <GlobalDataSettingsModal open={dataSettingsOpen} onOpenChange={setDataSettingsOpen} />
         </>
     );
 }

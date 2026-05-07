@@ -124,7 +124,7 @@ export default function TournamentConfigModal({ open, onClose, config, onSave })
                                     </SortableContext>
                                 </DndContext>
                             </div>
-                            <p className="text-[9px] text-surface-500 uppercase font-bold tracking-tight text-center">Drag to reorder priority</p>
+                            <p className="text-[9px] text-surface-500 uppercase text-center">Drag to reorder priority</p>
                         </div>
                     </div>
 

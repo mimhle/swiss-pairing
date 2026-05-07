@@ -1380,7 +1380,7 @@ export default function PlayersTab() {
                                                 <p className="text-xs text-surface-500-400">or paste text directly</p>
                                                 <textarea
                                                     className="w-full h-32 bg-surface-50-950 border border-surface-200-800 rounded p-2 font-mono text-xs outline-none resize-none focus:ring-1 focus:ring-primary-500"
-                                                    placeholder={"Số;Tên;Cấp;Rat QG;Rat QT;LĐ;Phái;Loại;Nhóm;CLB;Số FIDE\n1;Nguyễn Trung Quân;ACM;0;1817;HCM;;CV;DB12;Tp. HCM;12445479"}
+                                                    placeholder={"No;Name;Title;Birth;Fed;Sex;Type;Gr;Club;FIDE-No;\n1;Carlsen, Magnus;GM;1990;NOR;M;player;A;Offerspill Chess Club;13600063;\n2;Caruana, Fabiano;GM;1992;USA;M;player;A;Saint Louis Chess Club;2020009;"}
                                                     value={importText}
                                                     onChange={e => { setImportText(e.target.value); setFileName(''); }}
                                                 />
