@@ -2,8 +2,8 @@
 
 import { Fragment } from 'react';
 import { Tabs } from '@skeletonlabs/skeleton-react';
-import { QrCode, Tooltip } from 'lucide-react';
-import QRCodeGenerator from '@/app/component/QRCodeGenerator';
+import { QrCode } from 'lucide-react';
+import QRCodeGenerator from '@/features/utilities/QRCodeGenerator';
 
 const tabs = [
     { value: "qr", label: "QR Code", icon: QrCode },

@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, Fragment } from "react";
-import { useTournament } from "@/app/context/TournamentContext";
+import { useTournament } from "@/context/TournamentContext";
 import { Dialog, Menu, Portal } from '@skeletonlabs/skeleton-react';
 import { ChevronDown, Plus, Copy, Edit2, Trash2, Database } from 'lucide-react';
-import GlobalDataSettingsModal from "@/app/component/GlobalDataSettingsModal";
+import GlobalDataSettingsModal from "@/components/modals/GlobalDataSettingsModal";
 
 export default function TournamentSelector() {
     const {

@@ -3,11 +3,11 @@
 import { Fragment } from 'react';
 import { Tabs } from '@skeletonlabs/skeleton-react';
 import { Users, Swords, Table, Settings } from 'lucide-react';
-import PlayersTab from '@/app/component/PlayersTab';
-import RoundsTab from '@/app/component/RoundsTab';
-import StandingsTab from '@/app/component/StandingsTab';
-import SettingsTab from '@/app/component/SettingsTab';
-import { useTournament } from '@/app/context/TournamentContext';
+import PlayersTab from '@/features/tournament/PlayersTab';
+import RoundsTab from '@/features/tournament/RoundsTab';
+import StandingsTab from '@/features/tournament/StandingsTab';
+import SettingsTab from '@/features/tournament/SettingsTab';
+import { useTournament } from '@/context/TournamentContext';
 
 const tabs = [
     { value: "players", label: "Players", icon: Users },

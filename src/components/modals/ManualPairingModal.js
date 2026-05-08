@@ -6,7 +6,7 @@ import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, use
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AlertTriangle, ArrowDown, ArrowLeftRight, ArrowUp, GripVertical, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
-import ScrollLock from '@/app/component/ScrollLock';
+import ScrollLock from '@/components/utility/ScrollLock';
 
 const emptyBoard = () => ({
     id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),

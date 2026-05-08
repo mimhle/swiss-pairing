@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Dialog, Portal } from "@skeletonlabs/skeleton-react";
 import { Download, Upload, AlertTriangle, Trash2, Database, X } from "lucide-react";
-import { exportAllData, importAllData, clearAllData } from "@/app/component/tournamentStore";
+import { exportAllData, importAllData, clearAllData } from "@/lib/tournamentStore";
 import ConfirmationModal from "./ConfirmationModal";
 
 export default function GlobalDataSettingsModal({ open, onOpenChange }) {

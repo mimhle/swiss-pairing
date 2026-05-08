@@ -2,15 +2,16 @@
 
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import * as XLSX from 'xlsx';
-import { useTournament } from '@/app/context/TournamentContext';
+import { useTournament } from '@/context/TournamentContext';
 import { Swords, Play, Settings, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download } from 'lucide-react';
 import { Dialog, Tooltip, Portal } from '@skeletonlabs/skeleton-react';
-import TournamentConfigModal from './TournamentConfigModal';
-import RoundSetupModal from './RoundSetupModal';
-import ConfirmationModal from './ConfirmationModal';
-import ManualPairingModal from './ManualPairingModal';
-import { exportTournamentTrf, generatePairings } from '@/app/utilities/pairingEngine';
-import { loadPlayers } from './tournamentStore';
+import TournamentConfigModal from '@/components/modals/TournamentConfigModal';
+import RoundSetupModal from '@/components/modals/RoundSetupModal';
+import ConfirmationModal from '@/components/modals/ConfirmationModal';
+import ManualPairingModal from '@/components/modals/ManualPairingModal';
+import PlayerRoundHistoryModal from '@/components/modals/PlayerRoundHistoryModal';
+import { exportTournamentTrf, generatePairings } from '@/lib/pairingEngine';
+import { loadPlayers } from '@/lib/tournamentStore';
 
 const RESULT_OPTIONS = [
     { value: '', label: 'Pending' },
@@ -602,7 +603,9 @@ export default function RoundsTab() {
     const [scoreFileName, setScoreFileName] = useState('');
     const [scoreImportOpen, setScoreImportOpen] = useState(false);
     const [scoreRoundOptions, setScoreRoundOptions] = useState(DEFAULT_SCORE_ROUND_OPTIONS);
+    const [selectedPlayer, setSelectedPlayer] = useState(null);
     const scoreFileInputRef = useRef(null);
+    const roundSelectorRef = useRef(null);
 
     // Load players for lookup
     useEffect(() => {
@@ -1325,6 +1328,34 @@ export default function RoundsTab() {
         }
     };
 
+    const handleRoundSelectorWheel = (event) => {
+        const direction = Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+            ? Math.sign(event.deltaY)
+            : Math.sign(event.deltaX);
+
+        if (direction === 0) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        if (rounds.length <= 1) return;
+
+        setCurrentRoundIdx(prev => {
+            const next = prev + direction;
+            return Math.min(Math.max(next, 0), rounds.length - 1);
+        });
+    };
+
+    useEffect(() => {
+        const selector = roundSelectorRef.current;
+        if (!selector) return;
+
+        selector.addEventListener('wheel', handleRoundSelectorWheel, { passive: false });
+
+        return () => {
+            selector.removeEventListener('wheel', handleRoundSelectorWheel);
+        };
+    }, [handleRoundSelectorWheel]);
+
     const showAlert = (title, description, details = []) => {
         setModal({ open: true, title, description, details, onConfirm: () => setModal(prev => ({ ...prev, open: false })), isAlert: true, variant: 'primary', confirmText: 'OK' });
     };
@@ -1415,12 +1446,16 @@ export default function RoundsTab() {
             <Tooltip>
                 <Tooltip.Trigger
                     element={(attrs) => (
-                        <div {...attrs} className={`flex items-center gap-2 cursor-help min-w-0 ${side === 'black' ? 'flex-row-reverse text-right' : ''}`}>
+                        <button
+                            {...attrs}
+                            type="button"
+                            onClick={() => setSelectedPlayer(player)}
+                            className={`flex max-w-full items-center gap-1.5 cursor-pointer min-w-0 text-left ${side === 'black' ? 'flex-row-reverse text-right' : ''}`}
+                        >
                             <div className="flex flex-col min-w-0 overflow-hidden">
-                                <span className="font-bold text-surface-900-100 text-sm truncate">{player.name || 'Unknown'}</span>
-                                <span className="text-[9px] text-surface-500 uppercase font-bold tracking-tight">Rtg: {player.rating || '0'}</span>
+                                <span className="font-bold text-surface-900-100 text-xs truncate leading-tight">{player.name || 'Unknown'}</span>
                             </div>
-                        </div>
+                        </button>
                     )}
                 />
                 <Portal>
@@ -1611,7 +1646,11 @@ export default function RoundsTab() {
                         Rounds
                     </h2>
                     {rounds.length > 0 && (
-                        <div className="flex items-center bg-surface-100-900 border border-surface-200-800 rounded-lg p-1">
+                        <div
+                            ref={roundSelectorRef}
+                            className="flex items-center bg-surface-100-900 border border-surface-200-800 rounded-lg p-1"
+                            title="Scroll to change rounds"
+                        >
                             <button
                                 onClick={prevRound}
                                 disabled={currentRoundIdx === 0}
@@ -1619,7 +1658,7 @@ export default function RoundsTab() {
                             >
                                 <ChevronLeft size={18} />
                             </button>
-                            <div className="px-4 text-sm font-bold min-w-16 text-center">
+                            <div className="px-4 text-sm font-bold min-w-16 text-center select-none">
                                 {currentRoundIdx + 1} of {tournamentConfig.numRounds}
                             </div>
                             <button
@@ -2041,16 +2080,16 @@ export default function RoundsTab() {
                         <table className="w-full text-sm">
                             <thead className="bg-surface-50-950 border-b border-surface-200-800">
                                 <tr>
-                                    <th className="px-3 py-2 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-10">Bd</th>
-                                    <th className="px-3 py-2 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-10">ID</th>
-                                    <th className="px-3 py-2 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500">White Name</th>
-                                    <th className="px-3 py-2 text-center font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-10">Fed</th>
-                                    <th className="px-3 py-2 text-center font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-10">Pts</th>
-                                    <th className="px-3 py-2 text-center font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-24">Result</th>
-                                    <th className="px-3 py-2 text-center font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-10">Pts</th>
-                                    <th className="px-3 py-2 text-center font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-10">Fed</th>
-                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wider text-[10px] text-surface-500">Black Name</th>
-                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-10">ID</th>
+                                    <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">Bd</th>
+                                    <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">ID</th>
+                                    <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500">White Name</th>
+                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Fed</th>
+                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Pts</th>
+                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-20">Result</th>
+                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Pts</th>
+                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Fed</th>
+                                    <th className="px-2 py-1.5 text-right font-semibold uppercase tracking-wider text-[9px] text-surface-500">Black Name</th>
+                                    <th className="px-2 py-1.5 text-right font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">ID</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-surface-200-800">
@@ -2065,12 +2104,12 @@ export default function RoundsTab() {
                                             onKeyDown={(e) => handleKeyDown(e, pairing.id, idx)}
                                             className="hover:bg-surface-200-800/30 transition-colors focus:bg-primary-500/10 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary-500 outline-none cursor-pointer"
                                         >
-                                            <td className="px-3 py-2 font-mono text-surface-500 text-[11px]">
-                                                <div className="flex items-center gap-2">
+                                            <td className="px-2 py-1.5 font-mono text-surface-500 text-[10px]">
+                                                <div className="flex items-center gap-1.5">
                                                     <span>{idx + 1}</span>
                                                     {pairing.manual && (
                                                         <span
-                                                            className="rounded bg-primary-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400"
+                                                            className="rounded bg-primary-500/10 px-1 py-0.5 text-[8px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400"
                                                             title="Manually paired"
                                                         >
                                                             M
@@ -2078,44 +2117,44 @@ export default function RoundsTab() {
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="px-3 py-2 text-[11px] font-mono text-surface-400">
+                                            <td className="px-2 py-1.5 text-[10px] font-mono text-surface-400">
                                                 {pairing.whiteId}
                                             </td>
-                                            <td className="px-3 py-2">
+                                            <td className="px-2 py-1.5">
                                                 <PlayerInfo player={whitePlayer} side="white" />
                                             </td>
-                                            <td className="px-3 py-2 text-center">
-                                                <span className="text-[10px] font-bold text-surface-400 uppercase">{whitePlayer?.federation || '-'}</span>
+                                            <td className="px-2 py-1.5 text-center">
+                                                <span className="text-[9px] font-bold text-surface-400 uppercase">{whitePlayer?.federation || '-'}</span>
                                             </td>
-                                            <td className="px-3 py-2 text-center">
-                                                <span className="font-mono font-bold text-primary-500 text-sm">
+                                            <td className="px-2 py-1.5 text-center">
+                                                <span className="font-mono font-bold text-primary-500 text-xs">
                                                     {playerScores[pairing.whiteId] || 0}
                                                 </span>
                                             </td>
-                                            <td className="px-3 py-2">
+                                            <td className="px-2 py-1.5">
                                                 <select
                                                     value={pairing.isTournamentForfeit ? '0-0' : pairing.result}
                                                     onChange={(e) => updateResult(pairing.id, e.target.value)}
                                                     disabled={pairing.isTournamentForfeit}
-                                                    className="w-full bg-surface-50-950 border border-surface-200-800 rounded px-1.5 py-1 text-center font-bold text-xs outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                                                    className="w-full bg-surface-50-950 border border-surface-200-800 rounded px-1 py-0.5 text-center font-bold text-[11px] outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                                                 >
                                                     {RESULT_OPTIONS.map(opt => (
                                                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                                                     ))}
                                                 </select>
                                             </td>
-                                            <td className="px-3 py-2 text-center">
-                                                <span className="font-mono font-bold text-primary-500 text-sm">
+                                            <td className="px-2 py-1.5 text-center">
+                                                <span className="font-mono font-bold text-primary-500 text-xs">
                                                     {pairing.isBye ? '-' : (playerScores[pairing.blackId] || 0)}
                                                 </span>
                                             </td>
-                                            <td className="px-3 py-2 text-center">
-                                                <span className="text-[10px] font-bold text-surface-400 uppercase">{pairing.isBye ? '-' : (blackPlayer?.federation || '-')}</span>
+                                            <td className="px-2 py-1.5 text-center">
+                                                <span className="text-[9px] font-bold text-surface-400 uppercase">{pairing.isBye ? '-' : (blackPlayer?.federation || '-')}</span>
                                             </td>
-                                            <td className="px-3 py-2 text-right">
+                                            <td className="px-2 py-1.5 text-right">
                                                 {pairing.isBye ? (
-                                                    <div className="flex flex-col items-end pr-2">
-                                                        <span className={`font-bold uppercase tracking-widest italic text-xs ${pairing.isTournamentForfeit ? 'text-error-500' : pairing.isSkip ? 'text-warning-500' : 'text-primary-500'}`}>
+                                                    <div className="flex flex-col items-end pr-1">
+                                                        <span className={`font-bold uppercase tracking-widest italic text-[11px] ${pairing.isTournamentForfeit ? 'text-error-500' : pairing.isSkip ? 'text-warning-500' : 'text-primary-500'}`}>
                                                             {pairing.isTournamentForfeit ? 'FORFEIT' : pairing.isSkip ? 'SKIP' : 'BYE'}
                                                         </span>
                                                     </div>
@@ -2123,7 +2162,7 @@ export default function RoundsTab() {
                                                     <PlayerInfo player={blackPlayer} side="black" />
                                                 )}
                                             </td>
-                                            <td className="px-3 py-2 text-right text-[11px] font-mono text-surface-400">
+                                            <td className="px-2 py-1.5 text-right text-[10px] font-mono text-surface-400">
                                                 {pairing.isBye ? '-' : pairing.blackId}
                                             </td>
                                         </tr>
@@ -2169,6 +2208,14 @@ export default function RoundsTab() {
                 isSaving={isManualPairing}
                 onClose={() => setShowManualPairingModal(false)}
                 onSave={stageManualPairingSave}
+            />
+
+            <PlayerRoundHistoryModal
+                open={Boolean(selectedPlayer)}
+                player={selectedPlayer}
+                rounds={rounds}
+                players={players}
+                onClose={() => setSelectedPlayer(null)}
             />
 
             <ConfirmationModal

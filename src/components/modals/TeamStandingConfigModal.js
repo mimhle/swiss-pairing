@@ -7,8 +7,8 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from 
 import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import ScrollLock from '@/app/component/ScrollLock';
-import { DEFAULT_TEAM_STANDING_OPTIONS, normalizeTeamStandingOptions } from '@/app/utilities/standingsLogic';
+import ScrollLock from '@/components/utility/ScrollLock';
+import { DEFAULT_TEAM_STANDING_OPTIONS, normalizeTeamStandingOptions } from '@/lib/standingsLogic';
 
 const TEAM_RANK_OPTIONS = [
     { id: 'individualRank', label: 'Individual Rank Sum', description: 'Lower total rank of counted players wins' },

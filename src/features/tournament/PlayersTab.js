@@ -4,15 +4,15 @@ import { useEffect, useRef, useState, memo, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { Dialog, Menu, Portal, Tooltip } from '@skeletonlabs/skeleton-react';
 import { AlertTriangle, ArrowLeft, ArrowRight, ChevronDown, CreditCard, FileDown, FileUp, Filter, GripVertical, Play, Plus, Redo2, Settings, Trash, Trash2, Undo2, Upload, X } from 'lucide-react';
-import { loadPlayers, savePlayers, loadClubFedMapping, saveClubFedMapping } from '@/app/component/tournamentStore';
+import { loadPlayers, savePlayers, loadClubFedMapping, saveClubFedMapping } from '@/lib/tournamentStore';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, pointerWithin, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import GeneratePlayerCardModal from '@/app/component/GeneratePlayerCardModal';
-import ScrollLock from '@/app/component/ScrollLock';
-import { useTournament } from '@/app/context/TournamentContext';
-import useHydrated from '@/app/component/useHydrated';
+import GeneratePlayerCardModal from '@/components/modals/GeneratePlayerCardModal';
+import ScrollLock from '@/components/utility/ScrollLock';
+import { useTournament } from '@/context/TournamentContext';
+import useHydrated from '@/hooks/useHydrated';
 
 // ─── Column definitions ──────────────────────────────────────────────────────
 
@@ -1362,7 +1362,7 @@ export default function PlayersTab() {
                     <button
                         className="p-1 rounded preset-tonal transition-opacity disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
                         title="Undo (Ctrl+Z)"
-                        disabled={!mounted || !canUndo || isWholeTableLocked}
+                        disabled={!mounted || !canUndo}
                         onClick={undo}
                         aria-label="Undo"
                     >
@@ -1371,7 +1371,7 @@ export default function PlayersTab() {
                     <button
                         className="p-1 rounded preset-tonal transition-opacity disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
                         title="Redo (Ctrl+Y)"
-                        disabled={!mounted || !canRedo || isWholeTableLocked}
+                        disabled={!mounted || !canRedo}
                         onClick={redo}
                         aria-label="Redo"
                     >
@@ -1943,7 +1943,7 @@ export default function PlayersTab() {
                                                                         }}
                                                                     />
                                                                     <p className="text-xs text-surface-600-400 leading-tight wrap-break-word">
-                                                                        Use ${'{'}{'{'}fieldName{'}'}{'}'}.{'\n'}
+                                                                        Use ${'{'}fieldName{'}'}.{'\n'}
                                                                         Available: name, gender, group, rating, title, federation, club, fideId, teamUniqueId, type
                                                                     </p>
                                                                 </div>

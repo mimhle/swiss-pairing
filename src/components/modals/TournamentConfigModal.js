@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Dialog, Portal } from '@skeletonlabs/skeleton-react';
 import { Settings, X, Check, GripVertical } from 'lucide-react';
-import ScrollLock from '@/app/component/ScrollLock';
+import ScrollLock from '@/components/utility/ScrollLock';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Portal } from '@skeletonlabs/skeleton-react';
 import { AlertTriangle, Play, X, Shield, Palette, Trash2, UserX } from 'lucide-react';
-import ScrollLock from '@/app/component/ScrollLock';
+import ScrollLock from '@/components/utility/ScrollLock';
 
 export default function RoundSetupModal({ open, onClose, onStart, roundNumber, rounds = [], canStart = true, showDelete = true, excludedPlayers = [], unassignedPlayers = [], onDeleteRounds }) {
     const [startingColor, setStartingColor] = useState('white');

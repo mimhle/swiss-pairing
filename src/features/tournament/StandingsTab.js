@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState, useEffect } from 'react';
-import { useTournament } from '@/app/context/TournamentContext';
+import { useTournament } from '@/context/TournamentContext';
 import { Table, Trophy, Medal, Award, User, Building2, Globe, GraduationCap, Users, Settings } from 'lucide-react';
 import { Tooltip, Portal } from '@skeletonlabs/skeleton-react';
-import { calculateStandings, calculateTeamStandings, normalizeTeamStandingOptions } from '@/app/utilities/standingsLogic';
-import { loadPlayers } from './tournamentStore';
-import TeamStandingConfigModal from '@/app/component/TeamStandingConfigModal';
+import { calculateStandings, calculateTeamStandings, normalizeTeamStandingOptions } from '@/lib/standingsLogic';
+import { loadPlayers } from '@/lib/tournamentStore';
+import TeamStandingConfigModal from '@/components/modals/TeamStandingConfigModal';
+import PlayerRoundHistoryModal from '@/components/modals/PlayerRoundHistoryModal';
 
 const TIEBREAK_LABELS = {
     bh: 'BH',
@@ -62,6 +63,7 @@ export default function StandingsTab() {
     const [isLoading, setIsLoading] = useState(true);
     const [standingMode, setStandingMode] = useState('individual');
     const [showTeamConfigModal, setShowTeamConfigModal] = useState(false);
+    const [selectedPlayer, setSelectedPlayer] = useState(null);
 
     useEffect(() => {
         if (activeTournamentId && activeTab === 'standings') {
@@ -99,11 +101,16 @@ export default function StandingsTab() {
         <Tooltip>
             <Tooltip.Trigger
                 element={(attrs) => (
-                    <div {...attrs} className="flex items-center gap-2 cursor-help group">
-                        <span className="font-bold text-surface-900-100 group-hover:text-primary-500 transition-colors">
+                    <button
+                        {...attrs}
+                        type="button"
+                        onClick={() => setSelectedPlayer(player)}
+                        className="flex max-w-full items-center gap-1.5 cursor-pointer group min-w-0 text-left"
+                    >
+                        <span className="font-bold text-xs leading-tight text-surface-900-100 truncate group-hover:text-primary-500 transition-colors">
                             {player.name}
                         </span>
-                    </div>
+                    </button>
                 )}
             />
             <Portal>
@@ -166,10 +173,10 @@ export default function StandingsTab() {
     );
 
     const RankIcon = ({ rank }) => {
-        if (rank === 1) return <Trophy size={16} className="text-yellow-500" />;
-        if (rank === 2) return <Medal size={16} className="text-slate-400" />;
-        if (rank === 3) return <Award size={16} className="text-amber-600" />;
-        return <span className="text-surface-400 font-mono text-xs">{rank}</span>;
+        if (rank === 1) return <Trophy size={14} className="text-yellow-500" />;
+        if (rank === 2) return <Medal size={14} className="text-slate-400" />;
+        if (rank === 3) return <Award size={14} className="text-amber-600" />;
+        return <span className="text-surface-400 font-mono text-[10px]">{rank}</span>;
     };
 
     const TeamSourceIcon = teamStandingOptions.source === 'club' ? Building2 : Globe;
@@ -248,14 +255,14 @@ export default function StandingsTab() {
                 <table className="w-full text-sm">
                     <thead className="bg-surface-50-950 border-b border-surface-200-800">
                         <tr>
-                            <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-12">Rank</th>
-                            <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-12">ID</th>
-                            <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500">Player</th>
-                            <th className="px-4 py-3 text-center font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-16">Fed</th>
-                            <th className="px-4 py-3 text-center font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-20">Rating</th>
-                            <th className="px-4 py-3 text-center font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-20 bg-primary-500/5">Points</th>
+                            <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">Rank</th>
+                            <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">ID</th>
+                            <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500">Player</th>
+                            <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Fed</th>
+                            <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-14">Rating</th>
+                            <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-14 bg-primary-500/5">Points</th>
                             {activeTiebreakers.map(tb => (
-                                <th key={tb} className="px-4 py-3 text-center font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-20">
+                                <th key={tb} className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-14">
                                     <Tooltip>
                                         <Tooltip.Trigger
                                             element={(attrs) => (
@@ -279,30 +286,30 @@ export default function StandingsTab() {
                     <tbody className="divide-y divide-surface-200-800">
                         {standings.map((player, idx) => (
                             <tr key={player.playerUniqueId} className="hover:bg-surface-200-800/30 transition-colors">
-                                <td className="px-4 py-2 text-center">
+                                <td className="px-2 py-1.5 text-center">
                                     <div className="flex justify-center">
                                         <RankIcon rank={idx + 1} />
                                     </div>
                                 </td>
-                                <td className="px-4 py-2 text-center font-mono text-xs text-surface-400">
+                                <td className="px-2 py-1.5 text-center font-mono text-[10px] text-surface-400">
                                     {player.playerUniqueId}
                                 </td>
-                                <td className="px-4 py-2">
+                                <td className="px-2 py-1.5">
                                     <PlayerInfo player={player} />
                                 </td>
-                                <td className="px-4 py-2 text-center">
-                                    <span className="text-[10px] font-bold text-surface-400 uppercase">{player.federation || '-'}</span>
+                                <td className="px-2 py-1.5 text-center">
+                                    <span className="text-[9px] font-bold text-surface-400 uppercase">{player.federation || '-'}</span>
                                 </td>
-                                <td className="px-4 py-2 text-center font-mono text-xs text-surface-500">
+                                <td className="px-2 py-1.5 text-center font-mono text-[10px] text-surface-500">
                                     {player.rating || '-'}
                                 </td>
-                                <td className="px-4 py-2 text-center bg-primary-500/5">
-                                    <span className="font-bold text-primary-500 text-base">
+                                <td className="px-2 py-1.5 text-center bg-primary-500/5">
+                                    <span className="font-bold text-primary-500 text-xs">
                                         {formatNumber(player.points)}
                                     </span>
                                 </td>
                                 {activeTiebreakers.map(tb => (
-                                    <td key={tb} className="px-4 py-2 text-center font-mono text-xs text-surface-600-400">
+                                    <td key={tb} className="px-2 py-1.5 text-center font-mono text-[10px] text-surface-600-400">
                                         {formatNumber(player.tiebreakers[tb])}
                                     </td>
                                 ))}
@@ -310,7 +317,7 @@ export default function StandingsTab() {
                         ))}
                         {standings.length === 0 && (
                             <tr>
-                                <td colSpan={6 + activeTiebreakers.length} className="px-4 py-12 text-center text-surface-500 italic">
+                                <td colSpan={6 + activeTiebreakers.length} className="px-2 py-10 text-center text-surface-500 italic">
                                     No players found in this tournament.
                                 </td>
                             </tr>
@@ -323,13 +330,13 @@ export default function StandingsTab() {
                     <table className="w-full text-sm">
                         <thead className="bg-surface-50-950 border-b border-surface-200-800">
                             <tr>
-                                <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-12">Rank</th>
-                                <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500">Team</th>
-                                <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500 min-w-72">Counted Players</th>
+                                <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">Rank</th>
+                                <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500">Team</th>
+                                <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 min-w-64">Counted Players</th>
                                 {teamRankColumns.map((criterion) => (
                                     <th
                                         key={criterion}
-                                        className={`px-4 py-3 text-center font-semibold uppercase tracking-wider text-[10px] w-20 ${criterion === primaryTeamRankColumn ? 'text-primary-500 bg-primary-500/5' : 'text-surface-500'}`}
+                                        className={`px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] w-14 ${criterion === primaryTeamRankColumn ? 'text-primary-500 bg-primary-500/5' : 'text-surface-500'}`}
                                     >
                                         {TEAM_RANK_LABELS[criterion] || criterion}
                                     </th>
@@ -339,38 +346,41 @@ export default function StandingsTab() {
                         <tbody className="divide-y divide-surface-200-800">
                             {teamStandings.map((team, idx) => (
                                 <tr key={team.id} className="hover:bg-surface-200-800/30 transition-colors">
-                                    <td className="px-4 py-2 text-center">
+                                    <td className="px-2 py-1.5 text-center">
                                         <div className="flex justify-center">
                                             <RankIcon rank={idx + 1} />
                                         </div>
                                     </td>
-                                    <td className="px-4 py-2">
-                                        <div className="flex items-center gap-2">
+                                    <td className="px-2 py-1.5">
+                                        <div className="flex items-center gap-1.5">
                                             <div className="min-w-0">
-                                                <div className="font-bold text-surface-900-100 truncate">{team.name}</div>
-                                                <div className="text-[10px] uppercase font-bold text-surface-400">{teamSourceLabel}</div>
+                                                <div className="font-bold text-xs leading-tight text-surface-900-100 truncate">{team.name}</div>
+                                                <div className="text-[9px] uppercase font-bold text-surface-400 leading-tight">{teamSourceLabel}</div>
                                             </div>
                                         </div>
                                     </td>
-                                    <td className="px-4 py-2">
-                                        <div className="flex flex-wrap gap-1.5">
+                                    <td className="px-2 py-1.5">
+                                        <div className="flex flex-wrap gap-1">
                                             {team.countedPlayers.map(player => (
-                                                <span
+                                                <button
                                                     key={player.playerUniqueId}
-                                                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${player.isGhost ? 'border border-dashed border-surface-300-700 text-surface-500' : 'bg-surface-200-800/60'}`}
+                                                    type="button"
+                                                    disabled={player.isGhost}
+                                                    onClick={() => !player.isGhost && setSelectedPlayer(player)}
+                                                    className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ${player.isGhost ? 'border border-dashed border-surface-300-700 text-surface-500' : 'bg-surface-200-800/60'}`}
                                                     title={player.isGhost ? `Ghost player: Rank ${player.individualRank}, 0 pts` : `Rank ${player.individualRank}, ${formatNumber(player.points)} pts`}
                                                 >
-                                                    <span className={`font-mono text-[10px] ${player.isGhost ? 'text-surface-400' : 'text-primary-500'}`}>#{player.individualRank}</span>
+                                                    <span className={`font-mono text-[9px] ${player.isGhost ? 'text-surface-400' : 'text-primary-500'}`}>#{player.individualRank}</span>
                                                     <span className="font-medium">{player.name}</span>
-                                                    <span className="font-mono text-[10px] text-surface-500">{formatNumber(player.points)}</span>
-                                                </span>
+                                                    <span className="font-mono text-[9px] text-surface-500">{formatNumber(player.points)}</span>
+                                                </button>
                                             ))}
                                         </div>
                                     </td>
                                     {teamRankColumns.map((criterion) => (
                                         <td
                                             key={criterion}
-                                            className={`px-4 py-2 text-center font-mono ${criterion === primaryTeamRankColumn ? 'bg-primary-500/5 text-primary-500 text-base font-bold' : 'text-xs text-surface-600-400'}`}
+                                            className={`px-2 py-1.5 text-center font-mono ${criterion === primaryTeamRankColumn ? 'bg-primary-500/5 text-primary-500 text-xs font-bold' : 'text-[10px] text-surface-600-400'}`}
                                         >
                                             {formatTeamMetric(team, criterion)}
                                         </td>
@@ -379,7 +389,7 @@ export default function StandingsTab() {
                             ))}
                             {teamStandings.length === 0 && (
                                 <tr>
-                                    <td colSpan={3 + teamRankColumns.length} className="px-4 py-12 text-center text-surface-500 italic">
+                                    <td colSpan={3 + teamRankColumns.length} className="px-2 py-10 text-center text-surface-500 italic">
                                         No teams meet the current team standing options.
                                     </td>
                                 </tr>
@@ -394,6 +404,14 @@ export default function StandingsTab() {
                 onClose={() => setShowTeamConfigModal(false)}
                 config={tournamentConfig}
                 onSave={handleSaveTeamStandingOptions}
+            />
+
+            <PlayerRoundHistoryModal
+                open={Boolean(selectedPlayer)}
+                player={selectedPlayer}
+                rounds={rounds}
+                players={players}
+                onClose={() => setSelectedPlayer(null)}
             />
         </div>
     );

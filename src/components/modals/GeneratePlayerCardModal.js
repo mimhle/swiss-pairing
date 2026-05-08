@@ -20,12 +20,12 @@ import {
     Undo2,
     X,
 } from 'lucide-react';
-import { loadCardGenAsset, saveCardGenAsset } from './tournamentStore';
+import { loadCardGenAsset, saveCardGenAsset } from '@/lib/tournamentStore';
 import JSZip from 'jszip';
-import ScrollLock from '@/app/component/ScrollLock';
-import { useTournament } from '@/app/context/TournamentContext';
-import ConfirmationModal from './ConfirmationModal';
-import useHydrated from '@/app/component/useHydrated';
+import ScrollLock from '@/components/utility/ScrollLock';
+import { useTournament } from '@/context/TournamentContext';
+import ConfirmationModal from '@/components/modals/ConfirmationModal';
+import useHydrated from '@/hooks/useHydrated';
 
 // ─── Shared rendering logic ───────────────────────────────────────────────────
 

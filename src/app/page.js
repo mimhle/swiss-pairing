@@ -1,5 +1,5 @@
-import TournamentTabs from "@/app/component/TournamentTabs";
-import TournamentSelector from "@/app/component/TournamentSelector";
+import TournamentTabs from "@/features/tournament/TournamentTabs";
+import TournamentSelector from "@/features/tournament/TournamentSelector";
 
 export default function Home() {
     return (

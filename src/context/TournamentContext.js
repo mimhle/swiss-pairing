@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { duplicateTournamentData, deleteTournamentData, loadTournamentConfig, saveTournamentConfig, loadRounds, saveRounds } from "@/app/component/tournamentStore";
+import { duplicateTournamentData, deleteTournamentData, loadTournamentConfig, saveTournamentConfig, loadRounds, saveRounds } from "@/lib/tournamentStore";
 
 const TournamentContext = createContext();
 

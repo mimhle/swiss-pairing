@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import Lightswitch from "@/app/component/LightSwitch";
+import Lightswitch from "@/components/layout/LightSwitch";
 
 const links = [
     { href: "/", label: "Tournament" },

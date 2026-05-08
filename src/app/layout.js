@@ -1,7 +1,7 @@
 import "./globals.css";
-import Header from "@/app/component/Header";
-import Footer from "@/app/component/Footer";
-import { TournamentProvider } from "@/app/context/TournamentContext";
+import Header from "@/components/layout/Header";
+import Footer from "@/components/layout/Footer";
+import { TournamentProvider } from "@/context/TournamentContext";
 
 export default function RootLayout({ children }) {
     return (
