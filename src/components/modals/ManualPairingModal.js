@@ -94,7 +94,7 @@ function PlayerCard({ player, score, compact = false }) {
     );
 }
 
-function DraggablePlayer({ player, score, compact = false }) {
+function DraggablePlayer({ player, score, compact = false, onClick }) {
     const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
         id: `player-${player.playerUniqueId}`,
         data: { playerId: String(player.playerUniqueId) },
@@ -110,6 +110,7 @@ function DraggablePlayer({ player, score, compact = false }) {
             style={style}
             {...attributes}
             {...listeners}
+            onClick={onClick}
             className="flex items-center gap-2 rounded border border-surface-200-800 bg-surface-100-900 px-2 py-2 cursor-grab active:cursor-grabbing hover:border-primary-500/60 transition-colors"
         >
             <GripVertical size={14} className="text-surface-400 shrink-0" />
@@ -129,23 +130,25 @@ function DragPreview({ player, score }) {
     );
 }
 
-function DroppableArea({ id, children, className = '' }) {
+function DroppableArea({ id, children, className = '', ...props }) {
     const { isOver, setNodeRef } = useDroppable({ id });
 
     return (
         <div
             ref={setNodeRef}
             className={`${className} ${isOver ? 'ring-2 ring-primary-500 ring-inset bg-primary-500/10' : ''}`}
+            {...props}
         >
             {children}
         </div>
     );
 }
 
-function BoardSlot({ id, label, player, score, tone = 'surface', onClear }) {
+function BoardSlot({ id, label, player, score, isEmpty, tone = 'surface', onClear }) {
     return (
         <DroppableArea
             id={id}
+            data-manual-slot-id={isEmpty ? id : undefined}
             className={`min-h-16 rounded border border-dashed px-3 py-2 transition-colors ${
                 player
                     ? 'border-surface-300-700 bg-surface-50-950'
@@ -169,7 +172,7 @@ function BoardSlot({ id, label, player, score, tone = 'surface', onClear }) {
                 )}
             </div>
             {player ? (
-                <DraggablePlayer player={player} score={score} compact />
+                <DraggablePlayer player={player} score={score} compact onClick={onClear} />
             ) : (
                 <div className="text-xs text-surface-400">
                     {tone === 'bye' || tone === 'forfeit' ? `Drop for ${label.toLowerCase()}` : 'Drop player'}
@@ -347,6 +350,7 @@ function SortableBoard({
                     label="White"
                     player={playerMap[board.whiteId]}
                     score={playerScores[board.whiteId] || 0}
+                    isEmpty={!board.whiteId}
                     onClear={() => onClearSlot(board.id, 'whiteId')}
                 />
                 <BoardSlot
@@ -354,6 +358,7 @@ function SortableBoard({
                     label="Black"
                     player={playerMap[board.blackId]}
                     score={playerScores[board.blackId] || 0}
+                    isEmpty={!board.blackId}
                     onClear={() => onClearSlot(board.id, 'blackId')}
                 />
             </div>
@@ -507,6 +512,75 @@ export default function ManualPairingModal({
         setActivePlayerId(playerId || null);
     };
 
+    const assignPlayerToBoardSlot = (playerId, slotId) => {
+        const [prefix, boardId, slot] = String(slotId).split(':');
+        if (prefix !== 'slot' || !boardId || !slot) return;
+
+        setBoards(prev => {
+            const cleared = clearPlayerFromBoards(prev, playerId);
+            const nextBoards = cleared.map(board => {
+                if (board.id !== boardId) return board;
+                return {
+                    ...board,
+                    [slot === 'white' ? 'whiteId' : 'blackId']: playerId,
+                };
+            });
+            return appendBoardWhenAllPopulated(nextBoards);
+        });
+        clearSpecialPlayer(playerId);
+    };
+
+    const findClosestEmptySlotId = (sourceElement) => {
+        const openBoards = boards
+            .map(board => ({
+                board,
+                emptySlotIds: [
+                    ...(!board.whiteId ? [`slot:${board.id}:white`] : []),
+                    ...(!board.blackId ? [`slot:${board.id}:black`] : []),
+                ],
+            }))
+            .filter(({ emptySlotIds }) => emptySlotIds.length);
+        if (!openBoards.length) return null;
+
+        const partiallyFilledBoards = openBoards.filter(({ emptySlotIds }) => emptySlotIds.length === 1);
+        const candidateSlotIds = partiallyFilledBoards.length
+            ? partiallyFilledBoards.map(({ emptySlotIds }) => emptySlotIds[0])
+            : openBoards.flatMap(({ emptySlotIds }) => emptySlotIds);
+
+        if (typeof document === 'undefined' || !sourceElement) {
+            return candidateSlotIds[0];
+        }
+
+        const sourceRect = sourceElement.getBoundingClientRect();
+        const sourceCenter = {
+            x: sourceRect.left + sourceRect.width / 2,
+            y: sourceRect.top + sourceRect.height / 2,
+        };
+
+        const emptySlotIdSet = new Set(candidateSlotIds);
+        const closestVisibleSlotId = Array.from(document.querySelectorAll('[data-manual-slot-id]'))
+            .filter(slotElement => emptySlotIdSet.has(slotElement.dataset.manualSlotId))
+            .reduce((closest, slotElement) => {
+                const slotRect = slotElement.getBoundingClientRect();
+                const slotCenter = {
+                    x: slotRect.left + slotRect.width / 2,
+                    y: slotRect.top + slotRect.height / 2,
+                };
+                const distance = Math.hypot(sourceCenter.x - slotCenter.x, sourceCenter.y - slotCenter.y);
+                return !closest || distance < closest.distance
+                    ? { id: slotElement.dataset.manualSlotId, distance }
+                    : closest;
+            }, null)?.id || null;
+
+        return closestVisibleSlotId || candidateSlotIds[0];
+    };
+
+    const handleAvailablePlayerClick = (event, playerId) => {
+        const targetSlotId = findClosestEmptySlotId(event.currentTarget);
+        if (!targetSlotId) return;
+        assignPlayerToBoardSlot(String(playerId), targetSlotId);
+    };
+
     const handleDragEnd = ({ active, over }) => {
         setActivePlayerId(null);
         if (!over) return;
@@ -556,18 +630,7 @@ export default function ManualPairingModal({
         const [prefix, boardId, slot] = String(over.id).split(':');
         if (prefix !== 'slot' || !boardId || !slot) return;
 
-        setBoards(prev => {
-            const cleared = clearPlayerFromBoards(prev, playerId);
-            const nextBoards = cleared.map(board => {
-                if (board.id !== boardId) return board;
-                return {
-                    ...board,
-                    [slot === 'white' ? 'whiteId' : 'blackId']: playerId,
-                };
-            });
-            return appendBoardWhenAllPopulated(nextBoards);
-        });
-        clearSpecialPlayer(playerId);
+        assignPlayerToBoardSlot(playerId, over.id);
     };
 
     const clearSlot = (boardId, slot) => {
@@ -643,6 +706,7 @@ export default function ManualPairingModal({
                                             key={player.playerUniqueId}
                                             player={player}
                                             score={playerScores[player.playerUniqueId] || 0}
+                                            onClick={(event) => handleAvailablePlayerClick(event, player.playerUniqueId)}
                                         />
                                     )) : (
                                         <div className="rounded border border-dashed border-surface-300-700 px-3 py-8 text-center text-xs text-surface-500">

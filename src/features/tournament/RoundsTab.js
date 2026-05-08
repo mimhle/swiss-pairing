@@ -190,9 +190,9 @@ function parseImportedResult(value) {
     if (['1-0', '1:0', 'w', 'white', 'whitewins'].includes(normalized)) return '1-0';
     if (['0-1', '0:1', 'b', 'black', 'blackwins'].includes(normalized)) return '0-1';
     if (['0.5-0.5', '0.5:0.5', 'draw', 'd', '='].includes(normalized)) return '0.5-0.5';
-    if (['+-', '+:-', '1-0f'].includes(normalized)) return '1-0f';
-    if (['-+', '-:+', '0-1f'].includes(normalized)) return '0-1f';
-    if (['0-0', '0:0'].includes(normalized)) return '0-0';
+    if (['+-', '+:-', '1-0f', '1:0f'].includes(normalized)) return '1-0f';
+    if (['-+', '-:+', '0-1f', '0:1f'].includes(normalized)) return '0-1f';
+    if (['0-0', '0:0', '0-0f', '0:0f'].includes(normalized)) return '0-0';
     return '';
 }
 
@@ -400,46 +400,59 @@ function withOriginalPairingValues(pairing, originalPairings = []) {
 
 function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundNumber, originalPairings = []) {
     let hasTrueBye = false;
-    const manualPairings = manualBoards
-        .filter(board => board.forfeitId || board.byeId || (board.whiteId && board.blackId))
-        .map(board => {
-            const manual = unchangedPairingManualValue(board, originalPairings);
-            const result = unchangedPairingResultValue(board, originalPairings);
-            if (board.forfeitId) {
-                return {
-                    whiteId: String(board.forfeitId),
-                    blackId: null,
-                    isBye: true,
-                    isSkip: true,
-                    isTournamentForfeit: true,
-                    manual,
-                    result: '0-0',
-                };
-            }
-            if (board.byeId) {
-                const isSkip = Boolean(board.isSkip) || hasTrueBye;
-                if (!isSkip) hasTrueBye = true;
-                return {
-                    whiteId: String(board.byeId),
-                    blackId: null,
-                    isBye: true,
-                    isSkip,
-                    manual,
-                    result,
-                };
-            }
-            return {
+    const manualRegularSlots = [];
+    const manualSpecialPairings = [];
+
+    manualBoards.forEach(board => {
+        const manual = unchangedPairingManualValue(board, originalPairings);
+        const result = unchangedPairingResultValue(board, originalPairings);
+        if (board.forfeitId) {
+            manualSpecialPairings.push({
+                whiteId: String(board.forfeitId),
+                blackId: null,
+                isBye: true,
+                isSkip: true,
+                isTournamentForfeit: true,
+                manual,
+                result: '0-0',
+            });
+            return;
+        }
+        if (board.byeId) {
+            const isSkip = Boolean(board.isSkip) || hasTrueBye;
+            if (!isSkip) hasTrueBye = true;
+            manualSpecialPairings.push({
+                whiteId: String(board.byeId),
+                blackId: null,
+                isBye: true,
+                isSkip,
+                manual,
+                result,
+            });
+            return;
+        }
+        manualRegularSlots.push(board.whiteId && board.blackId
+            ? {
                 whiteId: String(board.whiteId),
                 blackId: String(board.blackId),
                 isBye: false,
                 manual,
                 result,
-            };
-        });
+            }
+            : null
+        );
+    });
 
     const generatedWithOriginalValues = generatedPairings.map(pairing => withOriginalPairingValues(pairing, originalPairings));
-    const regularPairings = [...manualPairings, ...generatedWithOriginalValues].filter(pairing => !pairing.isBye);
-    const specialPairings = [...manualPairings, ...generatedWithOriginalValues].filter(pairing => pairing.isBye);
+    const generatedRegularPairings = generatedWithOriginalValues.filter(pairing => !pairing.isBye);
+    const regularPairings = manualRegularSlots.reduce((orderedPairings, manualPairing) => {
+        orderedPairings.push(manualPairing || generatedRegularPairings.shift());
+        return orderedPairings;
+    }, []).filter(Boolean);
+    regularPairings.push(...generatedRegularPairings);
+
+    const generatedSpecialPairings = generatedWithOriginalValues.filter(pairing => pairing.isBye);
+    const specialPairings = [...manualSpecialPairings, ...generatedSpecialPairings];
 
     let seenTrueBye = false;
     return [...regularPairings, ...specialPairings].map((pairing, index) => {
@@ -851,8 +864,7 @@ export default function RoundsTab() {
                     byeId: board.byeId ? String(board.byeId) : null,
                     forfeitId: board.forfeitId ? String(board.forfeitId) : null,
                     isSkip: Boolean(board.isSkip),
-                }))
-                .filter(board => board.whiteId || board.blackId || board.byeId || board.forfeitId);
+                }));
 
             const usedIds = new Set();
             normalizedBoards.forEach(board => {

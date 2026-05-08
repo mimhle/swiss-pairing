@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { useTournament } from '@/context/TournamentContext';
-import { Table, Trophy, Medal, Award, User, Building2, Globe, GraduationCap, Users, Settings } from 'lucide-react';
-import { Tooltip, Portal } from '@skeletonlabs/skeleton-react';
+import { Table, Trophy, Medal, Award, User, Building2, Globe, GraduationCap, Users, Settings, FileDown, ChevronDown } from 'lucide-react';
+import { Tooltip, Portal, Menu } from '@skeletonlabs/skeleton-react';
 import { calculateStandings, calculateTeamStandings, normalizeTeamStandingOptions } from '@/lib/standingsLogic';
 import { loadPlayers } from '@/lib/tournamentStore';
 import TeamStandingConfigModal from '@/components/modals/TeamStandingConfigModal';
@@ -41,6 +42,13 @@ const TEAM_RANK_LABELS = {
 };
 
 const formatNumber = (value) => Number(value || 0).toFixed(1).replace('.0', '');
+
+const safeFilePart = (value) => {
+    return String(value || 'tournament')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'tournament';
+};
 
 const formatTeamMetric = (team, criterion) => {
     if (criterion === 'score') return formatNumber(team.score);
@@ -191,6 +199,109 @@ export default function StandingsTab() {
         });
     };
 
+    const createSheet = (rows, headers) => {
+        return XLSX.utils.json_to_sheet(rows, { header: headers });
+    };
+
+    const appendIndividualSheet = (workbook) => {
+        const tiebreakHeaders = activeTiebreakers.map(tb => TIEBREAK_LABELS[tb] || tb);
+        const headers = ['Rank', 'Id', 'Name', 'Federation', 'Rating', 'Points', ...tiebreakHeaders];
+        const rows = standings.map((player, index) => {
+            const row = {
+                Rank: index + 1,
+                Id: player.playerUniqueId,
+                Name: player.name,
+                Federation: player.federation,
+                Rating: player.rating,
+                Points: formatNumber(player.points)
+            };
+
+            activeTiebreakers.forEach((tb) => {
+                row[TIEBREAK_LABELS[tb] || tb] = formatNumber(player.tiebreakers?.[tb]);
+            });
+
+            return row;
+        });
+
+        XLSX.utils.book_append_sheet(workbook, createSheet(rows, headers), 'Individual');
+    };
+
+    const appendTeamSheets = (workbook) => {
+        const headers = ['Rank', 'Team', ...teamRankColumns.map(criterion => TEAM_RANK_LABELS[criterion] || criterion)];
+        const rows = [];
+        const rowLevels = [{}];
+
+        const getPlayerPriorityValue = (player, criterion) => {
+            if (criterion === 'score') return formatNumber(player.points);
+            if (criterion === 'individualRank' || criterion === 'topRank') return player.individualRank;
+            if (criterion === 'count') return player.isGhost ? 0 : 1;
+            return '';
+        };
+
+        teamStandings.forEach((team, index) => {
+            const teamRow = {
+                Rank: index + 1,
+                Team: team.name
+            };
+
+            teamRankColumns.forEach((criterion) => {
+                teamRow[TEAM_RANK_LABELS[criterion] || criterion] = formatTeamMetric(team, criterion);
+            });
+
+            rows.push(teamRow);
+            rowLevels.push({});
+
+            team.countedPlayers.forEach((player) => {
+                const playerRow = {
+                    Rank: '-',
+                    Team: `  ${player.name || 'Ghost Player'}`
+                };
+
+                teamRankColumns.forEach((criterion) => {
+                    playerRow[TEAM_RANK_LABELS[criterion] || criterion] = getPlayerPriorityValue(player, criterion);
+                });
+
+                rows.push(playerRow);
+                rowLevels.push({ level: 1 });
+            });
+        });
+
+        const worksheet = createSheet(rows, headers);
+        worksheet['!cols'] = [
+            { wch: 8 },
+            { wch: 30 },
+            ...teamRankColumns.map(() => ({ wch: 14 }))
+        ];
+        worksheet['!rows'] = rowLevels;
+
+        if (rows.length > 0) {
+            worksheet['!autofilter'] = {
+                ref: XLSX.utils.encode_range({
+                    s: { r: 0, c: 0 },
+                    e: { r: rows.length, c: headers.length - 1 }
+                })
+            };
+        }
+
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Team Standings');
+    };
+
+    const exportStandingsExcel = (scope) => {
+        const workbook = XLSX.utils.book_new();
+        const baseFileName = `${safeFilePart(tournamentConfig?.name)}-standings`;
+
+        if (scope === 'individual' || scope === 'both') {
+            appendIndividualSheet(workbook);
+        }
+
+        if (scope === 'team' || scope === 'both') {
+            appendTeamSheets(workbook);
+        }
+
+        const suffix = scope === 'both' ? '' : `-${scope}`;
+        XLSX.writeFile(workbook, `${baseFileName}${suffix}.xlsx`);
+    };
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center py-24">
@@ -207,6 +318,28 @@ export default function StandingsTab() {
                     Tournament Standings
                 </h2>
                 <div className="flex flex-row gap-2 sm:items-end">
+                    <Menu onSelect={({ value }) => exportStandingsExcel(value)}>
+                        <Menu.Trigger className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer">
+                            <FileDown size={14} />
+                            Export
+                            <ChevronDown size={12} />
+                        </Menu.Trigger>
+                        <Portal>
+                            <Menu.Positioner>
+                                <Menu.Content className="card p-1 preset-filled-surface-100-900 shadow-lg min-w-48">
+                                    <Menu.Item value="individual" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                        <Menu.ItemText>Individual Excel</Menu.ItemText>
+                                    </Menu.Item>
+                                    <Menu.Item value="team" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                        <Menu.ItemText>Team Excel</Menu.ItemText>
+                                    </Menu.Item>
+                                    <Menu.Item value="both" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                        <Menu.ItemText>Both Excel</Menu.ItemText>
+                                    </Menu.Item>
+                                </Menu.Content>
+                            </Menu.Positioner>
+                        </Portal>
+                    </Menu>
                     <div className="flex items-center bg-surface-100-900 border border-surface-200-800 rounded-lg p-1 gap-1">
                         <button
                             onClick={() => setStandingMode('individual')}
