@@ -51,6 +51,28 @@ function initialRegularBoards(initialBoards) {
     return regularBoards.length ? regularBoards : [emptyBoard()];
 }
 
+function uniqueNormalizedIds(ids) {
+    return [...new Set(ids.map(normalizeId).filter(Boolean))];
+}
+
+function initialSpecialAssignments(initialBoards, forfeitedPlayerIds) {
+    const byeBoard = initialBoards.find(board => board.byeId && !board.isSkip && !board.forfeitId);
+
+    return {
+        byeId: normalizeId(byeBoard?.byeId),
+        skipIds: initialBoards
+            .filter(board => board.byeId && board.isSkip && !board.forfeitId)
+            .map(board => normalizeId(board.byeId))
+            .filter(Boolean),
+        forfeitIds: uniqueNormalizedIds([
+            ...initialBoards
+                .filter(board => board.forfeitId)
+                .map(board => board.forfeitId),
+            ...forfeitedPlayerIds,
+        ]),
+    };
+}
+
 function playerLabel(player) {
     if (!player) return 'Empty';
     return `${player.playerUniqueId}. ${player.name || 'Unnamed'}`;
@@ -365,20 +387,11 @@ export default function ManualPairingModal({
     onSave,
 }) {
     const [boards, setBoards] = useState(() => initialRegularBoards(initialBoards));
-    const [specialAssignments, setSpecialAssignments] = useState(() => {
-        const byeBoard = initialBoards.find(board => board.byeId && !board.isSkip && !board.forfeitId);
-        return {
-            byeId: normalizeId(byeBoard?.byeId),
-            skipIds: initialBoards
-                .filter(board => board.byeId && board.isSkip && !board.forfeitId)
-                .map(board => normalizeId(board.byeId))
-                .filter(Boolean),
-            forfeitIds: initialBoards
-                .filter(board => board.forfeitId)
-                .map(board => normalizeId(board.forfeitId))
-                .filter(Boolean),
-        };
-    });
+    const initialSpecial = useMemo(
+        () => initialSpecialAssignments(initialBoards, forfeitedPlayerIds),
+        [forfeitedPlayerIds, initialBoards]
+    );
+    const [specialAssignments, setSpecialAssignments] = useState(() => initialSpecial);
     const [activePlayerId, setActivePlayerId] = useState(null);
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -435,6 +448,30 @@ export default function ManualPairingModal({
         }
         return [];
     }, [playerMap, previousByeSet, specialAssignments.byeId]);
+
+    const remainderWarnings = useMemo(() => {
+        if (availablePlayers.length === 2) {
+            const [first, second] = availablePlayers;
+            const key = [String(first.playerUniqueId), String(second.playerUniqueId)].sort().join('|');
+            if (previousOpponentSet.has(key)) {
+                return [`${playerLabel(first)} and ${playerLabel(second)} already played. Move one player into a manual board, bye, skip, or forfeit before saving.`];
+            }
+        }
+
+        if (availablePlayers.length === 1 && previousByeSet.has(String(availablePlayers[0].playerUniqueId))) {
+            return [`${playerLabel(availablePlayers[0])} would receive a second bye. Resolve this manually before saving.`];
+        }
+
+        return [];
+    }, [availablePlayers, previousByeSet, previousOpponentSet]);
+
+    const manualWarningCount = useMemo(() => {
+        return Object.values(boardWarnings).reduce((count, warnings) => count + warnings.length, 0) +
+            specialWarnings.length;
+    }, [boardWarnings, specialWarnings]);
+    const blockingWarningCount = manualWarningCount + remainderWarnings.length;
+    const hasManualWarnings = manualWarningCount > 0;
+    const hasBlockingWarnings = blockingWarningCount > 0;
 
     const clearPlayerFromBoards = (items, playerId) => {
         const id = String(playerId);
@@ -565,7 +602,7 @@ export default function ManualPairingModal({
 
     const resetAssignments = () => {
         setBoards([emptyBoard()]);
-        setSpecialAssignments({ byeId: null, skipIds: [], forfeitIds: [] });
+        setSpecialAssignments(initialSpecial);
     };
 
     const activePlayer = activePlayerId ? playerMap[activePlayerId] : null;
@@ -610,6 +647,16 @@ export default function ManualPairingModal({
                                     )) : (
                                         <div className="rounded border border-dashed border-surface-300-700 px-3 py-8 text-center text-xs text-surface-500">
                                             All players assigned
+                                        </div>
+                                    )}
+                                    {remainderWarnings.length > 0 && (
+                                        <div className="flex items-start gap-2 rounded border border-error-500/30 bg-error-500/10 px-3 py-2 text-xs text-error-600 dark:text-error-400">
+                                            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                                            <div className="space-y-1">
+                                                {remainderWarnings.map((warning, warningIndex) => (
+                                                    <div key={warningIndex}>{warning}</div>
+                                                ))}
+                                            </div>
                                         </div>
                                     )}
                                 </div>
@@ -707,24 +754,40 @@ export default function ManualPairingModal({
                     </DndContext>
 
                     <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-surface-200-800">
-                        <p className="text-xs text-surface-500">
-                            {manualForfeitCount > 0
-                                ? `${manualForfeitCount} tournament forfeit${manualForfeitCount !== 1 ? 's' : ''} selected.`
-                                : manualSkipCount > 0
-                                    ? `${manualSkipCount} manual skip${manualSkipCount !== 1 ? 's' : ''} selected.`
-                                    : 'Unassigned players will be paired automatically.'}
+                        <p className={`text-xs ${hasBlockingWarnings ? 'text-error-600 dark:text-error-400 font-medium' : 'text-surface-500'}`}>
+                            {hasManualWarnings
+                                ? `Resolve ${manualWarningCount} manual pairing warning${manualWarningCount !== 1 ? 's' : ''} before saving.`
+                                : remainderWarnings.length > 0
+                                    ? `Resolve ${remainderWarnings.length} remainder warning${remainderWarnings.length !== 1 ? 's' : ''} before pairing the rest, or leave them unassigned.`
+                                : manualForfeitCount > 0
+                                    ? `${manualForfeitCount} tournament forfeit${manualForfeitCount !== 1 ? 's' : ''} selected.`
+                                    : manualSkipCount > 0
+                                        ? `${manualSkipCount} manual skip${manualSkipCount !== 1 ? 's' : ''} selected.`
+                                        : mode === 'edit'
+                                            ? 'Save the changed board list.'
+                                            : 'Choose whether unassigned players should be paired automatically.'}
                         </p>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
                             <button onClick={onClose} className="px-4 py-2 text-sm rounded preset-tonal cursor-pointer">
                                 Cancel
                             </button>
                             <button
-                                onClick={() => onSave(buildSaveBoards())}
-                                disabled={isSaving}
-                                className="flex items-center gap-2 px-5 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 transition-colors font-medium"
+                                onClick={() => onSave(buildSaveBoards(), { pairRest: false })}
+                                disabled={isSaving || hasManualWarnings}
+                                title={hasManualWarnings ? 'Resolve manual pairing warnings before saving' : undefined}
+                                className="flex items-center gap-2 px-4 py-2 text-sm rounded preset-tonal disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                             >
                                 <Save size={15} />
-                                {isSaving ? 'Pairing...' : mode === 'edit' ? 'Save Changes' : 'Pair the Rest'}
+                                Save and Leave Rest Unassigned
+                            </button>
+                            <button
+                                onClick={() => onSave(buildSaveBoards(), { pairRest: true })}
+                                disabled={isSaving || hasBlockingWarnings}
+                                title={hasBlockingWarnings ? 'Resolve pairing warnings before saving' : undefined}
+                                className="flex items-center gap-2 px-5 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                            >
+                                <Save size={15} />
+                                {isSaving ? 'Saving...' : 'Save and Pair the Rest'}
                             </button>
                         </div>
                     </div>

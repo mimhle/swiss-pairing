@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Portal } from '@skeletonlabs/skeleton-react';
-import { Play, X, Shield, Palette, Trash2, UserX } from 'lucide-react';
+import { AlertTriangle, Play, X, Shield, Palette, Trash2, UserX } from 'lucide-react';
 import ScrollLock from '@/app/component/ScrollLock';
 
-export default function RoundSetupModal({ open, onClose, onStart, roundNumber, rounds = [], canStart = true, showDelete = true, excludedPlayers = [], onDeleteRounds }) {
+export default function RoundSetupModal({ open, onClose, onStart, roundNumber, rounds = [], canStart = true, showDelete = true, excludedPlayers = [], unassignedPlayers = [], onDeleteRounds }) {
     const [startingColor, setStartingColor] = useState('white');
     const [protectClub, setProtectClub] = useState(false);
     const [deleteMode, setDeleteMode] = useState('selected');
@@ -55,6 +55,28 @@ export default function RoundSetupModal({ open, onClose, onStart, roundNumber, r
                             <h3 className="text-sm font-semibold uppercase tracking-wider text-surface-500">
                                 Round {roundNumber} Setup
                             </h3>
+                            {unassignedPlayers.length > 0 && (
+                                <div className="space-y-2 rounded-lg border border-warning-500/30 bg-warning-500/10 p-3">
+                                    <div className="flex items-center gap-2 text-sm font-semibold text-warning-700 dark:text-warning-400">
+                                        <AlertTriangle size={14} />
+                                        Unassigned Players Will Be Skipped
+                                    </div>
+                                    <p className="text-xs text-surface-700-300">
+                                        These players are not assigned in the current round. When this next round is generated, they will be added to the current round as SKIP with a 0-0 result.
+                                    </p>
+                                    <div className="space-y-1">
+                                        {unassignedPlayers.map(player => {
+                                            const playerId = player.playerUniqueId ?? player.id;
+                                            return (
+                                                <div key={playerId} className="flex items-center justify-between gap-3 text-xs">
+                                                    <span className="min-w-0 truncate font-medium">{player.name || 'Unnamed'}</span>
+                                                    <span className="shrink-0 font-mono text-surface-600-400">#{playerId}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
                             {roundNumber === 1 && (
                                 <div className="space-y-3">
                                     <span className="text-sm font-semibold uppercase tracking-wider text-surface-500 flex items-center gap-2">
@@ -65,21 +87,31 @@ export default function RoundSetupModal({ open, onClose, onStart, roundNumber, r
                                         <button
                                             onClick={() => setStartingColor('white')}
                                             className={`flex-1 py-3 rounded-lg border transition-all font-medium text-sm flex items-center justify-center gap-2 ${startingColor === 'white'
-                                                    ? 'bg-white text-black border-white shadow-lg shadow-white/10'
-                                                    : 'bg-surface-800 text-surface-400 border-surface-700 hover:border-surface-500'
+                                                    ? 'bg-primary-500/10 text-primary-700 dark:text-primary-300 border-primary-500 ring-1 ring-primary-500/40'
+                                                    : 'bg-surface-50-950 text-surface-700-300 border-surface-200-800 hover:border-primary-500/50'
                                                 }`}
                                         >
-                                            <div className="w-3 h-3 rounded-full bg-white border border-gray-300" />
+                                            <span className={`flex h-5 w-5 items-center justify-center rounded border text-[10px] font-bold ${startingColor === 'white'
+                                                    ? 'border-primary-500 bg-primary-500 text-white'
+                                                    : 'border-surface-300-700 bg-surface-100-900 text-surface-700-300'
+                                                }`}>
+                                                W
+                                            </span>
                                             White
                                         </button>
                                         <button
                                             onClick={() => setStartingColor('black')}
                                             className={`flex-1 py-3 rounded-lg border transition-all font-medium text-sm flex items-center justify-center gap-2 ${startingColor === 'black'
-                                                    ? 'bg-surface-950 text-white border-white shadow-lg shadow-black/10'
-                                                    : 'bg-surface-800 text-surface-400 border-surface-700 hover:border-surface-500'
+                                                    ? 'bg-primary-500/10 text-primary-700 dark:text-primary-300 border-primary-500 ring-1 ring-primary-500/40'
+                                                    : 'bg-surface-50-950 text-surface-700-300 border-surface-200-800 hover:border-primary-500/50'
                                                 }`}
                                         >
-                                            <div className="w-3 h-3 rounded-full bg-black border border-gray-600" />
+                                            <span className={`flex h-5 w-5 items-center justify-center rounded border text-[10px] font-bold ${startingColor === 'black'
+                                                    ? 'border-primary-500 bg-primary-500 text-white'
+                                                    : 'border-surface-300-700 bg-surface-100-900 text-surface-700-300'
+                                                }`}>
+                                                B
+                                            </span>
                                             Black
                                         </button>
                                     </div>

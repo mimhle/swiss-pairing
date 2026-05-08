@@ -74,6 +74,16 @@ function normalizePlayers(players) {
         const aRating = Number(a.rating) || 0;
         const bRating = Number(b.rating) || 0;
         if (bRating !== aRating) return bRating - aRating;
+
+        const aId = Number(a.playerUniqueId);
+        const bId = Number(b.playerUniqueId);
+        if (Number.isFinite(aId) && Number.isFinite(bId) && aId !== bId) {
+            return aId - bId;
+        }
+
+        const appIdCompare = String(a.playerUniqueId || "").localeCompare(String(b.playerUniqueId || ""), undefined, { numeric: true });
+        if (appIdCompare !== 0) return appIdCompare;
+
         return String(a.name || "").localeCompare(String(b.name || ""));
     });
 
@@ -206,12 +216,13 @@ function buildRoundLookup(playerId, round, activePlayerLookup) {
 function buildTrf(players, previousRounds, options = {}) {
     const { sortedPlayers, byAppId } = normalizePlayers(players);
     const scores = calculateScores(players, previousRounds);
+    const includeNextRound = options.includeNextRound !== false;
     const totalRounds = Math.max(
         Number(options.totalRounds) || Number(options.numRounds) || 5,
-        previousRounds.length + 1
+        previousRounds.length + (includeNextRound ? 1 : 0)
     );
     const lines = [
-        "012 Swiss Pairing",
+        `012 ${String(options.tournamentName || "Swiss Pairing").slice(0, 60)}`,
         `XXR ${totalRounds}`,
         "XXC rank",
         options.startingColor === "black" ? "XXC black1" : "XXC white1",
@@ -256,6 +267,13 @@ function buildTrf(players, previousRounds, options = {}) {
     });
 
     return `${lines.join("\r\n")}\r\n`;
+}
+
+export function buildTournamentTrf(players, rounds = [], options = {}) {
+    return buildTrf(players || [], rounds || [], {
+        ...options,
+        includeNextRound: false,
+    });
 }
 
 function parseBbpOutput(output, byPairingId) {
@@ -335,7 +353,10 @@ export async function generatePairings(players, options = {}, previousRounds = [
         } catch (error) {
             const bbpMessage = stderr.join("\n").trim();
             if (bbpMessage) {
-                throw new Error(bbpMessage, { cause: error });
+                const message = bbpMessage === "Aborted(undefined)"
+                    ? "bbpPairings could not generate a valid pairing for the remaining players."
+                    : bbpMessage;
+                throw new Error(message, { cause: error });
             }
             throw error;
         }
@@ -347,7 +368,6 @@ export async function generatePairings(players, options = {}, previousRounds = [
         const output = bbpRuntime.FS.readFile(OUTPUT_FILE, { encoding: "utf8" });
         return parseBbpOutput(output, byPairingId);
     } catch (error) {
-        console.error("[Pairing Engine] Pairing generation failed:", error);
         throw error;
     }
 }

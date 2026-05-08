@@ -3,21 +3,31 @@
 import { Switch } from '@skeletonlabs/skeleton-react';
 import { Sun, Moon } from 'lucide-react';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
+
+const MODE_CHANGE_EVENT = 'swiss-mode-change';
+
+const subscribeMode = (callback) => {
+    window.addEventListener('storage', callback);
+    window.addEventListener(MODE_CHANGE_EVENT, callback);
+    return () => {
+        window.removeEventListener('storage', callback);
+        window.removeEventListener(MODE_CHANGE_EVENT, callback);
+    };
+};
+
+const getModeSnapshot = () => localStorage.getItem('mode') || 'light';
+const getServerModeSnapshot = () => 'light';
 
 export default function Lightswitch() {
-    const [checked, setChecked] = useState(false);
-
-    useEffect(() => {
-        const mode = localStorage.getItem('mode') || 'light';
-        setChecked(mode === 'dark');
-    }, []);
+    const mode = useSyncExternalStore(subscribeMode, getModeSnapshot, getServerModeSnapshot);
+    const checked = mode === 'dark';
 
     const onCheckedChange = (event) => {
-        const mode = event.checked ? 'dark' : 'light';
-        document.documentElement.setAttribute('data-mode', mode);
-        localStorage.setItem('mode', mode);
-        setChecked(event.checked);
+        const nextMode = event.checked ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-mode', nextMode);
+        localStorage.setItem('mode', nextMode);
+        window.dispatchEvent(new Event(MODE_CHANGE_EVENT));
     };
 
     return (

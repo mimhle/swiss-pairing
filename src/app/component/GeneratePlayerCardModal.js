@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Portal } from '@skeletonlabs/skeleton-react';
+import { Menu, Portal } from '@skeletonlabs/skeleton-react';
 import {
     ChevronDown,
     ChevronRight,
     Copy,
     CreditCard,
+    Database,
     Download,
     FileDown,
     FileUp,
@@ -24,6 +25,7 @@ import JSZip from 'jszip';
 import ScrollLock from '@/app/component/ScrollLock';
 import { useTournament } from '@/app/context/TournamentContext';
 import ConfirmationModal from './ConfirmationModal';
+import useHydrated from '@/app/component/useHydrated';
 
 // ─── Shared rendering logic ───────────────────────────────────────────────────
 
@@ -926,7 +928,7 @@ function CardPreview({ imageDataUrl, config, player, fontFamily }) {
 const MAX_HISTORY = 50;
 
 export default function GeneratePlayerCardModal({ open, onClose, players = [] }) {
-    const { activeTournamentId } = useTournament();
+    const { activeTournamentId, tournaments = [] } = useTournament();
     const [modal, setModal] = useState({ open: false, title: '', description: '', onConfirm: null, isAlert: false, variant: 'primary', confirmText: 'Confirm' });
 
     const showAlert = (title, description) => {
@@ -940,13 +942,13 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     const [config, setConfig] = useState(() => migrateConfig(DEFAULT_CONFIG));
 
     // Prevent Portal from rendering during SSR (avoids hydration attribute mismatch)
-    const [mounted, setMounted] = useState(false);
-    useEffect(() => setMounted(true), []);
+    const mounted = useHydrated();
 
     // ── Undo / Redo ───────────────────────────────────────────────────────────
     const pastRef = useRef([]);
     const futureRef = useRef([]);
     const lastSavedConfigRef = useRef(config);
+    const [isConfigDirty, setIsConfigDirty] = useState(false);
     const [canUndoState, setCanUndoState] = useState(false);
     const [canRedo, setCanRedo] = useState(false);
 
@@ -961,6 +963,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         if (JSON.stringify(lastSavedConfigRef.current) !== JSON.stringify(config)) {
             pushHistory(lastSavedConfigRef.current);
             lastSavedConfigRef.current = config;
+            setIsConfigDirty(false);
         }
     }, [config, pushHistory]);
 
@@ -973,6 +976,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
             futureRef.current = [cur, ...futureRef.current.slice(0, MAX_HISTORY - 1)];
             setCanRedo(true);
             lastSavedConfigRef.current = snapshot;
+            setIsConfigDirty(false);
             return snapshot;
         });
         setCanUndoState(pastRef.current.length > 0);
@@ -987,6 +991,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
             pastRef.current = [...pastRef.current.slice(-(MAX_HISTORY - 1)), cur];
             setCanUndoState(true);
             lastSavedConfigRef.current = snapshot;
+            setIsConfigDirty(false);
             return snapshot;
         });
         setCanRedo(futureRef.current.length > 0);
@@ -1003,7 +1008,6 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         return () => window.removeEventListener('keydown', handler);
     }, [open, undo, redo]);
 
-    const isConfigDirty = JSON.stringify(lastSavedConfigRef.current) !== JSON.stringify(config);
     const canUndoActual = canUndoState || isConfigDirty;
 
     // File states
@@ -1029,10 +1033,12 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                 const migrated = migrateConfig(loadedConfig);
                 setConfig(migrated);
                 lastSavedConfigRef.current = migrated;
+                setIsConfigDirty(false);
             } else {
                 const defaultConfig = migrateConfig(DEFAULT_CONFIG);
                 setConfig(defaultConfig);
                 lastSavedConfigRef.current = defaultConfig;
+                setIsConfigDirty(false);
             }
 
             if (loadedImage && loadedFont) {
@@ -1064,6 +1070,14 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         saveCardGenAsset('font', file, activeTournamentId);
         if (imageFile) setUploadExpanded(false);
     };
+
+    const updateConfig = useCallback((updater) => {
+        setConfig(prev => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            setIsConfigDirty(JSON.stringify(lastSavedConfigRef.current) !== JSON.stringify(next));
+            return next;
+        });
+    }, []);
 
     // Preview player selector
     const [previewIdx, setPreviewIdx] = useState('');
@@ -1104,6 +1118,8 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     // ── Config import / export ────────────────────────────────────────────────
 
     const importConfigRef = useRef(null);
+    const [showTournamentImport, setShowTournamentImport] = useState(false);
+    const [selectedImportTournamentId, setSelectedImportTournamentId] = useState('');
 
     const handleImportConfig = (e) => {
         const file = e.target.files[0];
@@ -1112,7 +1128,8 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         reader.onload = (ev) => {
             try {
                 const data = JSON.parse(ev.target.result);
-                setConfig(migrateConfig(data));
+                commitHistory();
+                updateConfig(migrateConfig(data));
             } catch (e) {
                 showAlert('Import Failed', 'Invalid JSON config file.');
             }
@@ -1126,6 +1143,30 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         const url = URL.createObjectURL(blob);
         Object.assign(document.createElement('a'), { href: url, download: 'player-card-config.json' }).click();
         URL.revokeObjectURL(url);
+    };
+
+    const otherTournaments = tournaments.filter(t => t.id !== activeTournamentId);
+
+    const openTournamentImport = () => {
+        if (otherTournaments.length === 0) {
+            showAlert('No Other Tournaments', 'Create or duplicate another tournament before importing a card config from it.');
+            return;
+        }
+        setSelectedImportTournamentId(otherTournaments[0]?.id || '');
+        setShowTournamentImport(true);
+    };
+
+    const handleImportFromTournament = async () => {
+        if (!selectedImportTournamentId) return;
+        const sourceConfig = await loadCardGenAsset('config', selectedImportTournamentId);
+        if (!sourceConfig) {
+            const tournament = tournaments.find(t => t.id === selectedImportTournamentId);
+            showAlert('No Config Found', `${tournament?.name || 'The selected tournament'} does not have a saved player card config.`);
+            return;
+        }
+        commitHistory();
+        updateConfig(migrateConfig(sourceConfig));
+        setShowTournamentImport(false);
     };
 
     // ── Download helpers ──────────────────────────────────────────────────────
@@ -1240,7 +1281,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
     const updateConfigWithHistory = (newConfig) => {
         commitHistory();
-        setConfig(newConfig);
+        updateConfig(newConfig);
     };
 
     const computedStartIdx = Math.max(0, (parseInt(rangeStart) || 1) - 1);
@@ -1294,17 +1335,43 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                 </div>
                                 <div className="w-px h-4 bg-surface-200-800 mx-1"></div>
 
-                                <label className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
-                                    <FileUp size={13} />
-                                    Import config
-                                    <input
-                                        ref={importConfigRef}
-                                        type="file"
-                                        accept=".json"
-                                        className="hidden"
-                                        onChange={handleImportConfig}
-                                    />
-                                </label>
+                                <Menu
+                                    onSelect={({ value }) => {
+                                        if (value === 'file') importConfigRef.current?.click();
+                                        if (value === 'tournament') openTournamentImport();
+                                    }}
+                                >
+                                    <Menu.Trigger className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
+                                        <FileUp size={13} />
+                                        Import config
+                                        <ChevronDown size={12} />
+                                    </Menu.Trigger>
+                                    <Portal>
+                                        <Menu.Positioner>
+                                            <Menu.Content className="card p-1 preset-filled-surface-100-900 shadow-lg min-w-48 z-[70]">
+                                                <Menu.Item value="file" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                    <Menu.ItemText className="flex items-center gap-2">
+                                                        <FileUp size={13} />
+                                                        From file
+                                                    </Menu.ItemText>
+                                                </Menu.Item>
+                                                <Menu.Item value="tournament" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                    <Menu.ItemText className="flex items-center gap-2">
+                                                        <Database size={13} />
+                                                        From other tournament
+                                                    </Menu.ItemText>
+                                                </Menu.Item>
+                                            </Menu.Content>
+                                        </Menu.Positioner>
+                                    </Portal>
+                                </Menu>
+                                <input
+                                    ref={importConfigRef}
+                                    type="file"
+                                    accept=".json"
+                                    className="hidden"
+                                    onChange={handleImportConfig}
+                                />
                                 <button
                                     className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
                                     onClick={handleExportConfig}
@@ -1491,6 +1558,53 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                 </div>
 
             </Portal>
+            {showTournamentImport && (
+                <Portal>
+                    <div
+                        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[120]"
+                        onClick={() => setShowTournamentImport(false)}
+                    />
+                    <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+                        <div
+                            className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-md space-y-4 shadow-xl"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <div>
+                                <h3 className="text-base font-semibold">Import config from tournament</h3>
+                                <p className="text-sm text-surface-600-400 mt-1">
+                                    Choose another tournament with a saved player card config.
+                                </p>
+                            </div>
+                            <select
+                                className="w-full text-sm bg-surface-100-900 border border-surface-200-800 rounded px-3 py-2 outline-none cursor-pointer"
+                                value={selectedImportTournamentId}
+                                onChange={e => setSelectedImportTournamentId(e.target.value)}
+                            >
+                                {otherTournaments.map(tournament => (
+                                    <option key={tournament.id} value={tournament.id}>
+                                        {tournament.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <div className="flex justify-end gap-2">
+                                <button
+                                    className="px-4 py-1.5 text-sm rounded preset-tonal cursor-pointer"
+                                    onClick={() => setShowTournamentImport(false)}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    className="px-4 py-1.5 text-sm rounded bg-primary-500 hover:bg-primary-600 text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                    onClick={handleImportFromTournament}
+                                    disabled={!selectedImportTournamentId}
+                                >
+                                    Import
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </Portal>
+            )}
             <ConfirmationModal
                 open={modal.open}
                 onOpenChange={(open) => setModal(prev => ({ ...prev, open }))}

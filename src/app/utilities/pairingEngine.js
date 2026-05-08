@@ -1,4 +1,4 @@
-import { generatePairings as engineGeneratePairings } from './pairingEngineWrapper';
+import { buildTournamentTrf, generatePairings as engineGeneratePairings } from './pairingEngineWrapper';
 
 function getPlayerId(player) {
     return String(player?.playerUniqueId ?? player?.id ?? "");
@@ -50,4 +50,12 @@ export async function generatePairings(players, options = {}, previousRounds = [
     if (onProgress) onProgress(100);
 
     return pairings;
+}
+
+export function exportTournamentTrf(players, rounds = [], tournamentConfig = {}, tournamentName = "Tournament") {
+    return buildTournamentTrf(players, rounds, {
+        ...tournamentConfig,
+        totalRounds: tournamentConfig?.numRounds,
+        tournamentName,
+    });
 }

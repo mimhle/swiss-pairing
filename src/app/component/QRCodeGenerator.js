@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+/* eslint-disable @next/next/no-img-element */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { Download, FileImage, QrCode, X, Image as ImageIcon, Upload } from 'lucide-react';
 import { HexAlphaColorPicker } from 'react-colorful';
@@ -147,7 +149,7 @@ export default function QRCodeGenerator() {
         }
     };
 
-    const generateQR = async () => {
+    const generateQR = useCallback(async () => {
         if (!text) {
             setQrDataUrl('');
             setOutputSize(0);
@@ -227,11 +229,14 @@ export default function QRCodeGenerator() {
             setQrDataUrl('');
             setOutputSize(0);
         }
-    };
+    }, [text, version, ecl, margin, boxSize, lightColor, darkColor, dotStyle, logo, logoSize, logoPadding]);
 
     useEffect(() => {
-        generateQR();
-    }, [text, version, boxSize, margin, ecl, dotStyle, darkColor, lightColor, logo, logoSize, logoPadding]);
+        const timeoutId = setTimeout(() => {
+            void generateQR();
+        }, 0);
+        return () => clearTimeout(timeoutId);
+    }, [generateQR]);
 
     const handleDownload = () => {
         if (!qrDataUrl) return;

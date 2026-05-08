@@ -5,13 +5,14 @@ import * as XLSX from 'xlsx';
 import { Dialog, Menu, Portal, Tooltip } from '@skeletonlabs/skeleton-react';
 import { AlertTriangle, ArrowLeft, ArrowRight, ChevronDown, CreditCard, FileDown, FileUp, Filter, GripVertical, Play, Plus, Redo2, Settings, Trash, Trash2, Undo2, Upload, X } from 'lucide-react';
 import { loadPlayers, savePlayers, loadClubFedMapping, saveClubFedMapping } from '@/app/component/tournamentStore';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, pointerWithin, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import GeneratePlayerCardModal from '@/app/component/GeneratePlayerCardModal';
 import ScrollLock from '@/app/component/ScrollLock';
 import { useTournament } from '@/app/context/TournamentContext';
+import useHydrated from '@/app/component/useHydrated';
 
 // ─── Column definitions ──────────────────────────────────────────────────────
 
@@ -31,10 +32,11 @@ const COLUMNS = [
 
 const EDITABLE_KEYS = COLUMNS.filter(c => c.editable).map(c => c.key);
 const EDITABLE_COL_IDX = Object.fromEntries(COLUMNS.filter(c => c.editable).map((c, i) => [c.key, i]));
+const IMPORTABLE_KEYS = ['playerUniqueId', ...EDITABLE_KEYS];
 
 const TARGET_OPTIONS = [
     { value: '', label: 'Ignore' },
-    ...EDITABLE_KEYS.map(key => ({
+    ...IMPORTABLE_KEYS.map(key => ({
         value: key,
         label: COLUMNS.find(c => c.key === key)?.label ?? key,
     })),
@@ -62,8 +64,32 @@ const emptyPlayer = (id) => {
     return p;
 };
 
-const normalizePlayers = (savedPlayers) => {
+const nextPlayerId = (players) => Math.max(0, ...players.map(p => Number(p.playerUniqueId)).filter(Number.isFinite)) + 1;
+
+const normalizePlayers = (savedPlayers, preserveIds = false) => {
     if (!Array.isArray(savedPlayers)) return [];
+    if (preserveIds) {
+        const usedIds = new Set(savedPlayers.map(p => Number(p.playerUniqueId)).filter(Number.isFinite));
+        const assignedIds = new Set();
+        let nextId = Math.max(0, ...usedIds) + 1;
+
+        return savedPlayers.map((p) => {
+            let playerUniqueId = Number(p.playerUniqueId);
+            if (!Number.isFinite(playerUniqueId) || assignedIds.has(playerUniqueId)) {
+                while (usedIds.has(nextId)) nextId += 1;
+                playerUniqueId = nextId;
+                usedIds.add(playerUniqueId);
+            }
+            assignedIds.add(playerUniqueId);
+
+            return {
+                ...emptyPlayer(playerUniqueId),
+                ...p,
+                playerUniqueId,
+            };
+        });
+    }
+
     return savedPlayers.map((p, i) => ({
         ...emptyPlayer(i + 1),
         ...p,
@@ -79,7 +105,7 @@ const VI_MAP = new Map([
     ['số', null],
     ['tên', 'name'],
     ['cấp', 'title'],
-    ['số id', null],
+    ['số id', 'playerUniqueId'],
     ['rat qg', '__natrating'],
     ['rat qt', 'rating'],
     ['ns', null],
@@ -99,6 +125,9 @@ const VI_MAP = new Map([
 ]);
 
 const EN_MAP = new Map([
+    ['id', 'playerUniqueId'],
+    ['playeruniqueid', 'playerUniqueId'],
+    ['player unique id', 'playerUniqueId'],
     ['name', 'name'],
     ['gender', 'gender'],
     ['group', 'group'],
@@ -161,11 +190,32 @@ function suggestMapping(headers) {
     return mapping;
 }
 
-function applyMapping(rows, columnMap, getNextId) {
+function parsePlayerId(value) {
+    const n = Number(String(value ?? '').trim());
+    return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function applyMapping(rows, columnMap, getNextId, reservedIds = new Set()) {
+    const usedIds = new Set([...reservedIds].map(Number).filter(Number.isFinite));
+    const idColumnIndex = Object.entries(columnMap).find(([, field]) => field === 'playerUniqueId')?.[0];
+    const getNextUnusedId = () => {
+        let id = getNextId();
+        while (usedIds.has(Number(id))) id = getNextId();
+        return id;
+    };
+
     return rows.map(row => {
-        const p = emptyPlayer(getNextId());
+        const importedId = idColumnIndex !== undefined
+            ? parsePlayerId(row[parseInt(idColumnIndex, 10)])
+            : null;
+        const playerUniqueId = importedId && !usedIds.has(importedId)
+            ? importedId
+            : getNextUnusedId();
+        usedIds.add(Number(playerUniqueId));
+
+        const p = emptyPlayer(playerUniqueId);
         Object.entries(columnMap).forEach(([idxStr, field]) => {
-            if (!field) return;
+            if (!field || field === 'playerUniqueId') return;
             const val = (row[parseInt(idxStr, 10)] ?? '').trim();
             if (field === 'rating') {
                 const n = parseInt(val, 10);
@@ -325,7 +375,7 @@ const MappingRow = memo(({ row, idx, onUpdate, onRemove, onPaste, isDuplicate })
 MappingRow.displayName = 'MappingRow';
 
 // ─── Draggable Row Component ─────────────────────────────────────────────
-const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUMNS, EDITABLE_COL_IDX, updatePlayer, handleCellPaste, handleCellKeyDown, removePlayer }) => {
+const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUMNS, EDITABLE_COL_IDX, updatePlayer, handleCellPaste, handleCellKeyDown, removePlayer, isPlayerListLocked, canRemovePlayer, canDragPlayer }) => {
     const {
         attributes,
         listeners,
@@ -333,7 +383,7 @@ const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUM
         transform,
         transition,
         isDragging,
-    } = useSortable({ id: player.playerUniqueId });
+    } = useSortable({ id: player.playerUniqueId, disabled: !canDragPlayer });
 
     const style = {
         transform: CSS.Transform.toString(transform),
@@ -349,10 +399,17 @@ const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUM
             style={style}
             className={`border-b border-surface-200-800 last:border-0 hover:bg-surface-50-950 transition-colors ${warns ? 'bg-warning-500/5' : ''} ${isDragging ? 'bg-primary-500/10' : ''}`}
         >
-            <td className="px-2 py-2 text-center cursor-grab active:cursor-grabbing" {...attributes} {...listeners}>
-                <div className="flex justify-center text-surface-400-600 hover:text-surface-600-400 transition-colors">
-                    <GripVertical size={16} />
-                </div>
+            <td
+                className={`px-2 py-2 text-center ${canDragPlayer ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                {...(canDragPlayer ? attributes : {})}
+                {...(canDragPlayer ? listeners : {})}
+                title={canDragPlayer ? 'Drag to reorder' : 'This player is already used in a round'}
+            >
+                {canDragPlayer && (
+                    <div className="flex justify-center text-surface-400-600 hover:text-surface-600-400 transition-colors">
+                        <GripVertical size={16} />
+                    </div>
+                )}
             </td>
             {COLUMNS.map(col => (
                 <td key={col.key} className="px-3 py-2">
@@ -433,8 +490,10 @@ const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUM
             </td>
             <td className="px-2 py-2">
                 <button
-                    className="p-1 rounded text-surface-400-600 hover:text-error-500 transition-colors"
+                    className="p-1 rounded text-surface-400-600 hover:text-error-500 transition-colors disabled:opacity-30 disabled:hover:text-surface-400-600 disabled:cursor-not-allowed"
                     onClick={() => removePlayer(player.playerUniqueId)}
+                    disabled={!canRemovePlayer}
+                    title={canRemovePlayer ? 'Remove player' : 'This player is already used in a round'}
                     aria-label="Remove player"
                 >
                     <Trash2 size={14} />
@@ -446,7 +505,10 @@ const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUM
     return prevProps.player === nextProps.player &&
         prevProps.rowIdx === nextProps.rowIdx &&
         prevProps.displayIndex === nextProps.displayIndex &&
-        prevProps.playerWarnings === nextProps.playerWarnings;
+        prevProps.playerWarnings === nextProps.playerWarnings &&
+        prevProps.isPlayerListLocked === nextProps.isPlayerListLocked &&
+        prevProps.canRemovePlayer === nextProps.canRemovePlayer &&
+        prevProps.canDragPlayer === nextProps.canDragPlayer;
 });
 
 DraggableRow.displayName = 'DraggableRow';
@@ -456,7 +518,7 @@ DraggableRow.displayName = 'DraggableRow';
 const MAX_HISTORY = 100;
 
 export default function PlayersTab() {
-    const { activeTournamentId, isLoaded: isTournamentLoaded, setActiveTab, tournamentConfig } = useTournament();
+    const { activeTournamentId, isLoaded: isTournamentLoaded, setActiveTab, tournamentConfig, rounds } = useTournament();
 
     const [players, setPlayers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -473,13 +535,35 @@ export default function PlayersTab() {
     const [canRedo, setCanRedo] = useState(false);
     // Mounted flag: ensures undo/redo disabled state matches between SSR and client
     // (Fast Refresh can retain canUndo/canRedo=true in memory while server re-renders fresh)
-    const [mounted, setMounted] = useState(false);
-    useEffect(() => setMounted(true), []);
+    const mounted = useHydrated();
+    const isPlayerListLocked = rounds?.some(round => (round.pairings || []).length > 0) ?? false;
+    const pairedPlayerIds = useMemo(() => {
+        const ids = new Set();
+        rounds?.forEach(round => {
+            round.pairings?.forEach(pairing => {
+                if (pairing.whiteId) ids.add(String(pairing.whiteId));
+                if (!pairing.isBye && pairing.blackId) ids.add(String(pairing.blackId));
+            });
+        });
+        return ids;
+    }, [rounds]);
+    const unmatchedPlayerCount = useMemo(
+        () => players.filter(p => !pairedPlayerIds.has(String(p.playerUniqueId))).length,
+        [players, pairedPlayerIds]
+    );
+    const isWholeTableLocked = isPlayerListLocked && players.length > 0 && unmatchedPlayerCount === 0;
 
     const pushHistory = useCallback((snapshot) => {
         pastRef.current = [...pastRef.current.slice(-(MAX_HISTORY - 1)), snapshot];
         futureRef.current = [];
         setCanUndo(true);
+        setCanRedo(false);
+    }, []);
+
+    const clearHistory = useCallback(() => {
+        pastRef.current = [];
+        futureRef.current = [];
+        setCanUndo(false);
         setCanRedo(false);
     }, []);
 
@@ -537,6 +621,27 @@ export default function PlayersTab() {
         })
     );
 
+    const playerListCollisionDetection = useCallback((args) => {
+        if (!isPlayerListLocked) return closestCenter(args);
+
+        const pointerCollisions = pointerWithin(args);
+        if (pointerCollisions.some(collision => pairedPlayerIds.has(String(collision.id)))) {
+            return closestCenter({
+                ...args,
+                droppableContainers: args.droppableContainers.filter(
+                    container => String(container.id) === String(args.active.id)
+                ),
+            });
+        }
+
+        return closestCenter({
+            ...args,
+            droppableContainers: args.droppableContainers.filter(
+                container => !pairedPlayerIds.has(String(container.id))
+            ),
+        });
+    }, [isPlayerListLocked, pairedPlayerIds]);
+
     // Import state
     const [importPhase, setImportPhase] = useState('input'); // 'input' | 'mapping'
     const [rawData, setRawData] = useState(null);  // { headers: string[], rows: string[][] }
@@ -563,12 +668,22 @@ export default function PlayersTab() {
     const [showCardModal, setShowCardModal] = useState(false);
 
     // ── Player handlers ───────────────────────────────────────────────────────
+    const showPlayerListLockedToast = useCallback(() => {
+        setToastType('error');
+        setToastMessage('Paired players are locked. Unpaired players can be reordered only with other unpaired players.');
+    }, []);
+
+    const showPairedPlayerLockedToast = useCallback(() => {
+        setToastType('error');
+        setToastMessage('This player is already used in a round and cannot be deleted.');
+    }, []);
+
     const updatePlayer = (id, field, value) => {
         setPlayersWithHistory(prev => prev.map(p => p.playerUniqueId === id ? { ...p, [field]: value } : p));
     };
 
     const addPlayer = () => {
-        setPlayersWithHistory(prev => [...prev, emptyPlayer(prev.length + 1)]);
+        setPlayersWithHistory(prev => [...prev, emptyPlayer(nextPlayerId(prev))]);
     };
 
     const handleCellPaste = (e, playerId, colKey) => {
@@ -584,7 +699,8 @@ export default function PlayersTab() {
         const rowsNeeded = (startRowIdx + pasteRows.length) - players.length;
         setPlayersWithHistory(prev => {
             const next = [...prev];
-            for (let i = 0; i < rowsNeeded; i++) next.push(emptyPlayer(next.length + 1));
+            let id = nextPlayerId(next);
+            for (let i = 0; i < rowsNeeded; i++) next.push(emptyPlayer(id++));
             pasteRows.forEach((cells, ri) => {
                 const playerIdx = startRowIdx + ri;
                 cells.forEach((val, ci) => {
@@ -815,12 +931,24 @@ export default function PlayersTab() {
     };
 
     const removePlayer = (id) => {
+        if (isPlayerListLocked && pairedPlayerIds.has(String(id))) {
+            showPairedPlayerLockedToast();
+            return;
+        }
         setPlayersWithHistory(prev => prev.filter(p => p.playerUniqueId !== id));
     };
 
     const handleDragEnd = (event) => {
         const { active, over } = event;
         if (!over || active.id === over.id) return;
+
+        if (
+            isPlayerListLocked &&
+            (pairedPlayerIds.has(String(active.id)) || pairedPlayerIds.has(String(over.id)))
+        ) {
+            showPlayerListLockedToast();
+            return;
+        }
 
         const activeIdx = players.findIndex(p => p.playerUniqueId === active.id);
         const overIdx = players.findIndex(p => p.playerUniqueId === over.id);
@@ -830,7 +958,17 @@ export default function PlayersTab() {
         setPlayersWithHistory(prev => arrayMove(prev, activeIdx, overIdx));
     };
 
-    const handleClearAll = () => setPlayersWithHistory([]);
+    const handleClearAll = () => {
+        if (isPlayerListLocked) {
+            showPlayerListLockedToast();
+            return;
+        }
+        setPlayersWithHistory([]);
+    };
+
+    const handleClearUnmatchedPlayers = () => {
+        setPlayersWithHistory(prev => prev.filter(p => pairedPlayerIds.has(String(p.playerUniqueId))));
+    };
 
     // ── Export handlers ───────────────────────────────────────────────────────
     const exportExcel = () => {
@@ -943,13 +1081,18 @@ export default function PlayersTab() {
 
     const handleImport = (mode) => {
         if (!rawData) { resetImportState(); return; }
+        if (isPlayerListLocked && mode === 'replace') {
+            showPlayerListLockedToast();
+            return;
+        }
         if (mode === 'replace') {
             let id = 1;
             setPlayersWithHistory(applyMapping(rawData.rows, columnMap, () => id++));
         } else {
             setPlayersWithHistory(prev => {
-                let id = prev.length + 1;
-                return [...prev, ...applyMapping(rawData.rows, columnMap, () => id++)];
+                let id = nextPlayerId(prev);
+                const existingIds = new Set(prev.map(p => Number(p.playerUniqueId)).filter(Number.isFinite));
+                return [...prev, ...applyMapping(rawData.rows, columnMap, () => id++, existingIds)];
             });
         }
         resetImportState();
@@ -1047,18 +1190,18 @@ export default function PlayersTab() {
 
         loadPlayers(activeTournamentId).then(saved => {
             if (!isActive) return;
-            const normalized = normalizePlayers(saved);
+            const normalized = normalizePlayers(saved, isPlayerListLocked);
             setPlayers(normalized);
-            // Reset history when switching tournaments
-            pastRef.current = [];
-            futureRef.current = [];
-            setCanUndo(false);
-            setCanRedo(false);
+            clearHistory();
             hasLoadedRef.current = true;
             setIsLoading(false);
         });
         return () => { isActive = false; };
-    }, [activeTournamentId, isTournamentLoaded]);
+    }, [activeTournamentId, clearHistory, isTournamentLoaded, isPlayerListLocked]);
+
+    useEffect(() => {
+        if (isWholeTableLocked) clearHistory();
+    }, [clearHistory, isWholeTableLocked]);
 
     useEffect(() => {
         if (!hasLoadedRef.current) return;
@@ -1077,7 +1220,7 @@ export default function PlayersTab() {
             if (saveIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveIdleRef.current);
             if (saveIdleRef.current && !window.cancelIdleCallback) clearTimeout(saveIdleRef.current);
         };
-    }, [players]);
+    }, [players, activeTournamentId]);
 
     // Auto-save mapping table to IndexedDB whenever it changes (debounced)
     useEffect(() => {
@@ -1096,7 +1239,7 @@ export default function PlayersTab() {
         return () => {
             if (mappingSaveTimeoutRef.current) clearTimeout(mappingSaveTimeoutRef.current);
         };
-    }, [mappingTableData, showMappingModal]);
+    }, [mappingTableData, showMappingModal, activeTournamentId]);
 
     // ── Mapping duplicates ────────────────────────────────────────────────────
     // A row is a duplicate if its non-empty club or federation value appears in another row.
@@ -1207,12 +1350,19 @@ export default function PlayersTab() {
                 </Portal>
             )}
             {/* Toolbar */}
+            {isPlayerListLocked && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-warning-500/10 border border-warning-500/30 rounded-lg text-sm text-warning-600-400">
+                    <AlertTriangle size={14} className="shrink-0" />
+                    Paired players are locked because rounds exist. New players are added at the bottom and can be removed or reordered with other unpaired players until they appear in a round.
+                </div>
+            )}
+
             <div className="flex justify-between items-center gap-3">
                 <div className="flex items-center gap-3 border border-surface-200-800 rounded-lg px-3 py-2.5 bg-surface-50-950">
                     <button
                         className="p-1 rounded preset-tonal transition-opacity disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
                         title="Undo (Ctrl+Z)"
-                        disabled={!mounted || pastRef.current.length === 0}
+                        disabled={!mounted || !canUndo || isWholeTableLocked}
                         onClick={undo}
                         aria-label="Undo"
                     >
@@ -1221,13 +1371,47 @@ export default function PlayersTab() {
                     <button
                         className="p-1 rounded preset-tonal transition-opacity disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
                         title="Redo (Ctrl+Y)"
-                        disabled={!mounted || futureRef.current.length === 0}
+                        disabled={!mounted || !canRedo || isWholeTableLocked}
                         onClick={redo}
                         aria-label="Redo"
                     >
                         <Redo2 size={14} />
                     </button>
-                    {players.length > 0 && (
+                    {players.length > 0 && isPlayerListLocked && (
+                        <Dialog>
+                            <Dialog.Trigger
+                                className="flex items-center gap-1.5 text-sm px-2.5 py-1 preset-tonal rounded text-error-500-400 hover:bg-error-500/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                                disabled={unmatchedPlayerCount === 0}
+                                title={unmatchedPlayerCount === 0 ? 'No unmatched players to clear' : 'Clear players not used in any round'}
+                            >
+                                <Trash size={13} />
+                                Clear Unmatched Players
+                            </Dialog.Trigger>
+                            <Portal>
+                                <Dialog.Backdrop className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100]" />
+                                <Dialog.Positioner className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+                                    <Dialog.Content className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-sm space-y-4 shadow-xl">
+                                        <Dialog.Title className="text-base font-semibold">Clear unmatched players?</Dialog.Title>
+                                        <Dialog.Description className="text-sm text-surface-600-400">
+                                            This will remove {unmatchedPlayerCount} players that are not used in any round. Paired players will stay locked in place.
+                                        </Dialog.Description>
+                                        <div className="flex justify-end gap-2">
+                                            <Dialog.CloseTrigger className="px-4 py-1.5 text-sm rounded preset-tonal cursor-pointer">
+                                                Cancel
+                                            </Dialog.CloseTrigger>
+                                            <Dialog.CloseTrigger
+                                                className="px-4 py-1.5 text-sm rounded bg-error-500 text-white hover:bg-error-600 transition-colors cursor-pointer"
+                                                onClick={handleClearUnmatchedPlayers}
+                                            >
+                                                Clear Unmatched
+                                            </Dialog.CloseTrigger>
+                                        </div>
+                                    </Dialog.Content>
+                                </Dialog.Positioner>
+                            </Portal>
+                        </Dialog>
+                    )}
+                    {players.length > 0 && !isPlayerListLocked && (
                         <Dialog>
                             <Dialog.Trigger className="flex items-center gap-1.5 text-sm px-2.5 py-1 preset-tonal rounded text-error-500-400 hover:bg-error-500/10 transition-colors cursor-pointer">
                                 <Trash size={13} />
@@ -1467,12 +1651,22 @@ export default function PlayersTab() {
                                                     >
                                                         Append
                                                     </Dialog.CloseTrigger>
-                                                    <Dialog.CloseTrigger
-                                                        className="px-4 py-1.5 text-sm rounded preset-filled cursor-pointer"
-                                                        onClick={() => handleImport('replace')}
-                                                    >
-                                                        Replace
-                                                    </Dialog.CloseTrigger>
+                                                    {isPlayerListLocked ? (
+                                                        <button
+                                                            className="px-4 py-1.5 text-sm rounded preset-filled opacity-40 cursor-not-allowed"
+                                                            disabled
+                                                            title="Delete all rounds before replacing the player list"
+                                                        >
+                                                            Replace
+                                                        </button>
+                                                    ) : (
+                                                        <Dialog.CloseTrigger
+                                                            className="px-4 py-1.5 text-sm rounded preset-filled cursor-pointer"
+                                                            onClick={() => handleImport('replace')}
+                                                        >
+                                                            Replace
+                                                        </Dialog.CloseTrigger>
+                                                    )}
                                                 </div>
                                             </div>
                                         </>
@@ -1484,8 +1678,9 @@ export default function PlayersTab() {
                     </Dialog>
 
                     <button
-                        className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-filled"
+                        className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-filled disabled:opacity-40 disabled:cursor-not-allowed"
                         onClick={addPlayer}
+                        title={isPlayerListLocked ? 'Add a new player at the bottom' : 'Add player'}
                     >
                         <Plus size={14} />
                         Add Player
@@ -1652,7 +1847,7 @@ export default function PlayersTab() {
             {/* Table */}
             <DndContext
                 sensors={sensors}
-                collisionDetection={closestCenter}
+                collisionDetection={playerListCollisionDetection}
                 onDragEnd={handleDragEnd}
             >
                 <SortableContext
@@ -1776,7 +1971,7 @@ export default function PlayersTab() {
                                         key={player.playerUniqueId}
                                         player={player}
                                         rowIdx={rowIdx}
-                                        displayIndex={rowIdx + 1}
+                                        displayIndex={isPlayerListLocked ? player.playerUniqueId : rowIdx + 1}
                                         playerWarnings={playerWarnings}
                                         COLUMNS={COLUMNS}
                                         EDITABLE_COL_IDX={EDITABLE_COL_IDX}
@@ -1784,6 +1979,9 @@ export default function PlayersTab() {
                                         handleCellPaste={handleCellPaste}
                                         handleCellKeyDown={handleCellKeyDown}
                                         removePlayer={removePlayer}
+                                        isPlayerListLocked={isPlayerListLocked}
+                                        canRemovePlayer={!isPlayerListLocked || !pairedPlayerIds.has(String(player.playerUniqueId))}
+                                        canDragPlayer={!isPlayerListLocked || !pairedPlayerIds.has(String(player.playerUniqueId))}
                                     />
                                 ))}
                             </tbody>
@@ -1916,7 +2114,7 @@ export default function PlayersTab() {
                                         {mappingTableData.length === 0 ? (
                                             <tr>
                                                 <td colSpan="3" className="px-3 py-4 text-center text-surface-600-400">
-                                                    Click "Fill Club from Data" or "Fill Federation from Data" to start
+                                                    Click &quot;Fill Club from Data&quot; or &quot;Fill Federation from Data&quot; to start
                                                 </td>
                                             </tr>
                                         ) : (

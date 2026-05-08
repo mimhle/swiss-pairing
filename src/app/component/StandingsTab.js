@@ -2,14 +2,16 @@
 
 import { useMemo, useState, useEffect } from 'react';
 import { useTournament } from '@/app/context/TournamentContext';
-import { Table, Trophy, Medal, Award, User, Info, Building2, Globe, GraduationCap, Users } from 'lucide-react';
+import { Table, Trophy, Medal, Award, User, Building2, Globe, GraduationCap, Users, Settings } from 'lucide-react';
 import { Tooltip, Portal } from '@skeletonlabs/skeleton-react';
-import { calculateStandings } from '@/app/utilities/standingsLogic';
+import { calculateStandings, calculateTeamStandings, normalizeTeamStandingOptions } from '@/app/utilities/standingsLogic';
 import { loadPlayers } from './tournamentStore';
+import TeamStandingConfigModal from '@/app/component/TeamStandingConfigModal';
 
 const TIEBREAK_LABELS = {
     bh: 'BH',
     bh_cut1: 'BH-C1',
+    bh_virtual_cut1: 'BH-V-C1',
     sb: 'SB',
     wins: 'Wins',
     direct: 'DE',
@@ -21,6 +23,7 @@ const TIEBREAK_LABELS = {
 const TIEBREAK_TOOLTIPS = {
     bh: 'Buchholz: Sum of opponents\' scores',
     bh_cut1: 'Buchholz Cut 1: Buchholz minus the lowest opponent score',
+    bh_virtual_cut1: 'Buchholz Virtual Cut 1: Unplayed games count as virtual opponents, then the lowest score is excluded',
     sb: 'Sonneborn-Berger: Sum of scores of defeated opponents plus half of drawn',
     wins: 'Number of Wins: Total games won',
     direct: 'Direct Encounter: Result between tied players',
@@ -29,10 +32,36 @@ const TIEBREAK_TOOLTIPS = {
     games_black: 'Games as Black: Number of rounds played with black pieces'
 };
 
+const TEAM_RANK_LABELS = {
+    individualRank: 'Rank Sum',
+    score: 'Score',
+    count: 'Count',
+    topRank: 'Top Rank'
+};
+
+const formatNumber = (value) => Number(value || 0).toFixed(1).replace('.0', '');
+
+const formatTeamMetric = (team, criterion) => {
+    if (criterion === 'score') return formatNumber(team.score);
+    return team[criterion];
+};
+
+const getTeamCountModeSummary = (options) => {
+    if (options.countMode === 'maximum') {
+        return options.useGhostPlayers
+            ? `Maximum ${options.minPlayerCount} players, with ghosts`
+            : `Maximum ${options.minPlayerCount} players, incomplete below`;
+    }
+
+    return `Exact ${options.minPlayerCount} players`;
+};
+
 export default function StandingsTab() {
-    const { activeTournamentId, activeTab, rounds, tournamentConfig } = useTournament();
+    const { activeTournamentId, activeTab, rounds, tournamentConfig, updateTournamentConfig } = useTournament();
     const [players, setPlayers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [standingMode, setStandingMode] = useState('individual');
+    const [showTeamConfigModal, setShowTeamConfigModal] = useState(false);
 
     useEffect(() => {
         if (activeTournamentId && activeTab === 'standings') {
@@ -50,6 +79,15 @@ export default function StandingsTab() {
         const tiebreaks = tournamentConfig?.tiebreaks ?? ['bh', 'sb', 'wins'];
         return calculateStandings(players, rounds, tiebreaks);
     }, [players, rounds, tournamentConfig]);
+
+    const teamStandingOptions = useMemo(() => {
+        return normalizeTeamStandingOptions(tournamentConfig?.teamStandingOptions);
+    }, [tournamentConfig]);
+
+    const teamStandings = useMemo(() => {
+        const tiebreaks = tournamentConfig?.tiebreaks ?? ['bh', 'sb', 'wins'];
+        return calculateTeamStandings(players, rounds, tiebreaks, teamStandingOptions);
+    }, [players, rounds, tournamentConfig, teamStandingOptions]);
 
     const activeTiebreakers = useMemo(() => {
         return tournamentConfig?.tiebreaks ?? ['bh', 'sb', 'wins'];
@@ -134,6 +172,18 @@ export default function StandingsTab() {
         return <span className="text-surface-400 font-mono text-xs">{rank}</span>;
     };
 
+    const TeamSourceIcon = teamStandingOptions.source === 'club' ? Building2 : Globe;
+    const teamSourceLabel = teamStandingOptions.source === 'club' ? 'Club' : 'Fed';
+    const teamRankColumns = teamStandingOptions.rankOrder;
+    const primaryTeamRankColumn = teamRankColumns[0];
+
+    const handleSaveTeamStandingOptions = (teamStandingOptions) => {
+        updateTournamentConfig({
+            ...tournamentConfig,
+            teamStandingOptions
+        });
+    };
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center py-24">
@@ -144,17 +194,57 @@ export default function StandingsTab() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                     <Table className="text-primary-500" size={24} />
                     Tournament Standings
                 </h2>
-                <div className="text-sm text-surface-500">
-                    After Round {rounds.length}
+                <div className="flex flex-row gap-2 sm:items-end">
+                    <div className="flex items-center bg-surface-100-900 border border-surface-200-800 rounded-lg p-1 gap-1">
+                        <button
+                            onClick={() => setStandingMode('individual')}
+                            className={`px-3 py-1.5 text-xs font-bold rounded transition-colors ${standingMode === 'individual' ? 'bg-primary-500 text-white shadow-sm' : 'text-surface-500 hover:text-surface-900-100 hover:bg-surface-200-800'}`}
+                        >
+                            Individual
+                        </button>
+                        <button
+                            onClick={() => setStandingMode('team')}
+                            className={`px-3 py-1.5 text-xs font-bold rounded transition-colors ${standingMode === 'team' ? 'bg-primary-500 text-white shadow-sm' : 'text-surface-500 hover:text-surface-900-100 hover:bg-surface-200-800'}`}
+                        >
+                            Team
+                        </button>
+                    </div>
+                    <div className="text-sm text-surface-500 m-auto">
+                        After Round {rounds.length}
+                    </div>
                 </div>
             </div>
 
-            <div className="border border-surface-200-800 rounded-xl overflow-hidden bg-surface-100-900 shadow-sm overflow-x-auto">
+            {standingMode === 'team' && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-surface-500">
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-surface-100-900 border border-surface-200-800">
+                        <TeamSourceIcon size={12} />
+                        Team from {teamSourceLabel}
+                    </span>
+                    <span className="px-2 py-1 rounded bg-surface-100-900 border border-surface-200-800">
+                        {getTeamCountModeSummary(teamStandingOptions)}
+                    </span>
+                    <span className="px-2 py-1 rounded bg-surface-100-900 border border-surface-200-800">
+                        Order: {teamStandingOptions.rankOrder.map(id => TEAM_RANK_LABELS[id] || id).join(', ')}
+                    </span>
+                    <button
+                        onClick={() => setShowTeamConfigModal(true)}
+                        className="inline-flex items-center justify-center p-1.5 rounded bg-surface-100-900 border border-surface-200-800 hover:bg-surface-200-800 transition-colors text-surface-500 hover:text-primary-500"
+                        title="Team standing calculation"
+                        aria-label="Configure team standing calculation"
+                    >
+                        <Settings size={14} />
+                    </button>
+                </div>
+            )}
+
+            {standingMode === 'individual' ? (
+                <div className="border border-surface-200-800 rounded-xl overflow-hidden bg-surface-100-900 shadow-sm overflow-x-auto">
                 <table className="w-full text-sm">
                     <thead className="bg-surface-50-950 border-b border-surface-200-800">
                         <tr>
@@ -208,12 +298,12 @@ export default function StandingsTab() {
                                 </td>
                                 <td className="px-4 py-2 text-center bg-primary-500/5">
                                     <span className="font-bold text-primary-500 text-base">
-                                        {player.points}
+                                        {formatNumber(player.points)}
                                     </span>
                                 </td>
                                 {activeTiebreakers.map(tb => (
                                     <td key={tb} className="px-4 py-2 text-center font-mono text-xs text-surface-600-400">
-                                        {player.tiebreakers[tb]?.toFixed(1).replace('.0', '') || 0}
+                                        {formatNumber(player.tiebreakers[tb])}
                                     </td>
                                 ))}
                             </tr>
@@ -227,7 +317,84 @@ export default function StandingsTab() {
                         )}
                     </tbody>
                 </table>
-            </div>
+                </div>
+            ) : (
+                <div className="border border-surface-200-800 rounded-xl overflow-hidden bg-surface-100-900 shadow-sm overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead className="bg-surface-50-950 border-b border-surface-200-800">
+                            <tr>
+                                <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500 w-12">Rank</th>
+                                <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500">Team</th>
+                                <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-[10px] text-surface-500 min-w-72">Counted Players</th>
+                                {teamRankColumns.map((criterion) => (
+                                    <th
+                                        key={criterion}
+                                        className={`px-4 py-3 text-center font-semibold uppercase tracking-wider text-[10px] w-20 ${criterion === primaryTeamRankColumn ? 'text-primary-500 bg-primary-500/5' : 'text-surface-500'}`}
+                                    >
+                                        {TEAM_RANK_LABELS[criterion] || criterion}
+                                    </th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-200-800">
+                            {teamStandings.map((team, idx) => (
+                                <tr key={team.id} className="hover:bg-surface-200-800/30 transition-colors">
+                                    <td className="px-4 py-2 text-center">
+                                        <div className="flex justify-center">
+                                            <RankIcon rank={idx + 1} />
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <div className="flex items-center gap-2">
+                                            <div className="min-w-0">
+                                                <div className="font-bold text-surface-900-100 truncate">{team.name}</div>
+                                                <div className="text-[10px] uppercase font-bold text-surface-400">{teamSourceLabel}</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-2">
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {team.countedPlayers.map(player => (
+                                                <span
+                                                    key={player.playerUniqueId}
+                                                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${player.isGhost ? 'border border-dashed border-surface-300-700 text-surface-500' : 'bg-surface-200-800/60'}`}
+                                                    title={player.isGhost ? `Ghost player: Rank ${player.individualRank}, 0 pts` : `Rank ${player.individualRank}, ${formatNumber(player.points)} pts`}
+                                                >
+                                                    <span className={`font-mono text-[10px] ${player.isGhost ? 'text-surface-400' : 'text-primary-500'}`}>#{player.individualRank}</span>
+                                                    <span className="font-medium">{player.name}</span>
+                                                    <span className="font-mono text-[10px] text-surface-500">{formatNumber(player.points)}</span>
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </td>
+                                    {teamRankColumns.map((criterion) => (
+                                        <td
+                                            key={criterion}
+                                            className={`px-4 py-2 text-center font-mono ${criterion === primaryTeamRankColumn ? 'bg-primary-500/5 text-primary-500 text-base font-bold' : 'text-xs text-surface-600-400'}`}
+                                        >
+                                            {formatTeamMetric(team, criterion)}
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))}
+                            {teamStandings.length === 0 && (
+                                <tr>
+                                    <td colSpan={3 + teamRankColumns.length} className="px-4 py-12 text-center text-surface-500 italic">
+                                        No teams meet the current team standing options.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            <TeamStandingConfigModal
+                open={showTeamConfigModal}
+                onClose={() => setShowTeamConfigModal(false)}
+                config={tournamentConfig}
+                onSave={handleSaveTeamStandingOptions}
+            />
         </div>
     );
 }

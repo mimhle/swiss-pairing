@@ -3,13 +3,13 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import * as XLSX from 'xlsx';
 import { useTournament } from '@/app/context/TournamentContext';
-import { Swords, Play, Settings, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Swords, Play, Settings, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download } from 'lucide-react';
 import { Dialog, Tooltip, Portal } from '@skeletonlabs/skeleton-react';
 import TournamentConfigModal from './TournamentConfigModal';
 import RoundSetupModal from './RoundSetupModal';
 import ConfirmationModal from './ConfirmationModal';
 import ManualPairingModal from './ManualPairingModal';
-import { generatePairings } from '@/app/utilities/pairingEngine';
+import { exportTournamentTrf, generatePairings } from '@/app/utilities/pairingEngine';
 import { loadPlayers } from './tournamentStore';
 
 const RESULT_OPTIONS = [
@@ -93,6 +93,8 @@ const DEFAULT_SCORE_ROUND_OPTIONS = {
     selectedRoundNumbers: [],
     roundLimitAction: 'cap',
 };
+
+const createRoundTimestamp = () => Date.now();
 
 function nextUniqueScoreColumnMap(prev, columnIndex, field) {
     const next = { ...prev, [columnIndex]: field };
@@ -381,6 +383,20 @@ function unchangedPairingResultValue(board, originalPairings = []) {
     return findMatchingPairing(board, originalPairings)?.result || '';
 }
 
+function withOriginalPairingValues(pairing, originalPairings = []) {
+    const original = findMatchingPairing({
+        whiteId: pairing.isBye ? null : pairing.whiteId,
+        blackId: pairing.isBye ? null : pairing.blackId,
+        byeId: pairing.isBye && !pairing.isTournamentForfeit ? pairing.whiteId : null,
+        forfeitId: pairing.isTournamentForfeit ? pairing.whiteId : null,
+        isSkip: pairing.isSkip,
+    }, originalPairings);
+
+    return original
+        ? { ...pairing, manual: Boolean(original.manual), result: original.result || '' }
+        : pairing;
+}
+
 function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundNumber, originalPairings = []) {
     let hasTrueBye = false;
     const manualPairings = manualBoards
@@ -420,8 +436,9 @@ function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundN
             };
         });
 
-    const regularPairings = [...manualPairings, ...generatedPairings].filter(pairing => !pairing.isBye);
-    const specialPairings = [...manualPairings, ...generatedPairings].filter(pairing => pairing.isBye);
+    const generatedWithOriginalValues = generatedPairings.map(pairing => withOriginalPairingValues(pairing, originalPairings));
+    const regularPairings = [...manualPairings, ...generatedWithOriginalValues].filter(pairing => !pairing.isBye);
+    const specialPairings = [...manualPairings, ...generatedWithOriginalValues].filter(pairing => pairing.isBye);
 
     let seenTrueBye = false;
     return [...regularPairings, ...specialPairings].map((pairing, index) => {
@@ -450,6 +467,108 @@ function buildContinuingForfeitPairings(forfeitedIds, usedIds = new Set()) {
             isTournamentForfeit: true,
             result: '0-0',
         }));
+}
+
+function getMaximumRoundCount(playerCount) {
+    return Math.max(0, playerCount - 1);
+}
+
+function getRoundPlayerIds(round) {
+    const ids = new Set();
+
+    round.pairings?.forEach(pairing => {
+        if (pairing.whiteId) ids.add(String(pairing.whiteId));
+        if (!pairing.isBye && pairing.blackId) ids.add(String(pairing.blackId));
+    });
+
+    return ids;
+}
+
+function addMissingPlayerSkips(roundsToUpdate, players) {
+    if (!roundsToUpdate.length || !players.length) return roundsToUpdate;
+
+    const playerIds = players
+        .map(player => String(player.playerUniqueId))
+        .filter(Boolean);
+    let changed = false;
+
+    const updatedRounds = roundsToUpdate.map((round, roundIndex) => {
+        const existingIds = getRoundPlayerIds(round);
+        const missingIds = playerIds.filter(playerId => !existingIds.has(playerId));
+
+        if (!missingIds.length) return round;
+        changed = true;
+
+        const roundNumber = round.roundNumber || roundIndex + 1;
+        const existingPairings = round.pairings || [];
+        const skipPairings = missingIds.map(playerId => ({
+            whiteId: playerId,
+            blackId: null,
+            isBye: true,
+            isSkip: true,
+            result: '0-0',
+        }));
+
+        return {
+            ...round,
+            pairings: [...existingPairings, ...skipPairings].map((pairing, pairingIndex) => ({
+                ...pairing,
+                id: `r${roundNumber}-p${pairingIndex + 1}`,
+            })),
+        };
+    });
+
+    return changed ? updatedRounds : roundsToUpdate;
+}
+
+function preserveOriginalRemainderPairings(remainingPlayers, originalPairings = []) {
+    const remainingIds = new Set(remainingPlayers.map(player => String(player.playerUniqueId)));
+    const usedIds = new Set();
+    const preservedPairings = [];
+
+    originalPairings.forEach(pairing => {
+        if (pairing.isTournamentForfeit) return;
+
+        if (pairing.isBye) {
+            const playerId = String(pairing.whiteId);
+            if (remainingIds.has(playerId) && !usedIds.has(playerId)) {
+                preservedPairings.push({
+                    whiteId: playerId,
+                    blackId: null,
+                    isBye: true,
+                    isSkip: Boolean(pairing.isSkip),
+                    result: pairing.result || '',
+                    manual: Boolean(pairing.manual),
+                });
+                usedIds.add(playerId);
+            }
+            return;
+        }
+
+        const whiteId = String(pairing.whiteId);
+        const blackId = String(pairing.blackId);
+        if (
+            remainingIds.has(whiteId) &&
+            remainingIds.has(blackId) &&
+            !usedIds.has(whiteId) &&
+            !usedIds.has(blackId)
+        ) {
+            preservedPairings.push({
+                whiteId,
+                blackId,
+                isBye: false,
+                result: pairing.result || '',
+                manual: Boolean(pairing.manual),
+            });
+            usedIds.add(whiteId);
+            usedIds.add(blackId);
+        }
+    });
+
+    return {
+        preservedPairings,
+        remainingPlayers: remainingPlayers.filter(player => !usedIds.has(String(player.playerUniqueId))),
+    };
 }
 
 export default function RoundsTab() {
@@ -559,6 +678,35 @@ export default function RoundsTab() {
             .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
     }, [players, rounds]);
 
+    const currentRoundUnassignedPlayers = useMemo(() => {
+        if (!currentRound || rounds.length === 0) return [];
+
+        const assignedIds = getRoundPlayerIds(currentRound);
+        return players
+            .filter(player => !assignedIds.has(String(player.playerUniqueId)))
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [currentRound, players, rounds.length]);
+
+    const openRoundSetup = async () => {
+        if (rounds.length === 0 || !currentRound) {
+            setRoundModalMode('setup');
+            setShowSetupModal(true);
+            return;
+        }
+
+        let latestPlayers;
+        try {
+            latestPlayers = await loadPlayers(activeTournamentId);
+        } catch {
+            showAlert('Next Round Blocked', 'Could not load players to check for unassigned players.');
+            return;
+        }
+
+        setPlayers(latestPlayers);
+        setRoundModalMode('setup');
+        setShowSetupModal(true);
+    };
+
     const handleStartPairing = async (options) => {
         setIsPairing(true);
         setShowSetupModal(false);
@@ -570,34 +718,54 @@ export default function RoundsTab() {
             const forfeitedIds = getTournamentForfeitSet(rounds);
             const activePlayers = latestPlayers.filter(player => !forfeitedIds.has(String(player.playerUniqueId)));
             const continuingForfeits = buildContinuingForfeitPairings(forfeitedIds);
+            const roundsWithPlayerSkips = addMissingPlayerSkips(rounds, latestPlayers);
+
+            if (rounds.length === 0) {
+                const maxRounds = getMaximumRoundCount(activePlayers.length);
+                const configuredRounds = Number(tournamentConfig?.numRounds) || 0;
+
+                if (activePlayers.length < 2) {
+                    showAlert('Pairing Blocked', 'Add at least 2 players before starting the first round.');
+                    return;
+                }
+
+                if (configuredRounds > maxRounds) {
+                    showAlert(
+                        'Pairing Blocked',
+                        `This tournament has ${activePlayers.length} players, so the round count cannot be greater than ${maxRounds}. Reduce the tournament round count before starting round 1.`
+                    );
+                    return;
+                }
+            }
 
             // 2. Generate pairings
             const tournamentName = tournamentConfig?.name || "Tournament";
             const newPairings = await generatePairings(
                 activePlayers, 
                 options, 
-                rounds, 
+                roundsWithPlayerSkips, 
                 tournamentConfig, 
                 tournamentName,
                 (p) => setPairingProgress(p)
             );
 
             // 3. Add new round
+            const roundNumber = roundsWithPlayerSkips.length + 1;
             const newRound = {
-                roundNumber: rounds.length + 1,
+                roundNumber,
                 pairings: [...newPairings, ...continuingForfeits].map((p, idx) => ({
                     ...p,
-                    id: `r${rounds.length + 1}-p${idx + 1}`,
+                    id: `r${roundNumber}-p${idx + 1}`,
                     result: p.isTournamentForfeit ? '0-0' : ''
                 })),
                 status: 'in-progress',
-                timestamp: Date.now(),
+                timestamp: createRoundTimestamp(),
                 options
             };
 
-            updateRounds([...rounds, newRound]);
-        } catch (error) {
-            console.error("Pairing failed:", error);
+            updateRounds([...roundsWithPlayerSkips, newRound]);
+        } catch {
+            showAlert('Pairing Failed', 'Could not generate pairings for this round.');
         } finally {
             setIsPairing(false);
         }
@@ -631,9 +799,13 @@ export default function RoundsTab() {
         setShowManualPairingModal(true);
     };
 
-    const stageManualPairingSave = (boards) => {
+    const stageManualPairingSave = (boards, { pairRest = true } = {}) => {
         if (manualPairingMode === 'edit') {
-            handleManualPairingSave(boards, currentRound?.options || {});
+            handleManualPairingSave(boards, currentRound?.options || {}, { pairRest });
+            return;
+        }
+        if (!pairRest) {
+            handleManualPairingSave(boards, { manualRemainder: false }, { pairRest: false });
             return;
         }
         setPendingManualBoards(boards);
@@ -642,7 +814,7 @@ export default function RoundsTab() {
         setShowSetupModal(true);
     };
 
-    const handleManualPairingSave = async (boards, options = {}) => {
+    const handleManualPairingSave = async (boards, options = {}, { pairRest = true } = {}) => {
         setIsManualPairing(true);
         setPairingProgress(0);
         setShowSetupModal(false);
@@ -650,6 +822,24 @@ export default function RoundsTab() {
         try {
             const latestPlayers = await loadPlayers(activeTournamentId);
             setPlayers(latestPlayers);
+
+            if (manualPairingMode !== 'edit' && rounds.length === 0) {
+                const maxRounds = getMaximumRoundCount(latestPlayers.length);
+                const configuredRounds = Number(tournamentConfig?.numRounds) || 0;
+
+                if (latestPlayers.length < 2) {
+                    showAlert('Manual Pairing Blocked', 'Add at least 2 players before starting the first round.');
+                    return;
+                }
+
+                if (configuredRounds > maxRounds) {
+                    showAlert(
+                        'Manual Pairing Blocked',
+                        `This tournament has ${latestPlayers.length} players, so the round count cannot be greater than ${maxRounds}. Reduce the tournament round count before starting round 1.`
+                    );
+                    return;
+                }
+            }
 
             const normalizedBoards = boards
                 .map(board => ({
@@ -666,7 +856,10 @@ export default function RoundsTab() {
                 [board.whiteId, board.blackId, board.byeId, board.forfeitId].filter(Boolean).forEach(id => usedIds.add(String(id)));
             });
 
-            const previousRounds = manualPairingMode === 'edit' ? rounds.slice(0, currentRoundIdx) : rounds;
+            const roundsWithPlayerSkips = manualPairingMode === 'edit'
+                ? rounds
+                : addMissingPlayerSkips(rounds, latestPlayers);
+            const previousRounds = manualPairingMode === 'edit' ? rounds.slice(0, currentRoundIdx) : roundsWithPlayerSkips;
             const alreadyForfeited = getTournamentForfeitSet(previousRounds);
             const remainingPlayers = latestPlayers.filter(player => (
                 !usedIds.has(String(player.playerUniqueId)) &&
@@ -679,10 +872,18 @@ export default function RoundsTab() {
                 return;
             }
 
+            const originalPairings = manualPairingMode === 'edit' ? (currentRound?.pairings || []) : [];
+            const {
+                preservedPairings,
+                remainingPlayers: playersNeedingPairing,
+            } = manualPairingMode === 'edit' && pairRest
+                ? preserveOriginalRemainderPairings(remainingPlayers, originalPairings)
+                : { preservedPairings: [], remainingPlayers };
+
             const tournamentName = tournamentConfig?.name || 'Tournament';
-            const generatedPairings = remainingPlayers.length > 0
+            const generatedPairings = pairRest && playersNeedingPairing.length > 0
                 ? await generatePairings(
-                    remainingPlayers,
+                    playersNeedingPairing,
                     { ...options, manualRemainder: true },
                     previousRounds,
                     tournamentConfig,
@@ -696,12 +897,12 @@ export default function RoundsTab() {
 
             const roundNumber = manualPairingMode === 'edit' && currentRound
                 ? (currentRound.roundNumber || currentRoundIdx + 1)
-                : rounds.length + 1;
+                : roundsWithPlayerSkips.length + 1;
             const mergedPairings = mergeManualAndGeneratedPairings(
                 normalizedBoards,
-                [...generatedPairings, ...continuingForfeits],
+                [...preservedPairings, ...generatedPairings, ...continuingForfeits],
                 roundNumber,
-                manualPairingMode === 'edit' ? (currentRound?.pairings || []) : []
+                originalPairings
             );
 
             if (manualPairingMode === 'edit') {
@@ -721,14 +922,13 @@ export default function RoundsTab() {
                     status: 'in-progress',
                     options: { ...options, manualPairing: true }
                 };
-                updateRounds([...rounds, newRound]);
+                updateRounds([...roundsWithPlayerSkips, newRound]);
             }
 
             setShowManualPairingModal(false);
             setPendingManualBoards(null);
             setRoundModalMode('setup');
         } catch (error) {
-            console.error('Manual pairing failed:', error);
             showAlert('Manual Pairing Failed', error?.message || 'Could not generate the automatic remainder.');
         } finally {
             setIsManualPairing(false);
@@ -855,10 +1055,20 @@ export default function RoundsTab() {
         return { pairings: pairingsWithResults, imported, skipped, skippedRows };
     };
 
-    const createRoundFromRows = (roundNumber, rowsForRound) => {
+    const getImportedRowPlayerIds = (rowsForRound) => {
+        const ids = new Set();
+        rowsForRound.forEach(row => {
+            if (row.whiteId) ids.add(String(row.whiteId));
+            if (row.blackId) ids.add(String(row.blackId));
+        });
+        return ids;
+    };
+
+    const createPairingsFromRows = (roundNumber, rowsForRound, { markMissingPlayersAsSkips = false } = {}) => {
         let imported = 0;
         let skipped = 0;
         const skippedRows = [];
+        const importedPlayerIds = getImportedRowPlayerIds(rowsForRound);
         const sortedRows = [...rowsForRound].sort((a, b) => {
             const aBoard = parseInt(a.board, 10);
             const bBoard = parseInt(b.board, 10);
@@ -884,17 +1094,39 @@ export default function RoundsTab() {
             };
         }).filter(Boolean);
 
+        if (markMissingPlayersAsSkips && importedPlayerIds.size > 0) {
+            const usedIds = getRoundPlayerIds({ pairings });
+            players.forEach(player => {
+                const playerId = String(player.playerUniqueId);
+                if (!playerId || importedPlayerIds.has(playerId) || usedIds.has(playerId)) return;
+                pairings.push({
+                    id: `r${roundNumber}-p${pairings.length + 1}`,
+                    whiteId: playerId,
+                    blackId: null,
+                    isBye: true,
+                    isSkip: true,
+                    result: '0-0',
+                });
+            });
+        }
+
+        return { pairings, imported, skipped, skippedRows };
+    };
+
+    const createRoundFromRows = (roundNumber, rowsForRound) => {
+        const created = createPairingsFromRows(roundNumber, rowsForRound, { markMissingPlayersAsSkips: true });
+
         return {
             round: {
                 roundNumber,
-                pairings,
+                pairings: created.pairings,
                 status: 'in-progress',
-                timestamp: Date.now(),
+                timestamp: createRoundTimestamp(),
                 options: { imported: true }
             },
-            imported,
-            skipped,
-            skippedRows
+            imported: created.imported,
+            skipped: created.skipped,
+            skippedRows: created.skippedRows
         };
     };
 
@@ -933,6 +1165,16 @@ export default function RoundsTab() {
         const multiRoundImport = importAllRounds || hasSelectedRounds;
         const selectedMaxRound = hasSelectedRounds ? Math.max(...selectedRoundSet) : maxImportedRound;
         const shouldIncreaseRounds = multiRoundImport && roundLimitAction === 'increase' && selectedMaxRound > configuredRounds;
+        const maxRounds = getMaximumRoundCount(players.length);
+
+        if (shouldIncreaseRounds && selectedMaxRound > maxRounds) {
+            showAlert(
+                'Score Import Blocked',
+                `This tournament has ${players.length} players, so the round count cannot be greater than ${maxRounds}.`
+            );
+            return;
+        }
+
         const cappedRows = multiRoundImport && roundLimitAction === 'cap' && configuredRounds > 0
             ? rows.filter(row => !row.roundNumber || row.roundNumber <= configuredRounds)
             : rows;
@@ -975,7 +1217,9 @@ export default function RoundsTab() {
                 if (!rowsForRound) return round;
                 if (roundIdx < currentRoundIdx && !overwritePrevious) return round;
 
-                const applied = applyRowsToPairings(round.pairings, rowsForRound);
+                const applied = rowsForRound.some(row => row.whiteId)
+                    ? createPairingsFromRows(roundNumber, rowsForRound, { markMissingPlayersAsSkips: true })
+                    : applyRowsToPairings(round.pairings, rowsForRound);
                 imported += applied.imported;
                 skipped += applied.skipped;
                 skippedRows.push(...applied.skippedRows);
@@ -1014,7 +1258,9 @@ export default function RoundsTab() {
             updatedRounds = rounds.map((round, roundIdx) => {
                 if (roundIdx !== currentRoundIdx) return round;
 
-                const applied = applyRowsToPairings(round.pairings, rowsForCurrentRound);
+                const applied = rowsForCurrentRound.some(row => row.whiteId)
+                    ? createPairingsFromRows(currentRoundNumber, rowsForCurrentRound, { markMissingPlayersAsSkips: true })
+                    : applyRowsToPairings(round.pairings, rowsForCurrentRound);
                 imported += applied.imported;
                 skipped += applied.skipped;
                 skippedRows.push(...applied.skippedRows);
@@ -1042,6 +1288,31 @@ export default function RoundsTab() {
         );
     };
 
+    const handleExportTrf = async () => {
+        try {
+            const latestPlayers = await loadPlayers(activeTournamentId);
+            setPlayers(latestPlayers);
+
+            if (!latestPlayers.length) {
+                showAlert('TRF Export Failed', 'Add players before exporting a TRF file.');
+                return;
+            }
+
+            const tournamentName = tournamentConfig?.name || 'Tournament';
+            const trf = exportTournamentTrf(latestPlayers, rounds, tournamentConfig, tournamentName);
+            const safeName = tournamentName
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '') || 'tournament';
+            const url = URL.createObjectURL(new Blob([trf], { type: 'text/plain;charset=utf-8' }));
+            Object.assign(document.createElement('a'), { href: url, download: `${safeName}.trf` }).click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Failed to export TRF:', error);
+            showAlert('TRF Export Failed', error?.message || 'Could not export this tournament as TRF.');
+        }
+    };
+
     const nextRound = () => {
         if (currentRoundIdx < rounds.length - 1) {
             setCurrentRoundIdx(prev => prev + 1);
@@ -1060,6 +1331,56 @@ export default function RoundsTab() {
 
     const showConfirm = (title, description, onConfirm, variant = 'primary', confirmText = 'Confirm') => {
         setModal({ open: true, title, description, details: [], onConfirm: () => { onConfirm(); setModal(prev => ({ ...prev, open: false })); }, isAlert: false, variant, confirmText });
+    };
+
+    const saveTournamentConfig = async (nextConfig) => {
+        const nextRoundCount = Number(nextConfig.numRounds) || 1;
+        let latestPlayers;
+        try {
+            latestPlayers = await loadPlayers(activeTournamentId);
+        } catch {
+            showAlert('Tournament Setup Blocked', 'Could not load players to validate the round count.');
+            return false;
+        }
+
+        setPlayers(latestPlayers);
+        const maxRounds = getMaximumRoundCount(latestPlayers.length);
+
+        if (latestPlayers.length < 2) {
+            showAlert('Tournament Setup Blocked', 'Add at least 2 players before setting tournament rounds.');
+            return false;
+        }
+
+        if (nextRoundCount > maxRounds) {
+            showAlert(
+                'Tournament Setup Blocked',
+                `This tournament has ${latestPlayers.length} players, so the round count cannot be greater than ${maxRounds}.`
+            );
+            return false;
+        }
+
+        if (rounds.length > nextRoundCount) {
+            const deletedRounds = rounds.length - nextRoundCount;
+
+            showConfirm(
+                "Delete Higher Round Results?",
+                `Reducing the tournament to ${nextRoundCount} round${nextRoundCount !== 1 ? 's' : ''} will delete round ${nextRoundCount + 1} and all later round results (${deletedRounds} round${deletedRounds !== 1 ? 's' : ''}). This action cannot be undone.`,
+                () => {
+                    const keptRounds = rounds.slice(0, nextRoundCount);
+                    updateTournamentConfig(nextConfig);
+                    updateRounds(keptRounds);
+                    setCurrentRoundIdx(keptRounds.length ? keptRounds.length - 1 : 0);
+                    setShowConfigModal(false);
+                },
+                'error',
+                'Delete Results'
+            );
+
+            return false;
+        }
+
+        updateTournamentConfig(nextConfig);
+        return true;
     };
 
     const playerScores = useMemo(() => {
@@ -1275,7 +1596,7 @@ export default function RoundsTab() {
                     open={showConfigModal}
                     onClose={() => setShowConfigModal(false)}
                     config={tournamentConfig}
-                    onSave={updateTournamentConfig}
+                    onSave={saveTournamentConfig}
                 />
             </div>
         );
@@ -1298,8 +1619,8 @@ export default function RoundsTab() {
                             >
                                 <ChevronLeft size={18} />
                             </button>
-                            <div className="px-4 text-sm font-bold min-w-24 text-center">
-                                Round {currentRoundIdx + 1} of {tournamentConfig.numRounds}
+                            <div className="px-4 text-sm font-bold min-w-16 text-center">
+                                {currentRoundIdx + 1} of {tournamentConfig.numRounds}
                             </div>
                             <button
                                 onClick={nextRound}
@@ -1604,6 +1925,14 @@ export default function RoundsTab() {
                         </Dialog>
                     )}
                     <button
+                        onClick={handleExportTrf}
+                        className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer"
+                        title="Export TRF"
+                    >
+                        <Download size={14} />
+                        Export TRF
+                    </button>
+                    <button
                         onClick={() => setShowConfigModal(true)}
                         className="p-2 hover:bg-surface-200-800 rounded-lg transition-colors text-surface-500 hover:text-primary-500"
                         title="Tournament Settings"
@@ -1666,10 +1995,7 @@ export default function RoundsTab() {
                                         </button>
                                     )}
                                     <button
-                                        onClick={() => {
-                                            setRoundModalMode('setup');
-                                            setShowSetupModal(true);
-                                        }}
+                                        onClick={openRoundSetup}
                                         disabled={pairingBusy || (!isRoundComplete && rounds.length > 0)}
                                         className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors text-sm font-bold shadow-lg shadow-primary-500/20 disabled:opacity-50"
                                     >
@@ -1813,7 +2139,7 @@ export default function RoundsTab() {
                 open={showConfigModal}
                 onClose={() => setShowConfigModal(false)}
                 config={tournamentConfig}
-                onSave={updateTournamentConfig}
+                onSave={saveTournamentConfig}
             />
 
             <RoundSetupModal
@@ -1825,6 +2151,7 @@ export default function RoundsTab() {
                 canStart={roundModalMode === 'manual-options' || (roundModalMode === 'setup' && isLatestRound && isRoundComplete && rounds.length < tournamentConfig.numRounds)}
                 showDelete={roundModalMode === 'settings'}
                 excludedPlayers={nextRoundExcludedPlayers}
+                unassignedPlayers={currentRoundUnassignedPlayers}
                 onDeleteRounds={handleDeleteRounds}
             />
 

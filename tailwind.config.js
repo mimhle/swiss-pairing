@@ -1,5 +1,5 @@
 /** @type {import('tailwindcss').Config} */
-export default {
+const config = {
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/component/**/*.{js,ts,jsx,tsx,mdx}',
@@ -37,3 +37,5 @@ export default {
     },
   },
 };
+
+export default config;

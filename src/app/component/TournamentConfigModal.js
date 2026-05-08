@@ -12,6 +12,7 @@ import { CSS } from '@dnd-kit/utilities';
 const TIEBREAK_OPTIONS = [
     { id: 'bh', label: 'Buchholz (BH)', description: 'Sum of opponents\' scores' },
     { id: 'bh_cut1', label: 'Buchholz Cut 1', description: 'Buchholz minus the lowest opponent score' },
+    { id: 'bh_virtual_cut1', label: 'Buchholz Virtual Cut 1', description: 'Unplayed games count as virtual opponents, then the lowest score is excluded' },
     { id: 'sb', label: 'Sonneborn-Berger (SB)', description: 'Sum of scores of defeated opponents plus half of drawn' },
     { id: 'wins', label: 'Number of Wins', description: 'Total games won' },
     { id: 'wins_black', label: 'Wins as Black', description: 'Number of games won with black pieces' },
@@ -37,6 +38,10 @@ export default function TournamentConfigModal({ open, onClose, config, onSave })
                 if (!savedOrder.includes(opt.id)) savedOrder.push(opt.id);
             });
             setTiebreakOrder(savedOrder);
+        } else {
+            setNumRounds(5);
+            setActiveTiebreaks(['bh', 'sb', 'wins']);
+            setTiebreakOrder(TIEBREAK_OPTIONS.map(opt => opt.id));
         }
     }, [config, open]);
 
@@ -44,7 +49,7 @@ export default function TournamentConfigModal({ open, onClose, config, onSave })
 
     const handleDragEnd = (event) => {
         const { active, over } = event;
-        if (active.id !== over.id) {
+        if (over && active.id !== over.id) {
             setTiebreakOrder((items) => {
                 const oldIndex = items.indexOf(active.id);
                 const newIndex = items.indexOf(over.id);
@@ -61,14 +66,15 @@ export default function TournamentConfigModal({ open, onClose, config, onSave })
         );
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         // Only save active tiebreaks in the order they appear in tiebreakOrder
         const finalTiebreaks = tiebreakOrder.filter(id => activeTiebreaks.includes(id));
-        onSave({
+        const shouldClose = await onSave({
+            ...(config || {}),
             numRounds,
-            tiebreaks: finalTiebreaks
+            tiebreaks: finalTiebreaks,
         });
-        onClose();
+        if (shouldClose !== false) onClose();
     };
 
     if (!open) return null;
@@ -78,7 +84,7 @@ export default function TournamentConfigModal({ open, onClose, config, onSave })
             <ScrollLock />
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100]" onClick={onClose} />
             <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 pointer-events-none">
-                <div className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-sm space-y-6 shadow-xl pointer-events-auto">
+                <div className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto space-y-6 shadow-xl pointer-events-auto">
                     <div className="flex items-center justify-between">
                         <h2 className="text-lg font-bold flex items-center gap-2">
                             <Settings className="text-primary-500" size={20} />
@@ -126,6 +132,7 @@ export default function TournamentConfigModal({ open, onClose, config, onSave })
                             </div>
                             <p className="text-[9px] text-surface-500 uppercase text-center">Drag to reorder priority</p>
                         </div>
+
                     </div>
 
                     <div className="flex justify-end gap-3 pt-2">
