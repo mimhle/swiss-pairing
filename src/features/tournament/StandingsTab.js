@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
 import { useTournament } from '@/context/TournamentContext';
 import { Table, Trophy, Medal, Award, User, Building2, Globe, GraduationCap, Users, Settings, FileDown, ChevronDown } from 'lucide-react';
 import { Tooltip, Portal, Menu } from '@skeletonlabs/skeleton-react';
@@ -40,6 +41,34 @@ const TEAM_RANK_LABELS = {
     count: 'Count',
     topRank: 'Top Rank'
 };
+
+const TEAM_SHEET_NAME = 'Team Standings';
+const TEAM_TITLE_STYLE_ID = 1;
+const TEAM_HEADER_STYLE_ID = 2;
+const TEAM_ROW_LEFT_STYLE_ID = 3;
+const TEAM_ROW_RIGHT_STYLE_ID = 4;
+const TEAM_PRIORITY_RIGHT_STYLE_ID = 5;
+
+const TEAM_EXPORT_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac" xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac">
+<fonts count="4" x14ac:knownFonts="1">
+<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
+<font><b/><sz val="16"/><color rgb="FF1F2937"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
+<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
+<font><b/><sz val="11"/><color rgb="FF111827"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
+</fonts>
+<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2563EB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill></fills>
+<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFD1D5DB"/></left><right style="thin"><color rgb="FFD1D5DB"/></right><top style="thin"><color rgb="FFD1D5DB"/></top><bottom style="thin"><color rgb="FFD1D5DB"/></bottom><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="6">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
 
 const formatNumber = (value) => Number(value || 0).toFixed(1).replace('.0', '');
 
@@ -255,6 +284,103 @@ export default function StandingsTab() {
         return XLSX.utils.json_to_sheet(rows, { header: headers });
     };
 
+    const styleCell = (sheetXml, cellRef, styleId) => {
+        const cellPattern = new RegExp(`<c([^>]*\\sr="${cellRef}"[^>]*)>`);
+        return sheetXml.replace(cellPattern, (match, attributes) => {
+            const nextAttributes = /\ss="\d+"/.test(attributes)
+                ? attributes.replace(/\ss="\d+"/, ` s="${styleId}"`)
+                : `${attributes} s="${styleId}"`;
+            return `<c${nextAttributes}>`;
+        });
+    };
+
+    const styleRow = (sheetXml, rowNumber, styleId) => {
+        const cellPattern = new RegExp(`<c([^>]*\\sr="[A-Z]+${rowNumber}"[^>]*)>`, 'g');
+        return sheetXml.replace(cellPattern, (match, attributes) => {
+            const nextAttributes = /\ss="\d+"/.test(attributes)
+                ? attributes.replace(/\ss="\d+"/, ` s="${styleId}"`)
+                : `${attributes} s="${styleId}"`;
+            return `<c${nextAttributes}>`;
+        });
+    };
+
+    const styleCells = (sheetXml, cellRefs, styleId) => (
+        cellRefs.reduce((nextXml, cellRef) => styleCell(nextXml, cellRef, styleId), sheetXml)
+    );
+
+    const getRowCellRefs = (rowNumber, fromColumn, toColumn) => {
+        const refs = [];
+        for (let columnIndex = fromColumn; columnIndex <= toColumn; columnIndex += 1) {
+            refs.push(`${XLSX.utils.encode_col(columnIndex)}${rowNumber}`);
+        }
+        return refs;
+    };
+
+    const downloadWorkbookBlob = (blob, fileName) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        link.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const writeStyledStandingsWorkbook = async (workbook, fileName) => {
+        const teamSheetIndex = workbook.SheetNames.indexOf(TEAM_SHEET_NAME) + 1;
+
+        if (teamSheetIndex === 0) {
+            XLSX.writeFile(workbook, fileName);
+            return;
+        }
+
+        const workbookBuffer = XLSX.write(workbook, {
+            bookType: 'xlsx',
+            type: 'array',
+            compression: true
+        });
+        const zip = await JSZip.loadAsync(workbookBuffer);
+        const teamSheetPath = `xl/worksheets/sheet${teamSheetIndex}.xml`;
+        const teamSheetFile = zip.file(teamSheetPath);
+
+        if (!teamSheetFile) {
+            XLSX.writeFile(workbook, fileName);
+            return;
+        }
+
+        let teamSheetXml = await teamSheetFile.async('string');
+        teamSheetXml = styleCell(teamSheetXml, 'A1', TEAM_TITLE_STYLE_ID);
+        teamSheetXml = styleRow(teamSheetXml, 2, TEAM_HEADER_STYLE_ID);
+
+        const teamSheetMeta = workbook.Sheets[TEAM_SHEET_NAME]?.['!teamExportMeta'];
+        if (teamSheetMeta) {
+            const { teamRows = [], firstDataRow = 3, lastDataRow = 2, columnCount = 0 } = teamSheetMeta;
+
+            for (let rowNumber = firstDataRow; rowNumber <= lastDataRow; rowNumber += 1) {
+                teamSheetXml = styleCells(teamSheetXml, getRowCellRefs(rowNumber, 0, 0), TEAM_PRIORITY_RIGHT_STYLE_ID);
+                if (columnCount > 2) {
+                    teamSheetXml = styleCells(teamSheetXml, getRowCellRefs(rowNumber, 2, columnCount - 1), TEAM_PRIORITY_RIGHT_STYLE_ID);
+                }
+            }
+
+            teamRows.forEach((rowNumber) => {
+                teamSheetXml = styleCells(teamSheetXml, getRowCellRefs(rowNumber, 0, 0), TEAM_ROW_RIGHT_STYLE_ID);
+                teamSheetXml = styleCells(teamSheetXml, getRowCellRefs(rowNumber, 1, 1), TEAM_ROW_LEFT_STYLE_ID);
+                if (columnCount > 2) {
+                    teamSheetXml = styleCells(teamSheetXml, getRowCellRefs(rowNumber, 2, columnCount - 1), TEAM_ROW_RIGHT_STYLE_ID);
+                }
+            });
+        }
+
+        zip.file('xl/styles.xml', TEAM_EXPORT_STYLES_XML);
+        zip.file(teamSheetPath, teamSheetXml);
+
+        const styledWorkbookBlob = await zip.generateAsync({
+            type: 'blob',
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        });
+        downloadWorkbookBlob(styledWorkbookBlob, fileName);
+    };
+
     const appendIndividualSheet = (workbook) => {
         const tiebreakHeaders = activeTiebreakers.map(tb => TIEBREAK_LABELS[tb] || tb);
         const headers = [groupedMode ? 'Group' : null, 'Rank', 'Id', 'Name', 'Federation', 'Rating', 'Points', ...tiebreakHeaders].filter(Boolean);
@@ -285,7 +411,9 @@ export default function StandingsTab() {
     const appendTeamSheets = (workbook) => {
         const headers = ['Rank', 'Team', ...teamRankColumns.map(criterion => TEAM_RANK_LABELS[criterion] || criterion)];
         const rows = [];
-        const rowLevels = [{}];
+        const teamExcelRows = [];
+        const rowLevels = [{ hpt: 24 }, { hpt: 18 }];
+        const title = `${tournamentConfig?.name || 'Tournament'} - Team Standings`;
 
         const getPlayerPriorityValue = (player, criterion) => {
             if (criterion === 'score') return formatNumber(player.points);
@@ -304,6 +432,7 @@ export default function StandingsTab() {
                 teamRow[TEAM_RANK_LABELS[criterion] || criterion] = formatTeamMetric(team, criterion);
             });
 
+            teamExcelRows.push(rows.length + 3);
             rows.push(teamRow);
             rowLevels.push({});
 
@@ -322,27 +451,40 @@ export default function StandingsTab() {
             });
         });
 
-        const worksheet = createSheet(rows, headers);
+        const worksheet = XLSX.utils.aoa_to_sheet([[title]]);
+        XLSX.utils.sheet_add_json(worksheet, rows, { header: headers, origin: 'A2' });
         worksheet['!cols'] = [
             { wch: 8 },
             { wch: 30 },
             ...teamRankColumns.map(() => ({ wch: 14 }))
         ];
+        worksheet['!merges'] = [
+            {
+                s: { r: 0, c: 0 },
+                e: { r: 0, c: headers.length - 1 }
+            }
+        ];
         worksheet['!rows'] = rowLevels;
+        worksheet['!teamExportMeta'] = {
+            teamRows: teamExcelRows,
+            firstDataRow: 3,
+            lastDataRow: rows.length + 2,
+            columnCount: headers.length
+        };
 
         if (rows.length > 0) {
             worksheet['!autofilter'] = {
                 ref: XLSX.utils.encode_range({
-                    s: { r: 0, c: 0 },
-                    e: { r: rows.length, c: headers.length - 1 }
+                    s: { r: 1, c: 0 },
+                    e: { r: rows.length + 1, c: headers.length - 1 }
                 })
             };
         }
 
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'Team Standings');
+        XLSX.utils.book_append_sheet(workbook, worksheet, TEAM_SHEET_NAME);
     };
 
-    const exportStandingsExcel = (scope) => {
+    const exportStandingsExcel = async (scope) => {
         const workbook = XLSX.utils.book_new();
         const baseFileName = `${safeFilePart(tournamentConfig?.name)}-standings`;
 
@@ -355,7 +497,7 @@ export default function StandingsTab() {
         }
 
         const suffix = scope === 'both' ? '' : `-${scope}`;
-        XLSX.writeFile(workbook, `${baseFileName}${suffix}.xlsx`);
+        await writeStyledStandingsWorkbook(workbook, `${baseFileName}${suffix}.xlsx`);
     };
 
     if (isLoading) {

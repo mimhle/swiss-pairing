@@ -4,15 +4,45 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { duplicateTournamentData, deleteTournamentData, loadTournamentConfig, saveTournamentConfig, loadRounds, saveRounds } from "@/lib/tournamentStore";
 
 const TournamentContext = createContext();
+const VALID_TABS = new Set(["players", "rounds", "standings", "settings"]);
+
+function getTabFromHash() {
+    if (typeof window === "undefined") return null;
+    const tab = window.location.hash.replace(/^#/, "");
+    return VALID_TABS.has(tab) ? tab : null;
+}
 
 export function TournamentProvider({ children }) {
     const [tournaments, setTournaments] = useState([]);
     const [activeTournamentId, setActiveTournamentId] = useState(null);
     const [isLoaded, setIsLoaded] = useState(false);
     const [activeTab, setActiveTab] = useState("players");
+    const [hasRestoredTabFromHash, setHasRestoredTabFromHash] = useState(false);
     const [tournamentConfig, setTournamentConfig] = useState(null);
     const [rounds, setRounds] = useState([]);
     const [isLoadingConfig, setIsLoadingConfig] = useState(true);
+
+    useEffect(() => {
+        const handleHashChange = () => {
+            const tab = getTabFromHash();
+            if (tab) setActiveTab(tab);
+        };
+
+        handleHashChange();
+        setHasRestoredTabFromHash(true);
+        window.addEventListener("hashchange", handleHashChange);
+        return () => window.removeEventListener("hashchange", handleHashChange);
+    }, []);
+
+    useEffect(() => {
+        if (!hasRestoredTabFromHash) return;
+        if (typeof window === "undefined") return;
+        if (window.location.hash === `#${activeTab}`) return;
+
+        const url = new URL(window.location.href);
+        url.hash = activeTab;
+        window.history.replaceState(null, "", url);
+    }, [activeTab, hasRestoredTabFromHash]);
 
     useEffect(() => {
         // Load from local storage
@@ -58,7 +88,7 @@ export function TournamentProvider({ children }) {
             setRounds(roundsData);
             setIsLoadingConfig(false);
         });
-        setActiveTab("players");
+        setActiveTab(getTabFromHash() || "players");
     }, [activeTournamentId, isLoaded]);
 
     const updateTournamentConfig = (config) => {
