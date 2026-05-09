@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
 import { useTournament } from '@/context/TournamentContext';
-import { Swords, Play, Settings, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download } from 'lucide-react';
+import { Swords, Play, Settings, ChevronRight, ChevronLeft, ChevronDown, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download } from 'lucide-react';
 import { Dialog, Tooltip, Portal } from '@skeletonlabs/skeleton-react';
 import TournamentConfigModal from '@/components/modals/TournamentConfigModal';
 import RoundSetupModal from '@/components/modals/RoundSetupModal';
@@ -398,8 +399,8 @@ function withOriginalPairingValues(pairing, originalPairings = []) {
         : pairing;
 }
 
-function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundNumber, originalPairings = []) {
-    let hasTrueBye = false;
+function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundNumber, originalPairings = [], playerGroupLookup = {}) {
+    const trueByeGroups = new Set();
     const manualRegularSlots = [];
     const manualSpecialPairings = [];
 
@@ -419,13 +420,15 @@ function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundN
             return;
         }
         if (board.byeId) {
-            const isSkip = Boolean(board.isSkip) || hasTrueBye;
-            if (!isSkip) hasTrueBye = true;
+            const group = getPairingGroup({ group: board.group, whiteId: board.byeId }, playerGroupLookup);
+            const isSkip = Boolean(board.isSkip) || trueByeGroups.has(group);
+            if (!isSkip) trueByeGroups.add(group);
             manualSpecialPairings.push({
                 whiteId: String(board.byeId),
                 blackId: null,
                 isBye: true,
                 isSkip,
+                group,
                 manual,
                 result,
             });
@@ -454,12 +457,13 @@ function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundN
     const generatedSpecialPairings = generatedWithOriginalValues.filter(pairing => pairing.isBye);
     const specialPairings = [...manualSpecialPairings, ...generatedSpecialPairings];
 
-    let seenTrueBye = false;
+    const seenTrueByeGroups = new Set();
     return [...regularPairings, ...specialPairings].map((pairing, index) => {
         let isSkip = false;
         if (pairing.isBye) {
-            isSkip = typeof pairing.isSkip === 'boolean' ? pairing.isSkip : seenTrueBye;
-            if (!isSkip && !pairing.isTournamentForfeit) seenTrueBye = true;
+            const group = getPairingGroup(pairing, playerGroupLookup);
+            isSkip = typeof pairing.isSkip === 'boolean' ? pairing.isSkip : seenTrueByeGroups.has(group);
+            if (!isSkip && !pairing.isTournamentForfeit) seenTrueByeGroups.add(group);
         }
         return {
             ...pairing,
@@ -487,6 +491,85 @@ function getMaximumRoundCount(playerCount) {
     return Math.max(0, playerCount - 1);
 }
 
+function getMaximumRoundCountForMode(players = [], config = {}) {
+    if (!isGroupPairingMode(config)) return getMaximumRoundCount(players.length);
+    const groups = [...getGroupedPlayers(players).values()];
+    if (!groups.length) return 0;
+    return Math.min(...groups.map(groupPlayers => getMaximumRoundCount(groupPlayers.length)));
+}
+
+const isGroupPairingMode = (config) => config?.pairingMode === 'group';
+
+function getPlayerGroup(player) {
+    return String(player?.group || '').trim();
+}
+
+function getGroupedPlayers(players = []) {
+    return players.reduce((groups, player) => {
+        const group = getPlayerGroup(player);
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push(player);
+        return groups;
+    }, new Map());
+}
+
+function getBlankGroupPlayers(players = []) {
+    return players.filter(player => !getPlayerGroup(player));
+}
+
+function buildPlayerGroupLookup(players = []) {
+    return players.reduce((acc, player) => {
+        acc[String(player.playerUniqueId)] = getPlayerGroup(player);
+        return acc;
+    }, {});
+}
+
+function getPairingGroup(pairing, playerGroupLookup = {}) {
+    return pairing.group || playerGroupLookup[String(pairing.whiteId)] || playerGroupLookup[String(pairing.blackId)] || '';
+}
+
+function withPairingGroups(pairings = [], playerGroupLookup = {}) {
+    return pairings.map(pairing => ({
+        ...pairing,
+        group: getPairingGroup(pairing, playerGroupLookup),
+    }));
+}
+
+function filterRoundsForGroup(rounds = [], group, playerGroupLookup = {}) {
+    return rounds.map(round => ({
+        ...round,
+        pairings: (round.pairings || []).filter(pairing => getPairingGroup(pairing, playerGroupLookup) === group),
+    }));
+}
+
+function getRoundGroupSections(pairings = [], playerGroupLookup = {}, enabled = false) {
+    if (!enabled) {
+        return [{
+            key: 'all',
+            group: '',
+            pairings: pairings.map((pairing, index) => ({ pairing, index, groupIndex: index })),
+        }];
+    }
+
+    const sections = [];
+    const sectionByGroup = new Map();
+    pairings.forEach((pairing, index) => {
+        const group = getPairingGroup(pairing, playerGroupLookup);
+        if (!sectionByGroup.has(group)) {
+            const section = {
+                key: `${group || 'unassigned'}-${index}`,
+                group,
+                pairings: [],
+            };
+            sectionByGroup.set(group, section);
+            sections.push(section);
+        }
+        const currentSection = sectionByGroup.get(group);
+        currentSection.pairings.push({ pairing, index, groupIndex: currentSection.pairings.length });
+    });
+    return sections;
+}
+
 function getRoundPlayerIds(round) {
     const ids = new Set();
 
@@ -501,6 +584,7 @@ function getRoundPlayerIds(round) {
 function addMissingPlayerSkips(roundsToUpdate, players) {
     if (!roundsToUpdate.length || !players.length) return roundsToUpdate;
 
+    const playerGroupLookup = buildPlayerGroupLookup(players);
     const playerIds = players
         .map(player => String(player.playerUniqueId))
         .filter(Boolean);
@@ -520,6 +604,7 @@ function addMissingPlayerSkips(roundsToUpdate, players) {
             blackId: null,
             isBye: true,
             isSkip: true,
+            group: playerGroupLookup[playerId] || '',
             result: '0-0',
         }));
 
@@ -585,6 +670,46 @@ function preserveOriginalRemainderPairings(remainingPlayers, originalPairings = 
     };
 }
 
+async function generateManualRemainderPairingsByGroup(playersNeedingPairing, options, previousRounds, config, tournamentName, onProgress, allPlayersForGroups = playersNeedingPairing) {
+    const playerGroupLookup = buildPlayerGroupLookup(allPlayersForGroups);
+    const previousByes = getPlayersWithBye(previousRounds);
+    const groups = [...getGroupedPlayers(playersNeedingPairing).entries()]
+        .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+    const generated = [];
+
+    for (let index = 0; index < groups.length; index += 1) {
+        const [group, groupPlayers] = groups[index];
+        if (groupPlayers.length === 0) continue;
+
+        if (groupPlayers.length === 1) {
+            const playerId = String(groupPlayers[0].playerUniqueId);
+            generated.push({
+                whiteId: playerId,
+                blackId: null,
+                isBye: true,
+                isSkip: previousByes.has(playerId),
+                group,
+                result: previousByes.has(playerId) ? '0-0' : '',
+            });
+            onProgress?.(Math.round(((index + 1) / groups.length) * 100));
+            continue;
+        }
+
+        const groupRounds = filterRoundsForGroup(previousRounds, group, playerGroupLookup);
+        const groupPairings = await generatePairings(
+            groupPlayers,
+            options,
+            groupRounds,
+            config,
+            `${tournamentName} - ${group}`,
+            (progress) => onProgress?.(Math.round(((index + (progress / 100)) / groups.length) * 100))
+        );
+        generated.push(...groupPairings.map(pairing => ({ ...pairing, group })));
+    }
+
+    return generated;
+}
+
 export default function RoundsTab() {
     const {
         activeTournamentId,
@@ -617,6 +742,7 @@ export default function RoundsTab() {
     const [scoreImportOpen, setScoreImportOpen] = useState(false);
     const [scoreRoundOptions, setScoreRoundOptions] = useState(DEFAULT_SCORE_ROUND_OPTIONS);
     const [selectedPlayer, setSelectedPlayer] = useState(null);
+    const [openPairingGroups, setOpenPairingGroups] = useState({});
     const scoreFileInputRef = useRef(null);
     const roundSelectorRef = useRef(null);
 
@@ -678,6 +804,7 @@ export default function RoundsTab() {
             byeId: pairing.isBye && !pairing.isTournamentForfeit ? pairing.whiteId : null,
             forfeitId: pairing.isTournamentForfeit ? pairing.whiteId : null,
             isSkip: pairing.isSkip || false,
+            group: pairing.group || '',
             manual: Boolean(pairing.manual),
         }));
     }, [currentRound, manualPairingMode]);
@@ -702,6 +829,92 @@ export default function RoundsTab() {
             .filter(player => !assignedIds.has(String(player.playerUniqueId)))
             .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
     }, [currentRound, players, rounds.length]);
+
+    const validateGroupPairingPlayers = (activePlayers, title = 'Pairing Blocked') => {
+        const blankGroupPlayers = getBlankGroupPlayers(activePlayers);
+        if (blankGroupPlayers.length) {
+            showAlert(
+                title,
+                'Every active player must have a Group before using By Group pairing.',
+                blankGroupPlayers.map(player => ({
+                    line: player.playerUniqueId,
+                    reason: `${player.name || 'Unnamed'} has no group.`
+                }))
+            );
+            return false;
+        }
+        return true;
+    };
+
+    const validateRoundCountForPlayers = (activePlayers, configuredRounds, title = 'Pairing Blocked', config = tournamentConfig) => {
+        if (isGroupPairingMode(config)) {
+            if (!validateGroupPairingPlayers(activePlayers, title)) return false;
+            const invalidGroups = [...getGroupedPlayers(activePlayers).entries()]
+                .map(([group, groupPlayers]) => ({
+                    group,
+                    playerCount: groupPlayers.length,
+                    maxRounds: getMaximumRoundCount(groupPlayers.length),
+                }))
+                .filter(groupInfo => groupInfo.playerCount < 2 || configuredRounds > groupInfo.maxRounds);
+
+            if (invalidGroups.length) {
+                showAlert(
+                    title,
+                    'Round count must be valid for every group.',
+                    invalidGroups.map(groupInfo => ({
+                        line: groupInfo.group,
+                        reason: groupInfo.playerCount < 2
+                            ? `Group ${groupInfo.group} needs at least 2 active players.`
+                            : `Group ${groupInfo.group} has ${groupInfo.playerCount} players, so it supports at most ${groupInfo.maxRounds} round${groupInfo.maxRounds !== 1 ? 's' : ''}.`
+                    }))
+                );
+                return false;
+            }
+            return true;
+        }
+
+        const maxRounds = getMaximumRoundCount(activePlayers.length);
+        if (activePlayers.length < 2) {
+            showAlert(title, 'Add at least 2 players before starting the first round.');
+            return false;
+        }
+
+        if (configuredRounds > maxRounds) {
+            showAlert(
+                title,
+                `This tournament has ${activePlayers.length} players, so the round count cannot be greater than ${maxRounds}.`
+            );
+            return false;
+        }
+
+        return true;
+    };
+
+    const generatePairingsForMode = async (activePlayers, options, previousRounds, config, tournamentName, onProgress, allPlayersForGroups = activePlayers) => {
+        if (!isGroupPairingMode(config)) {
+            return generatePairings(activePlayers, options, previousRounds, config, tournamentName, onProgress);
+        }
+
+        const playerGroupLookup = buildPlayerGroupLookup(allPlayersForGroups);
+        const groups = [...getGroupedPlayers(activePlayers).entries()].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+        const generated = [];
+
+        for (let index = 0; index < groups.length; index += 1) {
+            const [group, groupPlayers] = groups[index];
+            const groupRounds = filterRoundsForGroup(previousRounds, group, playerGroupLookup);
+            const groupPairings = await generatePairings(
+                groupPlayers,
+                options,
+                groupRounds,
+                config,
+                `${tournamentName} - ${group}`,
+                (progress) => onProgress?.(Math.round(((index + (progress / 100)) / groups.length) * 100))
+            );
+            generated.push(...groupPairings.map(pairing => ({ ...pairing, group })));
+        }
+
+        return generated;
+    };
 
     const openRoundSetup = async () => {
         if (rounds.length === 0 || !currentRound) {
@@ -737,26 +950,16 @@ export default function RoundsTab() {
             const roundsWithPlayerSkips = addMissingPlayerSkips(rounds, latestPlayers);
 
             if (rounds.length === 0) {
-                const maxRounds = getMaximumRoundCount(activePlayers.length);
                 const configuredRounds = Number(tournamentConfig?.numRounds) || 0;
 
-                if (activePlayers.length < 2) {
-                    showAlert('Pairing Blocked', 'Add at least 2 players before starting the first round.');
-                    return;
-                }
-
-                if (configuredRounds > maxRounds) {
-                    showAlert(
-                        'Pairing Blocked',
-                        `This tournament has ${activePlayers.length} players, so the round count cannot be greater than ${maxRounds}. Reduce the tournament round count before starting round 1.`
-                    );
-                    return;
-                }
+                if (!validateRoundCountForPlayers(activePlayers, configuredRounds, 'Pairing Blocked')) return;
+            } else if (isGroupPairingMode(tournamentConfig) && !validateGroupPairingPlayers(activePlayers, 'Pairing Blocked')) {
+                return;
             }
 
             // 2. Generate pairings
             const tournamentName = tournamentConfig?.name || "Tournament";
-            const newPairings = await generatePairings(
+            const newPairings = await generatePairingsForMode(
                 activePlayers, 
                 options, 
                 roundsWithPlayerSkips, 
@@ -767,11 +970,12 @@ export default function RoundsTab() {
 
             // 3. Add new round
             const roundNumber = roundsWithPlayerSkips.length + 1;
+            const playerGroupLookup = buildPlayerGroupLookup(latestPlayers);
             const newRound = {
                 roundNumber,
-                pairings: [...newPairings, ...continuingForfeits].map((p, idx) => ({
-                    ...p,
+                pairings: withPairingGroups([...newPairings, ...continuingForfeits], playerGroupLookup).map((p, idx) => ({
                     id: `r${roundNumber}-p${idx + 1}`,
+                    ...p,
                     result: p.isTournamentForfeit ? '0-0' : ''
                 })),
                 status: 'in-progress',
@@ -838,23 +1042,13 @@ export default function RoundsTab() {
         try {
             const latestPlayers = await loadPlayers(activeTournamentId);
             setPlayers(latestPlayers);
+            const latestPlayerGroupLookup = buildPlayerGroupLookup(latestPlayers);
 
             if (manualPairingMode !== 'edit' && rounds.length === 0) {
-                const maxRounds = getMaximumRoundCount(latestPlayers.length);
                 const configuredRounds = Number(tournamentConfig?.numRounds) || 0;
+                const activePlayers = latestPlayers.filter(player => !getTournamentForfeitSet(rounds).has(String(player.playerUniqueId)));
 
-                if (latestPlayers.length < 2) {
-                    showAlert('Manual Pairing Blocked', 'Add at least 2 players before starting the first round.');
-                    return;
-                }
-
-                if (configuredRounds > maxRounds) {
-                    showAlert(
-                        'Manual Pairing Blocked',
-                        `This tournament has ${latestPlayers.length} players, so the round count cannot be greater than ${maxRounds}. Reduce the tournament round count before starting round 1.`
-                    );
-                    return;
-                }
+                if (!validateRoundCountForPlayers(activePlayers, configuredRounds, 'Manual Pairing Blocked')) return;
             }
 
             const normalizedBoards = boards
@@ -864,6 +1058,16 @@ export default function RoundsTab() {
                     byeId: board.byeId ? String(board.byeId) : null,
                     forfeitId: board.forfeitId ? String(board.forfeitId) : null,
                     isSkip: Boolean(board.isSkip),
+                    group: board.group || '',
+                }))
+                .filter(board => board.whiteId || board.blackId || board.byeId || board.forfeitId)
+                .map(board => ({
+                    ...board,
+                    group: getPairingGroup({
+                        group: board.group,
+                        whiteId: board.whiteId || board.byeId || board.forfeitId,
+                        blackId: board.blackId,
+                    }, latestPlayerGroupLookup),
                 }));
 
             const usedIds = new Set();
@@ -881,6 +1085,20 @@ export default function RoundsTab() {
                 !alreadyForfeited.has(String(player.playerUniqueId))
             ));
             const errors = validateManualPairings(normalizedBoards, previousRounds);
+            if (isGroupPairingMode(tournamentConfig)) {
+                normalizedBoards.forEach((board, index) => {
+                    if (!board.whiteId || !board.blackId) return;
+                    const whiteGroup = latestPlayerGroupLookup[board.whiteId] || '';
+                    const blackGroup = latestPlayerGroupLookup[board.blackId] || '';
+                    if (whiteGroup !== blackGroup) {
+                        errors.push(`Board ${index + 1} has players from different groups.`);
+                    }
+                });
+                if (!validateGroupPairingPlayers(
+                    latestPlayers.filter(player => !alreadyForfeited.has(String(player.playerUniqueId))),
+                    'Manual Pairing Blocked'
+                )) return;
+            }
 
             if (errors.length > 0) {
                 showAlert('Manual Pairing Blocked', 'Fix these pairing issues before saving.', errors.map((reason, index) => ({ line: index + 1, reason })));
@@ -897,14 +1115,25 @@ export default function RoundsTab() {
 
             const tournamentName = tournamentConfig?.name || 'Tournament';
             const generatedPairings = pairRest && playersNeedingPairing.length > 0
-                ? await generatePairings(
-                    playersNeedingPairing,
-                    { ...options, manualRemainder: true },
-                    previousRounds,
-                    tournamentConfig,
-                    tournamentName,
-                    (p) => setPairingProgress(p)
-                )
+                ? isGroupPairingMode(tournamentConfig)
+                    ? await generateManualRemainderPairingsByGroup(
+                        playersNeedingPairing,
+                        { ...options, manualRemainder: true },
+                        previousRounds,
+                        tournamentConfig,
+                        tournamentName,
+                        (p) => setPairingProgress(p),
+                        latestPlayers
+                    )
+                    : await generatePairingsForMode(
+                        playersNeedingPairing,
+                        { ...options, manualRemainder: true },
+                        previousRounds,
+                        tournamentConfig,
+                        tournamentName,
+                        (p) => setPairingProgress(p),
+                        latestPlayers
+                    )
                 : [];
             const continuingForfeits = manualPairingMode === 'edit'
                 ? []
@@ -917,8 +1146,12 @@ export default function RoundsTab() {
                 normalizedBoards,
                 [...preservedPairings, ...generatedPairings, ...continuingForfeits],
                 roundNumber,
-                originalPairings
-            );
+                originalPairings,
+                latestPlayerGroupLookup
+            ).map(pairing => ({
+                ...pairing,
+                group: getPairingGroup(pairing, latestPlayerGroupLookup),
+            }));
 
             if (manualPairingMode === 'edit') {
                 const updatedRounds = rounds.map((round, index) => index === currentRoundIdx
@@ -1083,6 +1316,7 @@ export default function RoundsTab() {
         let imported = 0;
         let skipped = 0;
         const skippedRows = [];
+        const importPlayerGroupLookup = buildPlayerGroupLookup(players);
         const importedPlayerIds = getImportedRowPlayerIds(rowsForRound);
         const sortedRows = [...rowsForRound].sort((a, b) => {
             const aBoard = parseInt(a.board, 10);
@@ -1105,6 +1339,7 @@ export default function RoundsTab() {
                 whiteId: row.whiteId,
                 blackId: row.blackId || null,
                 isBye: !row.blackId,
+                group: importPlayerGroupLookup[row.whiteId] || importPlayerGroupLookup[row.blackId] || '',
                 result
             };
         }).filter(Boolean);
@@ -1120,6 +1355,7 @@ export default function RoundsTab() {
                     blackId: null,
                     isBye: true,
                     isSkip: true,
+                    group: importPlayerGroupLookup[playerId] || '',
                     result: '0-0',
                 });
             });
@@ -1180,12 +1416,14 @@ export default function RoundsTab() {
         const multiRoundImport = importAllRounds || hasSelectedRounds;
         const selectedMaxRound = hasSelectedRounds ? Math.max(...selectedRoundSet) : maxImportedRound;
         const shouldIncreaseRounds = multiRoundImport && roundLimitAction === 'increase' && selectedMaxRound > configuredRounds;
-        const maxRounds = getMaximumRoundCount(players.length);
+        const maxRounds = getMaximumRoundCountForMode(players, tournamentConfig);
 
         if (shouldIncreaseRounds && selectedMaxRound > maxRounds) {
             showAlert(
                 'Score Import Blocked',
-                `This tournament has ${players.length} players, so the round count cannot be greater than ${maxRounds}.`
+                isGroupPairingMode(tournamentConfig)
+                    ? `By Group pairing supports at most ${maxRounds} round${maxRounds !== 1 ? 's' : ''} with the current groups.`
+                    : `This tournament has ${players.length} players, so the round count cannot be greater than ${maxRounds}.`
             );
             return;
         }
@@ -1314,11 +1552,48 @@ export default function RoundsTab() {
             }
 
             const tournamentName = tournamentConfig?.name || 'Tournament';
-            const trf = exportTournamentTrf(latestPlayers, rounds, tournamentConfig, tournamentName);
             const safeName = tournamentName
                 .toLowerCase()
                 .replace(/[^a-z0-9]+/g, '-')
                 .replace(/^-+|-+$/g, '') || 'tournament';
+
+            if (isGroupPairingMode(tournamentConfig)) {
+                const blankGroupPlayers = getBlankGroupPlayers(latestPlayers);
+                if (blankGroupPlayers.length) {
+                    showAlert(
+                        'TRF Export Failed',
+                        'Every player must have a Group before exporting grouped TRF files.',
+                        blankGroupPlayers.map(player => ({ line: player.playerUniqueId, reason: `${player.name || 'Unnamed'} has no group.` }))
+                    );
+                    return;
+                }
+
+                const zip = new JSZip();
+                const playerGroupLookup = buildPlayerGroupLookup(latestPlayers);
+                [...getGroupedPlayers(latestPlayers).entries()]
+                    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+                    .forEach(([group, groupPlayers]) => {
+                        const groupRounds = filterRoundsForGroup(rounds, group, playerGroupLookup);
+                        const groupSafeName = String(group)
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, '-')
+                            .replace(/^-+|-+$/g, '') || 'group';
+                        zip.file(`${safeName}-${groupSafeName}.trf`, exportTournamentTrf(
+                            groupPlayers,
+                            groupRounds,
+                            tournamentConfig,
+                            `${tournamentName} - ${group}`
+                        ));
+                    });
+
+                const blob = await zip.generateAsync({ type: 'blob' });
+                const url = URL.createObjectURL(blob);
+                Object.assign(document.createElement('a'), { href: url, download: `${safeName}-groups-trf.zip` }).click();
+                URL.revokeObjectURL(url);
+                return;
+            }
+
+            const trf = exportTournamentTrf(latestPlayers, rounds, tournamentConfig, tournamentName);
             const url = URL.createObjectURL(new Blob([trf], { type: 'text/plain;charset=utf-8' }));
             Object.assign(document.createElement('a'), { href: url, download: `${safeName}.trf` }).click();
             URL.revokeObjectURL(url);
@@ -1377,7 +1652,10 @@ export default function RoundsTab() {
     };
 
     const saveTournamentConfig = async (nextConfig) => {
-        const nextRoundCount = Number(nextConfig.numRounds) || 1;
+        const normalizedConfig = rounds.length > 0
+            ? { ...nextConfig, pairingMode: tournamentConfig?.pairingMode || 'all' }
+            : nextConfig;
+        const nextRoundCount = Number(normalizedConfig.numRounds) || 1;
         let latestPlayers;
         try {
             latestPlayers = await loadPlayers(activeTournamentId);
@@ -1387,20 +1665,8 @@ export default function RoundsTab() {
         }
 
         setPlayers(latestPlayers);
-        const maxRounds = getMaximumRoundCount(latestPlayers.length);
-
-        if (latestPlayers.length < 2) {
-            showAlert('Tournament Setup Blocked', 'Add at least 2 players before setting tournament rounds.');
-            return false;
-        }
-
-        if (nextRoundCount > maxRounds) {
-            showAlert(
-                'Tournament Setup Blocked',
-                `This tournament has ${latestPlayers.length} players, so the round count cannot be greater than ${maxRounds}.`
-            );
-            return false;
-        }
+        const activePlayers = latestPlayers.filter(player => !getTournamentForfeitSet(rounds).has(String(player.playerUniqueId)));
+        if (!validateRoundCountForPlayers(activePlayers, nextRoundCount, 'Tournament Setup Blocked', normalizedConfig)) return false;
 
         if (rounds.length > nextRoundCount) {
             const deletedRounds = rounds.length - nextRoundCount;
@@ -1410,7 +1676,7 @@ export default function RoundsTab() {
                 `Reducing the tournament to ${nextRoundCount} round${nextRoundCount !== 1 ? 's' : ''} will delete round ${nextRoundCount + 1} and all later round results (${deletedRounds} round${deletedRounds !== 1 ? 's' : ''}). This action cannot be undone.`,
                 () => {
                     const keptRounds = rounds.slice(0, nextRoundCount);
-                    updateTournamentConfig(nextConfig);
+                    updateTournamentConfig(normalizedConfig);
                     updateRounds(keptRounds);
                     setCurrentRoundIdx(keptRounds.length ? keptRounds.length - 1 : 0);
                     setShowConfigModal(false);
@@ -1422,7 +1688,7 @@ export default function RoundsTab() {
             return false;
         }
 
-        updateTournamentConfig(nextConfig);
+        updateTournamentConfig(normalizedConfig);
         return true;
     };
 
@@ -1611,11 +1877,116 @@ export default function RoundsTab() {
             return acc;
         }, {});
     }, [players]);
+    const playerGroupLookup = useMemo(() => buildPlayerGroupLookup(players), [players]);
+    const currentRoundSections = useMemo(
+        () => getRoundGroupSections(currentRound?.pairings || [], playerGroupLookup, isGroupPairingMode(tournamentConfig)),
+        [currentRound, playerGroupLookup, tournamentConfig]
+    );
+    const groupPairingMode = isGroupPairingMode(tournamentConfig);
+    const isPairingGroupOpen = (sectionKey) => openPairingGroups[sectionKey] ?? true;
+    const togglePairingGroup = (sectionKey) => {
+        setOpenPairingGroups(prev => ({
+            ...prev,
+            [sectionKey]: !(prev[sectionKey] ?? true),
+        }));
+    };
     const scoreImportRows = getScoreImportRows();
     const scoreImportRoundNumbers = [...new Set(scoreImportRows.map(row => row.roundNumber).filter(Boolean))].sort((a, b) => a - b);
     const maxScoreImportRound = Math.max(0, ...scoreImportRoundNumbers);
     const configuredScoreRounds = tournamentConfig?.numRounds || 0;
     const scoreImportExceedsConfig = maxScoreImportRound > configuredScoreRounds;
+    const pairingTableHead = (
+        <thead className="bg-surface-50-950 border-b border-surface-200-800">
+            <tr>
+                <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">Bd</th>
+                <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">ID</th>
+                <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500">White Name</th>
+                <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Fed</th>
+                <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Pts</th>
+                <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-20">Result</th>
+                <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Pts</th>
+                <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Fed</th>
+                <th className="px-2 py-1.5 text-right font-semibold uppercase tracking-wider text-[9px] text-surface-500">Black Name</th>
+                <th className="px-2 py-1.5 text-right font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">ID</th>
+            </tr>
+        </thead>
+    );
+    const renderPairingRows = (rows) => rows.map(({ pairing, index: idx, groupIndex }) => {
+        const whitePlayer = playerMap[pairing.whiteId];
+        const blackPlayer = playerMap[pairing.blackId];
+        const boardNumber = groupPairingMode ? groupIndex + 1 : idx + 1;
+
+        return (
+            <tr
+                key={pairing.id}
+                tabIndex={0}
+                onKeyDown={(e) => handleKeyDown(e, pairing.id, idx)}
+                className="hover:bg-surface-200-800/30 transition-colors focus:bg-primary-500/10 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary-500 outline-none cursor-pointer"
+            >
+                <td className="px-2 py-1.5 font-mono text-surface-500 text-[10px]">
+                    <div className="flex items-center gap-1.5">
+                        <span>{boardNumber}</span>
+                        {pairing.manual && (
+                            <span
+                                className="rounded bg-primary-500/10 px-1 py-0.5 text-[8px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400"
+                                title="Manually paired"
+                            >
+                                M
+                            </span>
+                        )}
+                    </div>
+                </td>
+                <td className="px-2 py-1.5 text-[10px] font-mono text-surface-400">
+                    {pairing.whiteId}
+                </td>
+                <td className="px-2 py-1.5">
+                    <PlayerInfo player={whitePlayer} side="white" />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                    <span className="text-[9px] font-bold text-surface-400 uppercase">{whitePlayer?.federation || '-'}</span>
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                    <span className="font-mono font-bold text-primary-500 text-xs">
+                        {playerScores[pairing.whiteId] || 0}
+                    </span>
+                </td>
+                <td className="px-2 py-1.5">
+                    <select
+                        value={pairing.isTournamentForfeit ? '0-0' : pairing.result}
+                        onChange={(e) => updateResult(pairing.id, e.target.value)}
+                        disabled={pairing.isTournamentForfeit}
+                        className="w-full bg-surface-50-950 border border-surface-200-800 rounded px-1 py-0.5 text-center font-bold text-[11px] outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {RESULT_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                    </select>
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                    <span className="font-mono font-bold text-primary-500 text-xs">
+                        {pairing.isBye ? '-' : (playerScores[pairing.blackId] || 0)}
+                    </span>
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                    <span className="text-[9px] font-bold text-surface-400 uppercase">{pairing.isBye ? '-' : (blackPlayer?.federation || '-')}</span>
+                </td>
+                <td className="px-2 py-1.5 text-right">
+                    {pairing.isBye ? (
+                        <div className="flex flex-col items-end pr-1">
+                            <span className={`font-bold uppercase tracking-widest italic text-[11px] ${pairing.isTournamentForfeit ? 'text-error-500' : pairing.isSkip ? 'text-warning-500' : 'text-primary-500'}`}>
+                                {pairing.isTournamentForfeit ? 'FORFEIT' : pairing.isSkip ? 'SKIP' : 'BYE'}
+                            </span>
+                        </div>
+                    ) : (
+                        <PlayerInfo player={blackPlayer} side="black" />
+                    )}
+                </td>
+                <td className="px-2 py-1.5 text-right text-[10px] font-mono text-surface-400">
+                    {pairing.isBye ? '-' : pairing.blackId}
+                </td>
+            </tr>
+        );
+    });
 
     if (isLoadingConfig) {
         return (
@@ -1644,6 +2015,7 @@ export default function RoundsTab() {
                     onClose={() => setShowConfigModal(false)}
                     config={tournamentConfig}
                     onSave={saveTournamentConfig}
+                    lockPairingMode={rounds.length > 0}
                 />
             </div>
         );
@@ -2088,101 +2460,48 @@ export default function RoundsTab() {
                         )}
                     </div>
 
-                    <div className="border border-surface-200-800 rounded-xl overflow-hidden bg-surface-100-900 shadow-sm">
-                        <table className="w-full text-sm">
-                            <thead className="bg-surface-50-950 border-b border-surface-200-800">
-                                <tr>
-                                    <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">Bd</th>
-                                    <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">ID</th>
-                                    <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500">White Name</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Fed</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Pts</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-20">Result</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Pts</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Fed</th>
-                                    <th className="px-2 py-1.5 text-right font-semibold uppercase tracking-wider text-[9px] text-surface-500">Black Name</th>
-                                    <th className="px-2 py-1.5 text-right font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">ID</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-surface-200-800">
-                                {currentRound.pairings.map((pairing, idx) => {
-                                    const whitePlayer = playerMap[pairing.whiteId];
-                                    const blackPlayer = playerMap[pairing.blackId];
-
-                                    return (
-                                        <tr
-                                            key={pairing.id}
-                                            tabIndex={0}
-                                            onKeyDown={(e) => handleKeyDown(e, pairing.id, idx)}
-                                            className="hover:bg-surface-200-800/30 transition-colors focus:bg-primary-500/10 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary-500 outline-none cursor-pointer"
+                    {groupPairingMode ? (
+                        <div className="space-y-2">
+                            {currentRoundSections.map((section) => {
+                                const isOpen = isPairingGroupOpen(section.key);
+                                return (
+                                    <div key={section.key} className="border border-surface-200-800 rounded-xl overflow-hidden bg-surface-100-900 shadow-sm">
+                                        <button
+                                            type="button"
+                                            onClick={() => togglePairingGroup(section.key)}
+                                            className="flex w-full items-center justify-between gap-3 bg-surface-50-950/80 px-3 py-2 text-left hover:bg-surface-200-800/50 transition-colors"
+                                            aria-expanded={isOpen}
                                         >
-                                            <td className="px-2 py-1.5 font-mono text-surface-500 text-[10px]">
-                                                <div className="flex items-center gap-1.5">
-                                                    <span>{idx + 1}</span>
-                                                    {pairing.manual && (
-                                                        <span
-                                                            className="rounded bg-primary-500/10 px-1 py-0.5 text-[8px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400"
-                                                            title="Manually paired"
-                                                        >
-                                                            M
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="px-2 py-1.5 text-[10px] font-mono text-surface-400">
-                                                {pairing.whiteId}
-                                            </td>
-                                            <td className="px-2 py-1.5">
-                                                <PlayerInfo player={whitePlayer} side="white" />
-                                            </td>
-                                            <td className="px-2 py-1.5 text-center">
-                                                <span className="text-[9px] font-bold text-surface-400 uppercase">{whitePlayer?.federation || '-'}</span>
-                                            </td>
-                                            <td className="px-2 py-1.5 text-center">
-                                                <span className="font-mono font-bold text-primary-500 text-xs">
-                                                    {playerScores[pairing.whiteId] || 0}
-                                                </span>
-                                            </td>
-                                            <td className="px-2 py-1.5">
-                                                <select
-                                                    value={pairing.isTournamentForfeit ? '0-0' : pairing.result}
-                                                    onChange={(e) => updateResult(pairing.id, e.target.value)}
-                                                    disabled={pairing.isTournamentForfeit}
-                                                    className="w-full bg-surface-50-950 border border-surface-200-800 rounded px-1 py-0.5 text-center font-bold text-[11px] outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
-                                                >
-                                                    {RESULT_OPTIONS.map(opt => (
-                                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                                    ))}
-                                                </select>
-                                            </td>
-                                            <td className="px-2 py-1.5 text-center">
-                                                <span className="font-mono font-bold text-primary-500 text-xs">
-                                                    {pairing.isBye ? '-' : (playerScores[pairing.blackId] || 0)}
-                                                </span>
-                                            </td>
-                                            <td className="px-2 py-1.5 text-center">
-                                                <span className="text-[9px] font-bold text-surface-400 uppercase">{pairing.isBye ? '-' : (blackPlayer?.federation || '-')}</span>
-                                            </td>
-                                            <td className="px-2 py-1.5 text-right">
-                                                {pairing.isBye ? (
-                                                    <div className="flex flex-col items-end pr-1">
-                                                        <span className={`font-bold uppercase tracking-widest italic text-[11px] ${pairing.isTournamentForfeit ? 'text-error-500' : pairing.isSkip ? 'text-warning-500' : 'text-primary-500'}`}>
-                                                            {pairing.isTournamentForfeit ? 'FORFEIT' : pairing.isSkip ? 'SKIP' : 'BYE'}
-                                                        </span>
-                                                    </div>
-                                                ) : (
-                                                    <PlayerInfo player={blackPlayer} side="black" />
-                                                )}
-                                            </td>
-                                            <td className="px-2 py-1.5 text-right text-[10px] font-mono text-surface-400">
-                                                {pairing.isBye ? '-' : pairing.blackId}
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
+                                            <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-primary-500">
+                                                {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                                Group {section.group || 'Unassigned'}
+                                            </span>
+                                            <span className="text-[10px] font-mono text-surface-500">
+                                                {section.pairings.length} board{section.pairings.length !== 1 ? 's' : ''}
+                                            </span>
+                                        </button>
+                                        {isOpen && (
+                                            <table className="w-full text-sm">
+                                                {pairingTableHead}
+                                                <tbody className="divide-y divide-surface-200-800">
+                                                    {renderPairingRows(section.pairings)}
+                                                </tbody>
+                                            </table>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="border border-surface-200-800 rounded-xl overflow-hidden bg-surface-100-900 shadow-sm">
+                            <table className="w-full text-sm">
+                                {pairingTableHead}
+                                <tbody className="divide-y divide-surface-200-800">
+                                    {renderPairingRows(currentRoundSections[0]?.pairings || [])}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -2191,6 +2510,7 @@ export default function RoundsTab() {
                 onClose={() => setShowConfigModal(false)}
                 config={tournamentConfig}
                 onSave={saveTournamentConfig}
+                lockPairingMode={rounds.length > 0}
             />
 
             <RoundSetupModal
@@ -2212,6 +2532,7 @@ export default function RoundsTab() {
                 mode={manualPairingMode}
                 roundNumber={manualTargetRoundNumber}
                 players={players}
+                pairingMode={tournamentConfig?.pairingMode || 'all'}
                 playerScores={manualPlayerScores}
                 initialBoards={manualInitialBoards}
                 previousOpponentSet={getPreviousOpponentSet(manualPreviousRounds)}

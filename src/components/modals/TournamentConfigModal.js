@@ -21,14 +21,16 @@ const TIEBREAK_OPTIONS = [
     { id: 'progressive', label: 'Progressive Score', description: 'Sum of cumulative scores after each round' },
 ];
 
-export default function TournamentConfigModal({ open, onClose, config, onSave }) {
+export default function TournamentConfigModal({ open, onClose, config, onSave, lockPairingMode = false }) {
     const [numRounds, setNumRounds] = useState(5);
+    const [pairingMode, setPairingMode] = useState('all');
     const [tiebreakOrder, setTiebreakOrder] = useState(TIEBREAK_OPTIONS.map(opt => opt.id));
     const [activeTiebreaks, setActiveTiebreaks] = useState(['bh', 'sb', 'wins']);
 
     useEffect(() => {
         if (config) {
             setNumRounds(config.numRounds || 5);
+            setPairingMode(config.pairingMode === 'group' ? 'group' : 'all');
             const savedTiebreaks = config.tiebreaks || ['bh', 'sb', 'wins'];
             setActiveTiebreaks(savedTiebreaks);
 
@@ -40,6 +42,7 @@ export default function TournamentConfigModal({ open, onClose, config, onSave })
             setTiebreakOrder(savedOrder);
         } else {
             setNumRounds(5);
+            setPairingMode('all');
             setActiveTiebreaks(['bh', 'sb', 'wins']);
             setTiebreakOrder(TIEBREAK_OPTIONS.map(opt => opt.id));
         }
@@ -72,6 +75,7 @@ export default function TournamentConfigModal({ open, onClose, config, onSave })
         const shouldClose = await onSave({
             ...(config || {}),
             numRounds,
+            pairingMode,
             tiebreaks: finalTiebreaks,
         });
         if (shouldClose !== false) onClose();
@@ -107,6 +111,41 @@ export default function TournamentConfigModal({ open, onClose, config, onSave })
                                 onChange={(e) => setNumRounds(parseInt(e.target.value) || 1)}
                             />
                         </label>
+
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-surface-500">Pairing Mode</span>
+                                {lockPairingMode && (
+                                    <span className="text-[9px] font-bold uppercase tracking-widest text-surface-500">Locked after round 1</span>
+                                )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setPairingMode('all')}
+                                    disabled={lockPairingMode}
+                                    className={`rounded border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${pairingMode === 'all'
+                                        ? 'border-primary-500 bg-primary-500/10 text-primary-600 dark:text-primary-400'
+                                        : 'border-surface-200-800 bg-surface-50-950 hover:bg-surface-100-900'
+                                    }`}
+                                >
+                                    <span className="block text-sm font-bold">All players</span>
+                                    <span className="block text-[10px] text-surface-500">One pairing pool and one standings table.</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setPairingMode('group')}
+                                    disabled={lockPairingMode}
+                                    className={`rounded border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${pairingMode === 'group'
+                                        ? 'border-primary-500 bg-primary-500/10 text-primary-600 dark:text-primary-400'
+                                        : 'border-surface-200-800 bg-surface-50-950 hover:bg-surface-100-900'
+                                    }`}
+                                >
+                                    <span className="block text-sm font-bold">By Group</span>
+                                    <span className="block text-[10px] text-surface-500">Pair and rank each Group separately.</span>
+                                </button>
+                            </div>
+                        </div>
 
                         <div className="space-y-2">
                             <span className="text-[10px] font-bold uppercase tracking-widest text-surface-500">Tiebreaks & Priority</span>

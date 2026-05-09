@@ -65,6 +65,32 @@ const getTeamCountModeSummary = (options) => {
     return `Exact ${options.minPlayerCount} players`;
 };
 
+const isGroupPairingMode = (config) => config?.pairingMode === 'group';
+
+const getPlayerGroup = (player) => String(player?.group || '').trim();
+
+const buildPlayerGroupLookup = (players = []) => players.reduce((acc, player) => {
+    acc[String(player.playerUniqueId)] = getPlayerGroup(player);
+    return acc;
+}, {});
+
+const getPairingGroup = (pairing, playerGroupLookup = {}) => (
+    pairing.group || playerGroupLookup[String(pairing.whiteId)] || playerGroupLookup[String(pairing.blackId)] || ''
+);
+
+const getGroupedPlayers = (players = []) => players.reduce((groups, player) => {
+    const group = getPlayerGroup(player);
+    if (!group) return groups;
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(player);
+    return groups;
+}, new Map());
+
+const filterRoundsForGroup = (rounds = [], group, playerGroupLookup = {}) => rounds.map(round => ({
+    ...round,
+    pairings: (round.pairings || []).filter(pairing => getPairingGroup(pairing, playerGroupLookup) === group),
+}));
+
 export default function StandingsTab() {
     const { activeTournamentId, activeTab, rounds, tournamentConfig, updateTournamentConfig } = useTournament();
     const [players, setPlayers] = useState([]);
@@ -90,6 +116,30 @@ export default function StandingsTab() {
         return calculateStandings(players, rounds, tiebreaks);
     }, [players, rounds, tournamentConfig]);
 
+    const groupedStandings = useMemo(() => {
+        if (!isGroupPairingMode(tournamentConfig)) return [];
+
+        const tiebreaks = tournamentConfig?.tiebreaks ?? ['bh', 'sb', 'wins'];
+        const playerGroupLookup = buildPlayerGroupLookup(players);
+        return [...getGroupedPlayers(players).entries()]
+            .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+            .map(([group, groupPlayers]) => ({
+                group,
+                standings: calculateStandings(groupPlayers, filterRoundsForGroup(rounds, group, playerGroupLookup), tiebreaks)
+            }));
+    }, [players, rounds, tournamentConfig]);
+
+    const individualStandingRows = useMemo(() => {
+        if (!isGroupPairingMode(tournamentConfig)) {
+            return standings.map((player, index) => ({ type: 'player', player, rank: index + 1 }));
+        }
+
+        return groupedStandings.flatMap(({ group, standings: groupStandings }) => [
+            { type: 'group', group, count: groupStandings.length },
+            ...groupStandings.map((player, index) => ({ type: 'player', player, rank: index + 1, group }))
+        ]);
+    }, [groupedStandings, standings, tournamentConfig]);
+
     const teamStandingOptions = useMemo(() => {
         return normalizeTeamStandingOptions(tournamentConfig?.teamStandingOptions);
     }, [tournamentConfig]);
@@ -102,6 +152,8 @@ export default function StandingsTab() {
     const activeTiebreakers = useMemo(() => {
         return tournamentConfig?.tiebreaks ?? ['bh', 'sb', 'wins'];
     }, [tournamentConfig]);
+
+    const groupedMode = isGroupPairingMode(tournamentConfig);
 
     if (!tournamentConfig) return null;
 
@@ -205,10 +257,14 @@ export default function StandingsTab() {
 
     const appendIndividualSheet = (workbook) => {
         const tiebreakHeaders = activeTiebreakers.map(tb => TIEBREAK_LABELS[tb] || tb);
-        const headers = ['Rank', 'Id', 'Name', 'Federation', 'Rating', 'Points', ...tiebreakHeaders];
-        const rows = standings.map((player, index) => {
+        const headers = [groupedMode ? 'Group' : null, 'Rank', 'Id', 'Name', 'Federation', 'Rating', 'Points', ...tiebreakHeaders].filter(Boolean);
+        const sourceRows = groupedMode
+            ? groupedStandings.flatMap(({ group, standings: groupRows }) => groupRows.map((player, index) => ({ group, player, rank: index + 1 })))
+            : standings.map((player, index) => ({ group: '', player, rank: index + 1 }));
+        const rows = sourceRows.map(({ group, player, rank }) => {
             const row = {
-                Rank: index + 1,
+                ...(groupedMode ? { Group: group } : {}),
+                Rank: rank,
                 Id: player.playerUniqueId,
                 Name: player.name,
                 Federation: player.federation,
@@ -417,38 +473,58 @@ export default function StandingsTab() {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-surface-200-800">
-                        {standings.map((player, idx) => (
-                            <tr key={player.playerUniqueId} className="hover:bg-surface-200-800/30 transition-colors">
-                                <td className="px-2 py-1.5 text-center">
-                                    <div className="flex justify-center">
-                                        <RankIcon rank={idx + 1} />
-                                    </div>
-                                </td>
-                                <td className="px-2 py-1.5 text-center font-mono text-[10px] text-surface-400">
-                                    {player.playerUniqueId}
-                                </td>
-                                <td className="px-2 py-1.5">
-                                    <PlayerInfo player={player} />
-                                </td>
-                                <td className="px-2 py-1.5 text-center">
-                                    <span className="text-[9px] font-bold text-surface-400 uppercase">{player.federation || '-'}</span>
-                                </td>
-                                <td className="px-2 py-1.5 text-center font-mono text-[10px] text-surface-500">
-                                    {player.rating || '-'}
-                                </td>
-                                <td className="px-2 py-1.5 text-center bg-primary-500/5">
-                                    <span className="font-bold text-primary-500 text-xs">
-                                        {formatNumber(player.points)}
-                                    </span>
-                                </td>
-                                {activeTiebreakers.map(tb => (
-                                    <td key={tb} className="px-2 py-1.5 text-center font-mono text-[10px] text-surface-600-400">
-                                        {formatNumber(player.tiebreakers[tb])}
+                        {individualStandingRows.map((row) => {
+                            if (row.type === 'group') {
+                                return (
+                                    <tr key={`group-${row.group}`} className="bg-surface-50-950/80">
+                                        <td colSpan={6 + activeTiebreakers.length} className="px-2 py-2">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <span className="text-[10px] font-bold uppercase tracking-widest text-primary-500">
+                                                    Group {row.group}
+                                                </span>
+                                                <span className="text-[10px] font-mono text-surface-500">
+                                                    {row.count} player{row.count !== 1 ? 's' : ''}
+                                                </span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            }
+
+                            const { player, rank } = row;
+                            return (
+                                <tr key={`${row.group || 'all'}-${player.playerUniqueId}`} className="hover:bg-surface-200-800/30 transition-colors">
+                                    <td className="px-2 py-1.5 text-center">
+                                        <div className="flex justify-center">
+                                            <RankIcon rank={rank} />
+                                        </div>
                                     </td>
-                                ))}
-                            </tr>
-                        ))}
-                        {standings.length === 0 && (
+                                    <td className="px-2 py-1.5 text-center font-mono text-[10px] text-surface-400">
+                                        {player.playerUniqueId}
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                        <PlayerInfo player={player} />
+                                    </td>
+                                    <td className="px-2 py-1.5 text-center">
+                                        <span className="text-[9px] font-bold text-surface-400 uppercase">{player.federation || '-'}</span>
+                                    </td>
+                                    <td className="px-2 py-1.5 text-center font-mono text-[10px] text-surface-500">
+                                        {player.rating || '-'}
+                                    </td>
+                                    <td className="px-2 py-1.5 text-center bg-primary-500/5">
+                                        <span className="font-bold text-primary-500 text-xs">
+                                            {formatNumber(player.points)}
+                                        </span>
+                                    </td>
+                                    {activeTiebreakers.map(tb => (
+                                        <td key={tb} className="px-2 py-1.5 text-center font-mono text-[10px] text-surface-600-400">
+                                            {formatNumber(player.tiebreakers[tb])}
+                                        </td>
+                                    ))}
+                                </tr>
+                            );
+                        })}
+                        {individualStandingRows.length === 0 && (
                             <tr>
                                 <td colSpan={6 + activeTiebreakers.length} className="px-2 py-10 text-center text-surface-500 italic">
                                     No players found in this tournament.

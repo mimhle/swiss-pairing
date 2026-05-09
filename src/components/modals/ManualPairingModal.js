@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Portal } from '@skeletonlabs/skeleton-react';
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -8,13 +8,14 @@ import { CSS } from '@dnd-kit/utilities';
 import { AlertTriangle, ArrowDown, ArrowLeftRight, ArrowUp, GripVertical, Plus, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import ScrollLock from '@/components/utility/ScrollLock';
 
-const emptyBoard = () => ({
+const emptyBoard = (group = '') => ({
     id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
     whiteId: null,
     blackId: null,
     byeId: null,
     forfeitId: null,
     isSkip: false,
+    group,
 });
 
 const normalizeId = (id) => id === null || id === undefined || id === '' ? null : String(id);
@@ -33,9 +34,34 @@ function isBoardPopulated(board) {
     return Boolean(board.whiteId && board.blackId);
 }
 
-function appendBoardWhenAllPopulated(boards) {
+function isBoardEmpty(board) {
+    return !board.whiteId && !board.blackId;
+}
+
+function appendBoardWhenAllPopulated(boards, group = '') {
     return boards.length > 0 && boards.every(isBoardPopulated)
-        ? [...boards, emptyBoard()]
+        ? [...boards, emptyBoard(group)]
+        : boards;
+}
+
+function ensureGroupHasEmptyBoard(boards, group, getBoardGroup) {
+    if (!group) return boards;
+    const hasGroupEmptyBoard = boards.some(board => getBoardGroup(board) === group && isBoardEmpty(board));
+    if (hasGroupEmptyBoard) return boards;
+
+    const ungroupedEmptyIndex = boards.findIndex(board => !board.group && isBoardEmpty(board));
+    if (ungroupedEmptyIndex !== -1) {
+        return boards.map((board, index) => index === ungroupedEmptyIndex ? { ...board, group } : board);
+    }
+
+    return [...boards, emptyBoard(group)];
+}
+
+function appendBoardWhenGroupPopulated(boards, group, getBoardGroup) {
+    if (!group) return boards;
+    const groupBoards = boards.filter(board => getBoardGroup(board) === group);
+    return groupBoards.length > 0 && groupBoards.every(isBoardPopulated)
+        ? [...boards, emptyBoard(group)]
         : boards;
 }
 
@@ -46,6 +72,7 @@ function initialRegularBoards(initialBoards) {
             id: board.id || emptyBoard().id,
             whiteId: normalizeId(board.whiteId),
             blackId: normalizeId(board.blackId),
+            group: String(board.group || '').trim(),
             manual: Boolean(board.manual),
         }));
     return regularBoards.length ? regularBoards : [emptyBoard()];
@@ -56,10 +83,11 @@ function uniqueNormalizedIds(ids) {
 }
 
 function initialSpecialAssignments(initialBoards, forfeitedPlayerIds) {
-    const byeBoard = initialBoards.find(board => board.byeId && !board.isSkip && !board.forfeitId);
-
     return {
-        byeId: normalizeId(byeBoard?.byeId),
+        byeIds: initialBoards
+            .filter(board => board.byeId && !board.isSkip && !board.forfeitId)
+            .map(board => normalizeId(board.byeId))
+            .filter(Boolean),
         skipIds: initialBoards
             .filter(board => board.byeId && board.isSkip && !board.forfeitId)
             .map(board => normalizeId(board.byeId))
@@ -226,41 +254,25 @@ function SpecialAssignmentColumn({ title, tone, playerIds, dropId, playerMap, pl
     );
 }
 
-function ByeAssignmentColumn({ playerId, playerMap, playerScores, onClear }) {
-    const player = playerId ? playerMap[playerId] : null;
-
+function ByeAssignmentColumn({ playerIds, playerMap, playerScores, onClear }) {
     return (
-        <div className="rounded border border-surface-200-800 bg-surface-100-900 p-3 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-surface-500">Bye</div>
-                <span className="text-[10px] font-mono text-surface-500">{player ? 1 : 0}</span>
-            </div>
-            <div className="space-y-2">
-                {player ? (
-                    <div className="flex items-start gap-2 rounded border border-surface-200-800 bg-surface-50-950 p-2">
-                        <div className="min-w-0 flex-1">
-                            <DraggablePlayer player={player} score={playerScores[playerId] || 0} compact />
-                        </div>
-                        <button
-                            onClick={() => onClear(playerId)}
-                            className="mt-1 p-0.5 rounded text-surface-400 hover:text-error-500 transition-colors"
-                            aria-label="Clear Bye"
-                        >
-                            <X size={12} />
-                        </button>
-                    </div>
-                ) : (
-                    <SpecialDropZone id="special:bye" label="Bye" tone="bye" />
-                )}
-            </div>
-        </div>
+        <SpecialAssignmentColumn
+            title="Bye"
+            tone="bye"
+            playerIds={playerIds}
+            dropId="special:bye"
+            playerMap={playerMap}
+            playerScores={playerScores}
+            onClear={onClear}
+        />
     );
 }
 
 function SortableBoard({
     board,
     index,
-    boardCount,
+    displayIndex = index,
+    displayBoardCount,
     warnings,
     playerMap,
     playerScores,
@@ -292,12 +304,12 @@ function SortableBoard({
                         {...attributes}
                         {...listeners}
                         className="p-1.5 rounded cursor-grab active:cursor-grabbing text-surface-400 hover:text-primary-500 hover:bg-surface-200-800 transition-colors"
-                        aria-label={`Drag board ${index + 1}`}
+                        aria-label={`Drag board ${displayIndex + 1}`}
                     >
                         <GripVertical size={15} />
                     </button>
                     <div className="flex items-center gap-2">
-                        <div className="font-bold text-sm">Board {index + 1}</div>
+                        <div className="font-bold text-sm">Board {displayIndex + 1}</div>
                         {board.manual && (
                             <span
                                 className="rounded bg-primary-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400"
@@ -311,19 +323,19 @@ function SortableBoard({
                 <div className="flex items-center gap-1">
                     <button
                         onClick={() => onMove(index, -1)}
-                        disabled={index === 0}
+                        disabled={displayIndex === 0}
                         className="p-1.5 rounded hover:bg-surface-200-800 disabled:opacity-30 transition-colors"
                         title="Move board up"
-                        aria-label={`Move board ${index + 1} up`}
+                        aria-label={`Move board ${displayIndex + 1} up`}
                     >
                         <ArrowUp size={15} />
                     </button>
                     <button
                         onClick={() => onMove(index, 1)}
-                        disabled={index === boardCount - 1}
+                        disabled={displayIndex === displayBoardCount - 1}
                         className="p-1.5 rounded hover:bg-surface-200-800 disabled:opacity-30 transition-colors"
                         title="Move board down"
-                        aria-label={`Move board ${index + 1} down`}
+                        aria-label={`Move board ${displayIndex + 1} down`}
                     >
                         <ArrowDown size={15} />
                     </button>
@@ -382,6 +394,7 @@ export default function ManualPairingModal({
     mode = 'create',
     roundNumber,
     players = [],
+    pairingMode = 'all',
     playerScores = {},
     initialBoards = [],
     previousOpponentSet = new Set(),
@@ -406,13 +419,39 @@ export default function ManualPairingModal({
             return acc;
         }, {});
     }, [players]);
+    const isGroupMode = pairingMode === 'group';
+    const groupOptions = useMemo(() => {
+        if (!isGroupMode) return [];
+        return [...new Set(players.map(player => String(player.group || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    }, [isGroupMode, players]);
+    const [selectedGroup, setSelectedGroup] = useState('');
+
+    useEffect(() => {
+        if (!isGroupMode) return;
+        if (groupOptions.length && !groupOptions.includes(selectedGroup)) {
+            setSelectedGroup(groupOptions[0]);
+        }
+    }, [groupOptions, isGroupMode, selectedGroup]);
+
+    const getPlayerGroup = useCallback((playerId) => String(playerMap[playerId]?.group || '').trim(), [playerMap]);
+    const getBoardGroup = useCallback((board) => {
+        const boardGroup = String(board.group || '').trim();
+        if (boardGroup) return boardGroup;
+        return getPlayerGroup(board.whiteId) || getPlayerGroup(board.blackId);
+    }, [getPlayerGroup]);
+
+    useEffect(() => {
+        if (!isGroupMode || !selectedGroup) return;
+        setBoards(prev => ensureGroupHasEmptyBoard(prev, selectedGroup, getBoardGroup));
+    }, [getBoardGroup, isGroupMode, selectedGroup]);
 
     const assignedIds = useMemo(() => {
         const ids = new Set();
         boards.forEach(board => {
             [board.whiteId, board.blackId].filter(Boolean).forEach(id => ids.add(String(id)));
         });
-        [specialAssignments.byeId, ...specialAssignments.skipIds, ...specialAssignments.forfeitIds]
+        [...specialAssignments.byeIds, ...specialAssignments.skipIds, ...specialAssignments.forfeitIds]
             .filter(Boolean)
             .forEach(id => ids.add(String(id)));
         return ids;
@@ -422,13 +461,42 @@ export default function ManualPairingModal({
         return players
             .filter(player => !assignedIds.has(String(player.playerUniqueId)) && !forfeitedPlayerIds.has(String(player.playerUniqueId)))
             .sort((a, b) => {
+                if (isGroupMode) {
+                    const groupCompare = String(a.group || '').trim().localeCompare(String(b.group || '').trim(), undefined, { numeric: true });
+                    if (groupCompare) return groupCompare;
+                }
                 const scoreDiff = (playerScores[b.playerUniqueId] || 0) - (playerScores[a.playerUniqueId] || 0);
                 if (scoreDiff) return scoreDiff;
                 const ratingDiff = (parseInt(b.rating, 10) || 0) - (parseInt(a.rating, 10) || 0);
                 if (ratingDiff) return ratingDiff;
                 return Number(a.playerUniqueId) - Number(b.playerUniqueId);
             });
-    }, [assignedIds, forfeitedPlayerIds, playerScores, players]);
+    }, [assignedIds, forfeitedPlayerIds, isGroupMode, playerScores, players]);
+    const focusedAvailablePlayers = useMemo(() => {
+        if (!isGroupMode || !selectedGroup) return availablePlayers;
+        return availablePlayers.filter(player => String(player.group || '').trim() === selectedGroup);
+    }, [availablePlayers, isGroupMode, selectedGroup]);
+    const visibleBoardEntries = useMemo(() => {
+        const entries = boards.map((board, index) => ({ board, index }));
+        if (!isGroupMode || !selectedGroup) return entries;
+        return entries.filter(({ board }) => getBoardGroup(board) === selectedGroup);
+    }, [boards, getBoardGroup, isGroupMode, selectedGroup]);
+    const getVisibleSpecialIds = useCallback((playerIds) => {
+        if (!isGroupMode || !selectedGroup) return playerIds;
+        return playerIds.filter(playerId => getPlayerGroup(playerId) === selectedGroup);
+    }, [getPlayerGroup, isGroupMode, selectedGroup]);
+    const visibleByeIds = useMemo(
+        () => getVisibleSpecialIds(specialAssignments.byeIds),
+        [getVisibleSpecialIds, specialAssignments.byeIds]
+    );
+    const visibleSkipIds = useMemo(
+        () => getVisibleSpecialIds(specialAssignments.skipIds),
+        [getVisibleSpecialIds, specialAssignments.skipIds]
+    );
+    const visibleForfeitIds = useMemo(
+        () => getVisibleSpecialIds(specialAssignments.forfeitIds),
+        [getVisibleSpecialIds, specialAssignments.forfeitIds]
+    );
 
     const manualSkipCount = specialAssignments.skipIds.length;
     const manualForfeitCount = specialAssignments.forfeitIds.length;
@@ -441,18 +509,24 @@ export default function ManualPairingModal({
                 if (previousOpponentSet.has(key)) {
                     warnings.push(`${playerLabel(playerMap[board.whiteId])} and ${playerLabel(playerMap[board.blackId])} already played.`);
                 }
+                if (isGroupMode) {
+                    const whiteGroup = String(playerMap[board.whiteId]?.group || '').trim();
+                    const blackGroup = String(playerMap[board.blackId]?.group || '').trim();
+                    if (whiteGroup !== blackGroup) {
+                        warnings.push(`${playerLabel(playerMap[board.whiteId])} and ${playerLabel(playerMap[board.blackId])} are in different groups.`);
+                    }
+                }
             }
             if (warnings.length) acc[board.id] = warnings;
             return acc;
         }, {});
-    }, [boards, playerMap, previousOpponentSet]);
+    }, [boards, isGroupMode, playerMap, previousOpponentSet]);
 
     const specialWarnings = useMemo(() => {
-        if (specialAssignments.byeId && previousByeSet.has(String(specialAssignments.byeId))) {
-            return [`${playerLabel(playerMap[specialAssignments.byeId])} already received a bye.`];
-        }
-        return [];
-    }, [playerMap, previousByeSet, specialAssignments.byeId]);
+        return specialAssignments.byeIds
+            .filter(playerId => previousByeSet.has(String(playerId)))
+            .map(playerId => `${playerLabel(playerMap[playerId])} already received a bye.`);
+    }, [playerMap, previousByeSet, specialAssignments.byeIds]);
 
     const remainderWarnings = useMemo(() => {
         if (availablePlayers.length === 2) {
@@ -490,7 +564,7 @@ export default function ManualPairingModal({
     const clearPlayerFromSpecial = (special, playerId) => {
         const id = String(playerId);
         return {
-            byeId: special.byeId === id ? null : special.byeId,
+            byeIds: special.byeIds.filter(candidate => candidate !== id),
             skipIds: special.skipIds.filter(candidate => candidate !== id),
             forfeitIds: special.forfeitIds.filter(candidate => candidate !== id),
         };
@@ -501,8 +575,8 @@ export default function ManualPairingModal({
     };
 
     const buildSaveBoards = () => [
-        ...boards,
-        ...(specialAssignments.byeId ? [{ id: `special-bye-${specialAssignments.byeId}`, byeId: specialAssignments.byeId, isSkip: false }] : []),
+        ...boards.filter(board => board.whiteId || board.blackId || board.byeId || board.forfeitId),
+        ...specialAssignments.byeIds.map(playerId => ({ id: `special-bye-${playerId}`, byeId: playerId, isSkip: false })),
         ...specialAssignments.skipIds.map(playerId => ({ id: `special-skip-${playerId}`, byeId: playerId, isSkip: true })),
         ...specialAssignments.forfeitIds.map(playerId => ({ id: `special-forfeit-${playerId}`, forfeitId: playerId })),
     ];
@@ -523,15 +597,18 @@ export default function ManualPairingModal({
                 return {
                     ...board,
                     [slot === 'white' ? 'whiteId' : 'blackId']: playerId,
+                    group: board.group || getPlayerGroup(playerId),
                 };
             });
-            return appendBoardWhenAllPopulated(nextBoards);
+            if (!isGroupMode) return appendBoardWhenAllPopulated(nextBoards);
+            return appendBoardWhenGroupPopulated(nextBoards, selectedGroup || getPlayerGroup(playerId), getBoardGroup);
         });
         clearSpecialPlayer(playerId);
     };
 
     const findClosestEmptySlotId = (sourceElement) => {
         const openBoards = boards
+            .filter(board => !isGroupMode || !selectedGroup || getBoardGroup(board) === selectedGroup)
             .map(board => ({
                 board,
                 emptySlotIds: [
@@ -611,18 +688,21 @@ export default function ManualPairingModal({
             setSpecialAssignments(prev => {
                 const cleared = clearPlayerFromSpecial(prev, playerId);
                 if (dropKind === 'bye') {
+                    const playerGroup = getPlayerGroup(playerId);
+                    const replacedByeIds = isGroupMode
+                        ? cleared.byeIds.filter(candidate => getPlayerGroup(candidate) === playerGroup)
+                        : cleared.byeIds;
+                    const remainingByeIds = cleared.byeIds.filter(candidate => !replacedByeIds.includes(candidate));
                     return {
                         ...cleared,
-                        byeId: playerId,
-                        skipIds: cleared.byeId && cleared.byeId !== playerId
-                            ? [...cleared.skipIds, cleared.byeId]
-                            : cleared.skipIds,
+                        byeIds: [...remainingByeIds, playerId],
+                        skipIds: uniqueNormalizedIds([...cleared.skipIds, ...replacedByeIds]),
                     };
                 }
                 if (dropKind === 'skip') {
-                    return { ...cleared, skipIds: [...cleared.skipIds, playerId] };
+                    return { ...cleared, skipIds: uniqueNormalizedIds([...cleared.skipIds, playerId]) };
                 }
-                return { ...cleared, forfeitIds: [...cleared.forfeitIds, playerId] };
+                return { ...cleared, forfeitIds: uniqueNormalizedIds([...cleared.forfeitIds, playerId]) };
             });
             return;
         }
@@ -653,18 +733,26 @@ export default function ManualPairingModal({
 
     const moveBoard = (index, direction) => {
         setBoards(prev => {
-            const nextIndex = index + direction;
+            const visibleIndexes = isGroupMode && selectedGroup
+                ? prev
+                    .map((board, boardIndex) => ({ board, boardIndex }))
+                    .filter(({ board }) => getBoardGroup(board) === selectedGroup)
+                    .map(({ boardIndex }) => boardIndex)
+                : prev.map((_, boardIndex) => boardIndex);
+            const visibleIndex = visibleIndexes.indexOf(index);
+            if (visibleIndex === -1) return prev;
+            const nextIndex = visibleIndexes[visibleIndex + direction];
             if (nextIndex < 0 || nextIndex >= prev.length) return prev;
             return arrayMove(prev, index, nextIndex);
         });
     };
 
     const addBoard = () => {
-        setBoards(prev => [...prev, emptyBoard()]);
+        setBoards(prev => [...prev, emptyBoard(isGroupMode ? selectedGroup : '')]);
     };
 
     const resetAssignments = () => {
-        setBoards([emptyBoard()]);
+        setBoards([emptyBoard(isGroupMode ? selectedGroup : '')]);
         setSpecialAssignments(initialSpecial);
     };
 
@@ -698,19 +786,39 @@ export default function ManualPairingModal({
                             <DroppableArea id="available" className="border-b lg:border-b-0 lg:border-r border-surface-200-800 p-4 min-h-0 overflow-y-auto">
                                 <div className="flex items-center justify-between mb-3">
                                     <h3 className="text-xs font-bold uppercase tracking-wider text-surface-500">Available</h3>
-                                    <span className="text-xs font-mono text-surface-500">{availablePlayers.length}</span>
+                                    <span className="text-xs font-mono text-surface-500">{focusedAvailablePlayers.length}</span>
                                 </div>
+                                {isGroupMode && groupOptions.length > 0 && (
+                                    <label className="mb-3 block">
+                                        <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-surface-500">Group</span>
+                                        <select
+                                            value={selectedGroup}
+                                            onChange={(event) => setSelectedGroup(event.target.value)}
+                                            className="w-full rounded border border-surface-300-700 bg-surface-50-950 px-3 py-2 text-sm outline-none focus:border-primary-500"
+                                        >
+                                            {groupOptions.map(group => (
+                                                <option key={group} value={group}>Group {group}</option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                )}
                                 <div className="space-y-2">
-                                    {availablePlayers.length ? availablePlayers.map(player => (
-                                        <DraggablePlayer
-                                            key={player.playerUniqueId}
-                                            player={player}
-                                            score={playerScores[player.playerUniqueId] || 0}
-                                            onClick={(event) => handleAvailablePlayerClick(event, player.playerUniqueId)}
-                                        />
+                                    {focusedAvailablePlayers.length ? focusedAvailablePlayers.map(player => (
+                                        <div key={player.playerUniqueId} className="space-y-1">
+                                            {isGroupMode && (
+                                                <div className="text-[9px] font-bold uppercase tracking-wider text-surface-500">
+                                                    {player.group}
+                                                </div>
+                                            )}
+                                            <DraggablePlayer
+                                                player={player}
+                                                score={playerScores[player.playerUniqueId] || 0}
+                                                onClick={(event) => handleAvailablePlayerClick(event, player.playerUniqueId)}
+                                            />
+                                        </div>
                                     )) : (
                                         <div className="rounded border border-dashed border-surface-300-700 px-3 py-8 text-center text-xs text-surface-500">
-                                            All players assigned
+                                            {availablePlayers.length ? 'No available players in this group' : 'All players assigned'}
                                         </div>
                                     )}
                                     {remainderWarnings.length > 0 && (
@@ -749,13 +857,14 @@ export default function ManualPairingModal({
                                 </div>
 
                                 <div className="space-y-3">
-                                    <SortableContext items={boards.map(board => board.id)} strategy={verticalListSortingStrategy}>
-                                        {boards.map((board, index) => (
+                                    <SortableContext items={visibleBoardEntries.map(({ board }) => board.id)} strategy={verticalListSortingStrategy}>
+                                        {visibleBoardEntries.map(({ board, index }, displayIndex) => (
                                             <SortableBoard
                                                 key={board.id}
                                                 board={board}
                                                 index={index}
-                                                boardCount={boards.length}
+                                                displayIndex={displayIndex}
+                                                displayBoardCount={visibleBoardEntries.length}
                                                 warnings={boardWarnings[board.id] || []}
                                                 playerMap={playerMap}
                                                 playerScores={playerScores}
@@ -766,6 +875,11 @@ export default function ManualPairingModal({
                                             />
                                         ))}
                                     </SortableContext>
+                                    {visibleBoardEntries.length === 0 && (
+                                        <div className="rounded border border-dashed border-surface-300-700 px-3 py-8 text-center text-xs text-surface-500">
+                                            No boards in this group
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="mt-5 rounded-lg border border-surface-200-800 bg-surface-50-950/60 p-3">
@@ -775,7 +889,7 @@ export default function ManualPairingModal({
                                     </div>
                                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                                         <ByeAssignmentColumn
-                                            playerId={specialAssignments.byeId}
+                                            playerIds={visibleByeIds}
                                             playerMap={playerMap}
                                             playerScores={playerScores}
                                             onClear={clearSpecialPlayer}
@@ -783,7 +897,7 @@ export default function ManualPairingModal({
                                         <SpecialAssignmentColumn
                                             title="Skip"
                                             tone="bye"
-                                            playerIds={specialAssignments.skipIds}
+                                            playerIds={visibleSkipIds}
                                             dropId="special:skip"
                                             playerMap={playerMap}
                                             playerScores={playerScores}
@@ -792,7 +906,7 @@ export default function ManualPairingModal({
                                         <SpecialAssignmentColumn
                                             title="Forfeit"
                                             tone="forfeit"
-                                            playerIds={specialAssignments.forfeitIds}
+                                            playerIds={visibleForfeitIds}
                                             dropId="special:forfeit"
                                             playerMap={playerMap}
                                             playerScores={playerScores}

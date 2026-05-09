@@ -103,7 +103,6 @@ public
 - FIDE/USCF federation export formats beyond TRF where applicable.
 - Player registration form with QR/share link and organizer approval queue.
 - Round timer, board display mode, and printable pairing sheets.
-- Advanced section support for running multiple groups inside one event.
 - More card templates and reusable tournament branding presets.
 - Import presets saved per organizer for recurring spreadsheet formats.
 - Optional role-based access for assistants, arbiters, and scorekeepers.
