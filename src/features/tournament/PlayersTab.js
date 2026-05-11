@@ -13,34 +13,24 @@ import GeneratePlayerCardModal from '@/components/modals/GeneratePlayerCardModal
 import ScrollLock from '@/components/utility/ScrollLock';
 import { useTournament } from '@/context/TournamentContext';
 import useHydrated from '@/hooks/useHydrated';
+import {
+    PLAYER_COLUMNS,
+    PLAYER_EDITABLE_KEYS,
+    PLAYER_EN_HEADER_FIELD_MAP,
+    PLAYER_FILTER_FIELDS,
+    PLAYER_NATIONAL_RATING_SENTINEL,
+    PLAYER_NUMERIC_IMPORT_FIELDS,
+    PLAYER_TARGET_OPTIONS,
+    PLAYER_TEMPLATE_FIELDS_TEXT,
+    PLAYER_VI_HEADER_FIELD_MAP,
+} from '@/lib/knownFields';
 
 // ─── Column definitions ──────────────────────────────────────────────────────
 
-const COLUMNS = [
-    { key: 'playerUniqueId', label: 'Id', editable: false, className: 'w-14' },
-    { key: 'name', label: 'Name', editable: true, type: 'text', className: 'min-w-36' },
-    { key: 'gender', label: 'Gender', editable: true, type: 'text', className: 'w-20' },
-    { key: 'group', label: 'Group', editable: true, type: 'text', className: 'w-20' },
-    { key: 'rating', label: 'Rating', editable: true, type: 'text', className: 'w-20' },
-    { key: 'title', label: 'Title', editable: true, type: 'text', className: 'w-16' },
-    { key: 'federation', label: 'Federation', editable: true, type: 'text', className: 'w-24' },
-    { key: 'fideId', label: 'FIDE Id', editable: true, type: 'text', className: 'w-24' },
-    { key: 'club', label: 'Club', editable: true, type: 'text', className: 'min-w-32' },
-    { key: 'teamUniqueId', label: 'Team Id', editable: true, type: 'text', className: 'w-20' },
-    { key: 'type', label: 'Type', editable: true, type: 'text', className: 'w-20' },
-];
-
-const EDITABLE_KEYS = COLUMNS.filter(c => c.editable).map(c => c.key);
+const COLUMNS = PLAYER_COLUMNS;
+const EDITABLE_KEYS = PLAYER_EDITABLE_KEYS;
 const EDITABLE_COL_IDX = Object.fromEntries(COLUMNS.filter(c => c.editable).map((c, i) => [c.key, i]));
-const IMPORTABLE_KEYS = ['playerUniqueId', ...EDITABLE_KEYS];
-
-const TARGET_OPTIONS = [
-    { value: '', label: 'Ignore' },
-    ...IMPORTABLE_KEYS.map(key => ({
-        value: key,
-        label: COLUMNS.find(c => c.key === key)?.label ?? key,
-    })),
-];
+const TARGET_OPTIONS = PLAYER_TARGET_OPTIONS;
 
 function nextUniqueColumnMap(prev, columnIndex, field) {
     const next = { ...prev, [columnIndex]: field };
@@ -63,6 +53,10 @@ const emptyPlayer = (id) => {
     EDITABLE_KEYS.forEach(k => { p[k] = ''; });
     return p;
 };
+
+const exportPlayerRow = (player) => Object.fromEntries(
+    COLUMNS.map(column => [column.label, player[column.key]])
+);
 
 const nextPlayerId = (players) => Math.max(0, ...players.map(p => Number(p.playerUniqueId)).filter(Number.isFinite)) + 1;
 
@@ -99,48 +93,103 @@ const normalizePlayers = (savedPlayers, preserveIds = false) => {
 
 // ─── Import parsing ──────────────────────────────────────────────────────────
 
-// Vietnamese header → internal field key.
-// '__natrating' is a sentinel used in suggestMapping to handle Rat QG fallback.
-const VI_MAP = new Map([
-    ['số', null],
-    ['tên', 'name'],
-    ['cấp', 'title'],
-    ['số id', 'playerUniqueId'],
-    ['rat qg', '__natrating'],
-    ['rat qt', 'rating'],
-    ['ns', null],
-    ['lđ', 'federation'],
-    ['phái', 'gender'],
-    ['loại', 'type'],
-    ['nhóm', 'group'],
-    ['csố', 'teamUniqueId'],
-    ['clb', 'club'],
-    ['số fide', 'fideId'],
-    ['nguồn', null],
-    ['điểm', null],
-    ['hs1', null], ['hs2', null], ['hs3', null], ['hs4', null], ['hs5', null],
-    ['hạng', null],
-    ['họ', null],
-    ['học vị', null],
-]);
+const normalizeImportCell = (value) => String(value ?? '').trim();
+const normalizeHeaderCell = (value) => normalizeImportCell(value).toLowerCase();
+const isNonEmptyImportCell = (value) => normalizeImportCell(value) !== '';
 
-const EN_MAP = new Map([
-    ['id', 'playerUniqueId'],
-    ['playeruniqueid', 'playerUniqueId'],
-    ['player unique id', 'playerUniqueId'],
-    ['name', 'name'],
-    ['gender', 'gender'],
-    ['group', 'group'],
-    ['rating', 'rating'],
-    ['title', 'title'],
-    ['federation', 'federation'],
-    ['fideid', 'fideId'],
-    ['fide id', 'fideId'],
-    ['club', 'club'],
-    ['teamuniqueid', 'teamUniqueId'],
-    ['team id', 'teamUniqueId'],
-    ['type', 'type'],
-]);
+function getMappedHeaderField(header, hasRatQT = false) {
+    const normalized = normalizeHeaderCell(header);
+    let field;
+    if (PLAYER_VI_HEADER_FIELD_MAP.has(normalized)) field = PLAYER_VI_HEADER_FIELD_MAP.get(normalized);
+    else if (PLAYER_EN_HEADER_FIELD_MAP.has(normalized)) field = PLAYER_EN_HEADER_FIELD_MAP.get(normalized);
+    else field = null;
+
+    return field === PLAYER_NATIONAL_RATING_SENTINEL
+        ? (hasRatQT ? null : 'rating')
+        : field;
+}
+
+function isKnownImportHeader(header) {
+    const normalized = normalizeHeaderCell(header);
+    return PLAYER_VI_HEADER_FIELD_MAP.has(normalized) || PLAYER_EN_HEADER_FIELD_MAP.has(normalized);
+}
+
+function isLikelyNumber(value) {
+    return /^\d+(\.\d+)?$/.test(normalizeImportCell(value));
+}
+
+function isLikelyImportFooterRow(row) {
+    const text = row.map(normalizeImportCell).filter(Boolean).join(' ').toLowerCase();
+    if (!text) return false;
+    const vietnameseFooterTerms = ['tổng', 'trang', 'ngày', 'ký tên', 'trọng tài', 'ban tổ chức'];
+    return /\b(total|summary|page|generated|printed|signature|arbiter|organizer)\b/.test(text) ||
+        vietnameseFooterTerms.some(term => text.includes(term));
+}
+
+function scoreImportHeaderRow(row) {
+    const nonEmptyCells = row.filter(isNonEmptyImportCell).length;
+    if (nonEmptyCells < 2) return 0;
+
+    const hasRatQT = row.some(cell => normalizeHeaderCell(cell) === 'rat qt');
+    let mappedHeaders = 0;
+    let knownHeaders = 0;
+
+    row.forEach(cell => {
+        if (!isNonEmptyImportCell(cell)) return;
+        if (isKnownImportHeader(cell)) knownHeaders += 1;
+        if (getMappedHeaderField(cell, hasRatQT)) mappedHeaders += 1;
+    });
+
+    if (knownHeaders < 2 || mappedHeaders < 1) return 0;
+    return (mappedHeaders * 3) + knownHeaders + Math.min(nonEmptyCells, 6);
+}
+
+function findImportHeaderRow(data) {
+    return data.reduce((best, row, index) => {
+        const score = scoreImportHeaderRow(row);
+        return score > best.score ? { index, score } : best;
+    }, { index: 0, score: 0 }).index;
+}
+
+function scoreImportDataRow(row, columnMap) {
+    if (isLikelyImportFooterRow(row)) return 0;
+
+    const nonEmptyCells = row.filter(isNonEmptyImportCell).length;
+    if (nonEmptyCells === 0) return 0;
+
+    let score = 0;
+    Object.entries(columnMap).forEach(([idxStr, field]) => {
+        if (!field) return;
+        const value = normalizeImportCell(row[parseInt(idxStr, 10)]);
+        if (!value) return;
+        if (field === 'name') {
+            if (/[A-Za-zÀ-ỹ]/.test(value) && !isKnownImportHeader(value)) score += 4;
+        } else if (PLAYER_NUMERIC_IMPORT_FIELDS.has(field)) {
+            if (isLikelyNumber(value)) score += 2;
+        } else {
+            score += 1;
+        }
+    });
+
+    return score;
+}
+
+function trimImportDataRows(rows, columnMap) {
+    const scoredRows = rows.map(row => ({ row, score: scoreImportDataRow(row, columnMap) }));
+    const firstDataIndex = scoredRows.findIndex(item => item.score > 0);
+    if (firstDataIndex === -1) return [];
+
+    let lastDataIndex = firstDataIndex;
+    for (let i = firstDataIndex; i < scoredRows.length; i += 1) {
+        const { row, score } = scoredRows[i];
+        const hasContent = row.some(isNonEmptyImportCell);
+        if (!hasContent) break;
+        if (isLikelyImportFooterRow(row)) break;
+        if (score > 0) lastDataIndex = i;
+    }
+
+    return scoredRows.slice(firstDataIndex, lastDataIndex + 1).map(item => item.row);
+}
 
 function parseRawData(text) {
     const lines = text.split(/\r?\n/).filter(l => l.trim());
@@ -158,16 +207,25 @@ function parseRawData(text) {
 function parseExcel(arrayBuffer) {
     const wb = XLSX.read(arrayBuffer, { type: 'array' });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+        .map(row => row.map(normalizeImportCell));
     if (data.length < 2) return null;
-    const headers = (data[0] || []).map(c => String(c ?? ''));
-    const rows = data.slice(1)
-        .filter(row => row.some(c => c !== '' && c !== null && c !== undefined))
+    const headerRowIndex = findImportHeaderRow(data);
+    const headers = (data[headerRowIndex] || []).map(normalizeImportCell);
+    const columnMap = suggestMapping(headers);
+    const hasMappedColumns = Object.values(columnMap).some(Boolean);
+    const importedRows = data.slice(headerRowIndex + 1)
         .map(row => {
             const padded = [...row];
             while (padded.length < headers.length) padded.push('');
-            return padded.map(c => String(c ?? ''));
+            return padded.map(normalizeImportCell);
         });
+    const rows = hasMappedColumns
+        ? trimImportDataRows(importedRows, columnMap)
+        : importedRows.filter(row => row.some(isNonEmptyImportCell));
+
+    if (!rows.length) return null;
+
     return { headers, rows };
 }
 
@@ -178,9 +236,8 @@ function suggestMapping(headers) {
     const hasRatQT = lower.includes('rat qt');
 
     lower.forEach((h, i) => {
-        let field = VI_MAP.get(h) ?? EN_MAP.get(h) ?? null;
-        if (field === '__natrating') field = hasRatQT ? null : 'rating';
-        if (field && !field.startsWith('__') && !used.has(field)) {
+        const field = getMappedHeaderField(h, hasRatQT);
+        if (field && field !== PLAYER_NATIONAL_RATING_SENTINEL && !used.has(field)) {
             mapping[i] = field;
             used.add(field);
         } else {
@@ -230,12 +287,7 @@ function applyMapping(rows, columnMap, getNextId, reservedIds = new Set()) {
 
 // ─── Filters ────────────────────────────────────────────────────────────────
 
-const FILTER_FIELDS = [
-    { key: 'group', label: 'Group' },
-    { key: 'federation', label: 'Fed' },
-    { key: 'gender', label: 'Gender' },
-    { key: 'club', label: 'Club' },
-];
+const FILTER_FIELDS = PLAYER_FILTER_FIELDS;
 
 const EMPTY_FILTERS = Object.fromEntries(FILTER_FIELDS.map(f => [f.key, '']));
 
@@ -972,38 +1024,14 @@ export default function PlayersTab() {
 
     // ── Export handlers ───────────────────────────────────────────────────────
     const exportExcel = () => {
-        const ws = XLSX.utils.json_to_sheet(visiblePlayers.map(p => ({
-            Id: p.playerUniqueId,
-            Name: p.name,
-            Gender: p.gender,
-            Group: p.group,
-            Rating: p.rating,
-            Title: p.title,
-            Federation: p.federation,
-            'FIDE Id': p.fideId,
-            Club: p.club,
-            'Team Id': p.teamUniqueId,
-            Type: p.type,
-        })));
+        const ws = XLSX.utils.json_to_sheet(visiblePlayers.map(exportPlayerRow));
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Players');
         XLSX.writeFile(wb, 'players.xlsx');
     };
 
     const exportCsv = () => {
-        const ws = XLSX.utils.json_to_sheet(visiblePlayers.map(p => ({
-            Id: p.playerUniqueId,
-            Name: p.name,
-            Gender: p.gender,
-            Group: p.group,
-            Rating: p.rating,
-            Title: p.title,
-            Federation: p.federation,
-            'FIDE Id': p.fideId,
-            Club: p.club,
-            'Team Id': p.teamUniqueId,
-            Type: p.type,
-        })));
+        const ws = XLSX.utils.json_to_sheet(visiblePlayers.map(exportPlayerRow));
         const url = URL.createObjectURL(new Blob([XLSX.utils.sheet_to_csv(ws)], { type: 'text/csv;charset=utf-8' }));
         Object.assign(document.createElement('a'), { href: url, download: 'players.csv' }).click();
         URL.revokeObjectURL(url);
@@ -1944,7 +1972,7 @@ export default function PlayersTab() {
                                                                     />
                                                                     <p className="text-xs text-surface-600-400 leading-tight wrap-break-word">
                                                                         Use ${'{'}fieldName{'}'}.{'\n'}
-                                                                        Available: name, gender, group, rating, title, federation, club, fideId, teamUniqueId, type
+                                                                        Available: {PLAYER_TEMPLATE_FIELDS_TEXT}
                                                                     </p>
                                                                 </div>
                                                             </Menu.Content>

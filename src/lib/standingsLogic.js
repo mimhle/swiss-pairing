@@ -249,12 +249,17 @@ export function calculateStandings(players, rounds, tiebreakerPriority = ['bh', 
 }
 
 export function calculateTeamStandings(players, rounds, tiebreakerPriority = ['bh', 'sb', 'wins'], options = {}) {
-    const normalizedOptions = normalizeTeamStandingOptions(options);
     const individualStandings = calculateStandings(players, rounds, tiebreakerPriority).map((player, index) => ({
         ...player,
         individualRank: index + 1
     }));
-    const ghostRank = individualStandings.length + 1;
+    return calculateTeamStandingsFromRankedPlayers(individualStandings, options);
+}
+
+export function calculateTeamStandingsFromRankedPlayers(rankedPlayers, options = {}) {
+    const normalizedOptions = normalizeTeamStandingOptions(options);
+    const individualStandings = Array.isArray(rankedPlayers) ? rankedPlayers : [];
+    const ghostRank = Math.max(0, ...individualStandings.map(player => Number(player.individualRank)).filter(Number.isFinite)) + 1;
 
     const teams = individualStandings.reduce((acc, player) => {
         const teamName = String(player[normalizedOptions.source] || '').trim();

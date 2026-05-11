@@ -13,6 +13,7 @@ import ManualPairingModal from '@/components/modals/ManualPairingModal';
 import PlayerRoundHistoryModal from '@/components/modals/PlayerRoundHistoryModal';
 import { exportTournamentTrf, generatePairings } from '@/lib/pairingEngine';
 import { loadPlayers } from '@/lib/tournamentStore';
+import { SCORE_HEADER_FIELD_MAP, SCORE_TARGET_OPTIONS } from '@/lib/knownFields';
 
 const RESULT_OPTIONS = [
     { value: '', label: 'Pending' },
@@ -23,71 +24,6 @@ const RESULT_OPTIONS = [
     { value: '0-1f', label: '- : +' },
     { value: '0-0', label: '0 - 0' },
 ];
-
-const SCORE_TARGET_OPTIONS = [
-    { value: '', label: 'Ignore' },
-    { value: 'round', label: 'Round' },
-    { value: 'board', label: 'Board' },
-    { value: 'whiteId', label: 'White ID' },
-    { value: 'blackId', label: 'Black ID' },
-    { value: 'whiteScore', label: 'White score' },
-    { value: 'blackScore', label: 'Black score' },
-    { value: 'result', label: 'Result' },
-];
-
-const SCORE_HEADER_MAP = new Map([
-    ['round', 'round'],
-    ['rd', 'round'],
-    ['r', 'round'],
-    ['vong', 'round'],
-    ['vòng', 'round'],
-    ['ván', 'round'],
-    ['bd', 'board'],
-    ['board', 'board'],
-    ['ban', 'board'],
-    ['bàn', 'board'],
-    ['white id', 'whiteId'],
-    ['whiteid', 'whiteId'],
-    ['white', 'whiteId'],
-    ['w id', 'whiteId'],
-    ['id white', 'whiteId'],
-    ['id-t', null],
-    ['sốt', 'whiteId'],
-    ['black id', 'blackId'],
-    ['blackid', 'blackId'],
-    ['black', 'blackId'],
-    ['b id', 'blackId'],
-    ['id black', 'blackId'],
-    ['id-đ', null],
-    ['sốđ', 'blackId'],
-    ['white score', 'whiteScore'],
-    ['white points', 'whiteScore'],
-    ['w score', 'whiteScore'],
-    ['w pts', 'whiteScore'],
-    ['score white', 'whiteScore'],
-    ['diem trang', 'whiteScore'],
-    ['điểm trắng', 'whiteScore'],
-    ['kq t', 'whiteScore'],
-    ['kq rtgt', null],
-    ['black score', 'blackScore'],
-    ['black points', 'blackScore'],
-    ['b score', 'blackScore'],
-    ['b pts', 'blackScore'],
-    ['score black', 'blackScore'],
-    ['diem den', 'blackScore'],
-    ['điểm đen', 'blackScore'],
-    ['kq đ', 'blackScore'],
-    ['kq rtgđ', null],
-    ['result', 'result'],
-    ['results', 'result'],
-    ['score', 'result'],
-    ['kq', 'result'],
-    ['ket qua', 'result'],
-    ['kết quả', 'result'],
-    ['kquả', 'result'],
-    ['vắng', null],
-    ['đsố', null],
-]);
 
 const DEFAULT_SCORE_ROUND_OPTIONS = {
     overwritePrevious: false,
@@ -148,7 +84,7 @@ function suggestScoreMapping(headers) {
     const used = new Set();
     headers.forEach((header, i) => {
         const key = header.normalize('NFC').toLowerCase().trim();
-        const field = SCORE_HEADER_MAP.get(key) ?? '';
+        const field = SCORE_HEADER_FIELD_MAP.get(key) ?? '';
         if (field && !used.has(field)) {
             mapping[i] = field;
             used.add(field);
