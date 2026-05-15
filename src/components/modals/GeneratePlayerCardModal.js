@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Menu, Portal } from '@skeletonlabs/skeleton-react';
+import { Menu, Portal, Steps } from '@skeletonlabs/skeleton-react';
 import {
     ChevronDown,
     ChevronRight,
@@ -10,11 +10,11 @@ import {
     Database,
     Download,
     FileDown,
+    FileText,
     FileUp,
     Image,
     Plus,
     Redo2,
-    RefreshCw,
     Trash2,
     Type,
     Undo2,
@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { loadCardGenAsset, saveCardGenAsset } from '@/lib/tournamentStore';
 import JSZip from 'jszip';
+import { jsPDF } from 'jspdf';
 import ScrollLock from '@/components/utility/ScrollLock';
 import { useTournament } from '@/context/TournamentContext';
 import ConfirmationModal from '@/components/modals/ConfirmationModal';
@@ -131,6 +132,83 @@ function computeDimensions(configScale, imgWidth, imgHeight) {
         outH = scaleH;
     }
     return { outW, outH };
+}
+
+function getCardPixelSize(exportSettings, imageSize) {
+    if (!imageSize?.width || !imageSize?.height) return null;
+    const { outW, outH } = computeDimensions(exportSettings?.scale, imageSize.width, imageSize.height);
+    return { widthPx: outW, heightPx: outH };
+}
+
+function getCardPhysicalSize(exportSettings, pixelSize) {
+    if (!pixelSize) return null;
+    const dpiX = Math.max(1, exportSettings?.dpi?.width || 300);
+    const dpiY = Math.max(1, exportSettings?.dpi?.height || 300);
+    return {
+        widthCm: pixelSize.widthPx / dpiX * 2.54,
+        heightCm: pixelSize.heightPx / dpiY * 2.54,
+    };
+}
+
+function loadImageFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+        if (!dataUrl) {
+            resolve(null);
+            return;
+        }
+        const img = new window.Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Could not load card template image.'));
+        img.src = dataUrl;
+    });
+}
+
+function createScaledTemplateCanvas(img, outW, outH) {
+    const canvas = document.createElement('canvas');
+    canvas.width = outW;
+    canvas.height = outH;
+    canvas.getContext('2d').drawImage(img, 0, 0, outW, outH);
+    return canvas;
+}
+
+function formatCm(value) {
+    return Number.isFinite(value) ? `${value.toFixed(2)} cm` : '-';
+}
+
+function applyColorModeToCanvas(canvas, colorMode) {
+    if (!canvas || colorMode === 'rgb') return;
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+
+        if (colorMode === 'grayscale') {
+            const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+            data[i] = gray;
+            data[i + 1] = gray;
+            data[i + 2] = gray;
+            continue;
+        }
+
+        if (colorMode === 'cmyk') {
+            const rn = r / 255;
+            const gn = g / 255;
+            const bn = b / 255;
+            const k = 1 - Math.max(rn, gn, bn);
+            const c = k >= 1 ? 0 : (1 - rn - k) / (1 - k);
+            const m = k >= 1 ? 0 : (1 - gn - k) / (1 - k);
+            const y = k >= 1 ? 0 : (1 - bn - k) / (1 - k);
+            data[i] = Math.round(255 * (1 - c) * (1 - k));
+            data[i + 1] = Math.round(255 * (1 - m) * (1 - k));
+            data[i + 2] = Math.round(255 * (1 - y) * (1 - k));
+        }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
 }
 
 function evaluateTemplate(templateStr, player) {
@@ -306,7 +384,7 @@ function renderCardContent(ctx, W, H, outW, player, config, fontFamily) {
 
 function migrateConfig(config) {
     if (!config) return null;
-    if (config.layers) return config;
+    if (config.layers) return { layers: config.layers };
     const layersOrder = ['name', 'club', 'group', 'id'];
     const layers = layersOrder
         .filter(key => config[key])
@@ -320,7 +398,7 @@ function migrateConfig(config) {
         }
     });
 
-    return { config: config.config, layers };
+    return { layers };
 }
 
 const LAYER_DEFAULT = {
@@ -349,12 +427,6 @@ const LAYER_DEFAULT = {
 // ─── Default config ───────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG = {
-    config: {
-        scale: { width: 0, height: 768 },
-        dpi: { width: 300, height: 300 },
-        outputFormat: 'png',
-        quality: 0.9,
-    },
     layers: [
         {
             id: 'name',
@@ -451,6 +523,113 @@ const DEFAULT_CONFIG = {
     ],
 };
 
+const DEFAULT_EXPORT_SETTINGS = {
+    scale: { width: 0, height: 768 },
+    dpi: { width: 300, height: 300 },
+    outputFormat: 'png',
+    quality: 0.9,
+    exportType: 'images',
+    rangeStart: '',
+    rangeEnd: '',
+    pdf: {
+        paperSize: 'a4',
+        orientation: 'portrait',
+        customWidthCm: 21,
+        customHeightCm: 29.7,
+        colorMode: 'rgb',
+        cardsPerPage: 4,
+        marginCm: 0.8,
+        gapXCm: 0.5,
+        gapYCm: 0.5,
+        cropMarks: false,
+    },
+};
+
+const PAPER_SIZES_CM = {
+    a4: { label: 'A4', width: 21, height: 29.7 },
+    letter: { label: 'Letter', width: 21.59, height: 27.94 },
+    legal: { label: 'Legal', width: 21.59, height: 35.56 },
+    a3: { label: 'A3', width: 29.7, height: 42 },
+    custom: { label: 'Custom', width: 21, height: 29.7 },
+};
+
+function mergeExportSettings(saved, legacyConfig) {
+    const legacy = legacyConfig?.config || {};
+    const merged = {
+        ...DEFAULT_EXPORT_SETTINGS,
+        ...legacy,
+        ...saved,
+        scale: {
+            ...DEFAULT_EXPORT_SETTINGS.scale,
+            ...(legacy.scale || {}),
+            ...(saved?.scale || {}),
+        },
+        dpi: {
+            ...DEFAULT_EXPORT_SETTINGS.dpi,
+            ...(legacy.dpi || {}),
+            ...(saved?.dpi || {}),
+        },
+        pdf: {
+            ...DEFAULT_EXPORT_SETTINGS.pdf,
+            ...(saved?.pdf || {}),
+        },
+    };
+    return merged;
+}
+
+function getPdfPageSize(settings) {
+    const pdf = settings?.pdf || DEFAULT_EXPORT_SETTINGS.pdf;
+    const preset = PAPER_SIZES_CM[pdf.paperSize] || PAPER_SIZES_CM.a4;
+    let width = pdf.paperSize === 'custom' ? (pdf.customWidthCm || preset.width) : preset.width;
+    let height = pdf.paperSize === 'custom' ? (pdf.customHeightCm || preset.height) : preset.height;
+    if (pdf.orientation === 'landscape' && width < height) {
+        [width, height] = [height, width];
+    }
+    if (pdf.orientation === 'portrait' && width > height) {
+        [width, height] = [height, width];
+    }
+    return { width, height };
+}
+
+function getPdfGrid(exportSettings, cardSizeCm) {
+    const pdf = exportSettings?.pdf || DEFAULT_EXPORT_SETTINGS.pdf;
+    const cardsPerPage = Math.max(1, Math.floor(pdf.cardsPerPage || 1));
+    const page = getPdfPageSize(exportSettings);
+    const margin = Math.max(0, pdf.marginCm || 0);
+    const gapX = Math.max(0, pdf.gapXCm || 0);
+    const gapY = Math.max(0, pdf.gapYCm || 0);
+    const availableW = page.width - margin * 2;
+    const availableH = page.height - margin * 2;
+    if (!cardSizeCm || availableW <= 0 || availableH <= 0) return null;
+
+    let best = null;
+    for (let cols = 1; cols <= cardsPerPage; cols++) {
+        const rows = Math.ceil(cardsPerPage / cols);
+        const usedW = cols * cardSizeCm.widthCm + Math.max(0, cols - 1) * gapX;
+        const usedH = rows * cardSizeCm.heightCm + Math.max(0, rows - 1) * gapY;
+        if (usedW <= availableW + 0.0001 && usedH <= availableH + 0.0001) {
+            const waste = (availableW - usedW) + (availableH - usedH);
+            if (!best || waste < best.waste) {
+                best = { cols, rows, usedW, usedH, waste, page, margin, gapX, gapY };
+            }
+        }
+    }
+    return best;
+}
+
+function validatePdfLayout(exportSettings, cardSizeCm) {
+    if (!cardSizeCm) return { valid: false, message: 'Upload a template image before exporting PDF.' };
+    const grid = getPdfGrid(exportSettings, cardSizeCm);
+    if (!grid) {
+        const page = getPdfPageSize(exportSettings);
+        return {
+            valid: false,
+            message: `The natural card size ${formatCm(cardSizeCm.widthCm)} x ${formatCm(cardSizeCm.heightCm)} does not fit this PDF layout on ${formatCm(page.width)} x ${formatCm(page.height)} paper.`,
+        };
+    }
+    return { valid: true, grid };
+}
+
 // ─── Form-based Config Editor ─────────────────────────────────────────────────
 
 function Field({ label, children }) {
@@ -503,33 +682,27 @@ function AccordionItem({ title, isOpen, onToggle, children }) {
     );
 }
 
-function ConfigEditor({ config, onUpdate, showConfirm }) {
+function ConfigEditor({ config, exportSettings, onUpdate, onUpdateExportSettings, showConfirm, cardSizeCm }) {
     const [openSection, setOpenSection] = useState(0);
 
     const toggle = (sec) => setOpenSection(prev => prev === sec ? null : sec);
 
     const updateGeneral = (field, value) => {
-        onUpdate(prev => ({
+        onUpdateExportSettings(prev => ({
             ...prev,
-            config: {
-                ...prev.config,
-                scale: {
-                    ...prev.config.scale,
-                    [field]: value
-                }
+            scale: {
+                ...prev.scale,
+                [field]: value
             }
         }));
     };
 
     const updateDpi = (field, value) => {
-        onUpdate(prev => ({
+        onUpdateExportSettings(prev => ({
             ...prev,
-            config: {
-                ...prev.config,
-                dpi: {
-                    ...prev.config.dpi,
-                    [field]: value
-                }
+            dpi: {
+                ...prev.dpi,
+                [field]: value
             }
         }));
     };
@@ -605,37 +778,37 @@ function ConfigEditor({ config, onUpdate, showConfirm }) {
 
     return (
         <div className="flex flex-col p-2">
-            <AccordionItem title="General Config" isOpen={openSection === 'general'} onToggle={() => toggle('general')}>
+            <AccordionItem title="Card Output" isOpen={openSection === 'general'} onToggle={() => toggle('general')}>
                 <div className="p-3 flex flex-col gap-3">
                     <div className="flex gap-3">
                         <Field label="Target Width">
-                            <InputNumber value={config.config?.scale?.width} onChange={v => updateGeneral('width', v)} />
+                            <InputNumber value={exportSettings?.scale?.width} onChange={v => updateGeneral('width', v)} />
                         </Field>
                         <Field label="Target Height">
-                            <InputNumber value={config.config?.scale?.height} onChange={v => updateGeneral('height', v)} />
+                            <InputNumber value={exportSettings?.scale?.height} onChange={v => updateGeneral('height', v)} />
                         </Field>
                     </div>
                     <div className="flex gap-3">
                         <Field label="DPI Width">
-                            <InputNumber value={config.config?.dpi?.width} onChange={v => updateDpi('width', v)} />
+                            <InputNumber value={exportSettings?.dpi?.width} onChange={v => updateDpi('width', v)} />
                         </Field>
                         <Field label="DPI Height">
-                            <InputNumber value={config.config?.dpi?.height} onChange={v => updateDpi('height', v)} />
+                            <InputNumber value={exportSettings?.dpi?.height} onChange={v => updateDpi('height', v)} />
                         </Field>
                         <Field label="Format">
                             <select
                                 className="bg-surface-50-950 border border-surface-200-800 rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 w-full transition-all"
-                                value={config.config?.outputFormat || 'png'}
-                                onChange={e => onUpdate(prev => ({ ...prev, config: { ...prev.config, outputFormat: e.target.value } }))}
+                                value={exportSettings?.outputFormat || 'png'}
+                                onChange={e => onUpdateExportSettings(prev => ({ ...prev, outputFormat: e.target.value }))}
                             >
                                 <option value="png">PNG</option>
                                 <option value="jpg">JPG</option>
                             </select>
                         </Field>
                     </div>
-                    {config.config?.outputFormat === 'jpg' && (
+                    {exportSettings?.outputFormat === 'jpg' && (
                         <div className="mt-1">
-                            <Field label={`Output Quality (${Math.round((config.config?.quality || 0.9) * 100)}%)`}>
+                            <Field label={`Output Quality (${Math.round((exportSettings?.quality || 0.9) * 100)}%)`}>
                                 <div className="flex items-center gap-3">
                                     <input
                                         type="range"
@@ -643,16 +816,26 @@ function ConfigEditor({ config, onUpdate, showConfirm }) {
                                         max="1"
                                         step="0.05"
                                         className="flex-1 accent-primary-500 cursor-pointer h-1.5 bg-surface-200-800 rounded-lg appearance-none"
-                                        value={config.config?.quality || 0.9}
-                                        onChange={e => onUpdate(prev => ({ ...prev, config: { ...prev.config, quality: parseFloat(e.target.value) } }))}
+                                        value={exportSettings?.quality || 0.9}
+                                        onChange={e => onUpdateExportSettings(prev => ({ ...prev, quality: parseFloat(e.target.value) }))}
                                     />
                                     <span className="text-[10px] font-mono text-surface-500-400 w-8 text-right">
-                                        {Math.round((config.config?.quality || 0.9) * 100)}%
+                                        {Math.round((exportSettings?.quality || 0.9) * 100)}%
                                     </span>
                                 </div>
                             </Field>
                         </div>
                     )}
+                    <div className="grid grid-cols-2 gap-2 rounded border border-surface-200-800 bg-surface-50-950 p-2">
+                        <div>
+                            <div className="text-[10px] uppercase font-semibold text-surface-500-400">Output width</div>
+                            <div className="text-xs font-mono">{formatCm(cardSizeCm?.widthCm)}</div>
+                        </div>
+                        <div>
+                            <div className="text-[10px] uppercase font-semibold text-surface-500-400">Output height</div>
+                            <div className="text-xs font-mono">{formatCm(cardSizeCm?.heightCm)}</div>
+                        </div>
+                    </div>
                 </div>
                 <div className="px-3 pb-3">
                     <p className="text-[11px] text-surface-500-400 leading-relaxed bg-surface-100-900 p-2 rounded border border-surface-200-800">
@@ -864,7 +1047,7 @@ function DropZone({ accept, label, icon: Icon, fileName, onFile }) {
 
 // ─── Canvas preview ───────────────────────────────────────────────────────────
 
-function CardPreview({ imageDataUrl, config, player, fontFamily }) {
+function CardPreview({ imageDataUrl, config, exportSettings, player, fontFamily }) {
     const canvasRef = useRef(null);
 
     useEffect(() => {
@@ -891,8 +1074,8 @@ function CardPreview({ imageDataUrl, config, player, fontFamily }) {
 
         const img = new window.Image();
         img.onload = () => {
-            // ── Step 1: compute output image dimensions from config.config.scale ──
-            const { outW, outH } = computeDimensions(config?.config?.scale, img.width, img.height);
+            // ── Step 1: compute output image dimensions from export settings ──
+            const { outW, outH } = computeDimensions(exportSettings?.scale, img.width, img.height);
 
             // ── Step 2: size canvas to output aspect ratio at 2× for sharpness ──
             const RENDER_W = 920;
@@ -908,7 +1091,7 @@ function CardPreview({ imageDataUrl, config, player, fontFamily }) {
             renderCardContent(ctx, W, H, outW, player, config, fontFamily);
         };
         img.src = imageDataUrl;
-    }, [imageDataUrl, config, player, fontFamily]);
+    }, [imageDataUrl, config, exportSettings, player, fontFamily]);
 
     return (
         <div className="w-full h-full flex items-center justify-center min-h-0">
@@ -919,6 +1102,171 @@ function CardPreview({ imageDataUrl, config, player, fontFamily }) {
                 className="rounded border border-surface-200-800"
                 style={{ imageRendering: 'auto', maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto' }}
             />
+        </div>
+    );
+}
+
+function ExportSettingsEditor({
+    exportSettings,
+    onUpdate,
+    cardSizeCm,
+    pixelSize,
+    pdfValidation,
+}) {
+    const update = (patch) => onUpdate(prev => ({ ...prev, ...patch }));
+    const updatePdf = (patch) => onUpdate(prev => ({ ...prev, pdf: { ...prev.pdf, ...patch } }));
+    const pdf = exportSettings.pdf || DEFAULT_EXPORT_SETTINGS.pdf;
+    const page = getPdfPageSize(exportSettings);
+
+    return (
+        <div className="flex flex-col h-full min-h-0">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                    <Field label="Range Start">
+                        <InputNumber value={exportSettings.rangeStart} onChange={v => update({ rangeStart: v || '' })} />
+                    </Field>
+                    <Field label="Range End">
+                        <InputNumber value={exportSettings.rangeEnd} onChange={v => update({ rangeEnd: v || '' })} />
+                    </Field>
+                </div>
+                <Field label="Color Mode">
+                    <select
+                        className="bg-surface-50-950 border border-surface-200-800 rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 w-full transition-all"
+                        value={pdf.colorMode}
+                        onChange={e => updatePdf({ colorMode: e.target.value })}
+                    >
+                        <option value="rgb">RGB Color</option>
+                        <option value="grayscale">Grayscale</option>
+                        <option value="cmyk">Print CMYK</option>
+                    </select>
+                </Field>
+
+                <div className="rounded border border-surface-200-800 p-3 bg-surface-50-950 space-y-2">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-primary-600-400">Card size</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                            <div className="text-surface-500-400">Pixels</div>
+                            <div className="font-mono">{pixelSize ? `${pixelSize.widthPx} x ${pixelSize.heightPx}` : '-'}</div>
+                        </div>
+                        <div>
+                            <div className="text-surface-500-400">Printed</div>
+                            <div className="font-mono">{cardSizeCm ? `${formatCm(cardSizeCm.widthCm)} x ${formatCm(cardSizeCm.heightCm)}` : '-'}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="rounded border border-surface-200-800 p-3 space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                        <Image size={15} className="text-primary-500" />
+                        Image export
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <Field label="Format">
+                            <select
+                                className="bg-surface-50-950 border border-surface-200-800 rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 w-full transition-all"
+                                value={exportSettings.outputFormat || 'png'}
+                                onChange={e => update({ outputFormat: e.target.value })}
+                            >
+                                <option value="png">PNG</option>
+                                <option value="jpg">JPG</option>
+                            </select>
+                        </Field>
+                        <Field label="DPI X">
+                            <InputNumber value={exportSettings.dpi?.width} onChange={v => update({ dpi: { ...exportSettings.dpi, width: v } })} />
+                        </Field>
+                        <Field label="DPI Y">
+                            <InputNumber value={exportSettings.dpi?.height} onChange={v => update({ dpi: { ...exportSettings.dpi, height: v } })} />
+                        </Field>
+                    </div>
+                    {exportSettings.outputFormat === 'jpg' && (
+                        <Field label={`JPG Quality (${Math.round((exportSettings.quality || 0.9) * 100)}%)`}>
+                            <input
+                                type="range"
+                                min="0.1"
+                                max="1"
+                                step="0.05"
+                                className="w-full accent-primary-500 cursor-pointer h-1.5 bg-surface-200-800 rounded-lg appearance-none"
+                                value={exportSettings.quality || 0.9}
+                                onChange={e => update({ quality: parseFloat(e.target.value) })}
+                            />
+                        </Field>
+                    )}
+                </div>
+
+                <div className="rounded border border-surface-200-800 p-3 space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                        <FileText size={15} className="text-primary-500" />
+                        PDF export
+                    </div>
+                    {(exportSettings.outputFormat || 'png') !== 'jpg' && (
+                        <div className="text-xs rounded border p-2 border-warning-500/30 text-warning-600-400 bg-warning-500/5">
+                            PDF export will use PNG images. JPG is usually faster and creates smaller PDF files.
+                        </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-3">
+                        <Field label="Paper">
+                            <select
+                                className="bg-surface-50-950 border border-surface-200-800 rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 w-full transition-all"
+                                value={pdf.paperSize}
+                                onChange={e => updatePdf({ paperSize: e.target.value })}
+                            >
+                                {Object.entries(PAPER_SIZES_CM).map(([key, paper]) => (
+                                    <option key={key} value={key}>{paper.label}</option>
+                                ))}
+                            </select>
+                        </Field>
+                        <Field label="Orientation">
+                            <select
+                                className="bg-surface-50-950 border border-surface-200-800 rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 w-full transition-all"
+                                value={pdf.orientation}
+                                onChange={e => updatePdf({ orientation: e.target.value })}
+                            >
+                                <option value="portrait">Portrait</option>
+                                <option value="landscape">Landscape</option>
+                            </select>
+                        </Field>
+                    </div>
+                    {pdf.paperSize === 'custom' && (
+                        <div className="grid grid-cols-2 gap-3">
+                            <Field label="Paper Width (cm)">
+                                <InputNumber value={pdf.customWidthCm} onChange={v => updatePdf({ customWidthCm: v })} />
+                            </Field>
+                            <Field label="Paper Height (cm)">
+                                <InputNumber value={pdf.customHeightCm} onChange={v => updatePdf({ customHeightCm: v })} />
+                            </Field>
+                        </div>
+                    )}
+                    <Field label="Cards / Page">
+                        <InputNumber value={pdf.cardsPerPage} onChange={v => updatePdf({ cardsPerPage: Math.max(1, v || 1) })} />
+                    </Field>
+                    <div className="grid grid-cols-3 gap-3">
+                        <Field label="Margin (cm)">
+                            <InputNumber value={pdf.marginCm} onChange={v => updatePdf({ marginCm: Math.max(0, v) })} />
+                        </Field>
+                        <Field label="Gap X (cm)">
+                            <InputNumber value={pdf.gapXCm} onChange={v => updatePdf({ gapXCm: Math.max(0, v) })} />
+                        </Field>
+                        <Field label="Gap Y (cm)">
+                            <InputNumber value={pdf.gapYCm} onChange={v => updatePdf({ gapYCm: Math.max(0, v) })} />
+                        </Field>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs font-medium cursor-pointer text-surface-700-300 bg-surface-50-950 p-2 rounded-md border border-surface-200-800">
+                        <input
+                            type="checkbox"
+                            checked={pdf.cropMarks || false}
+                            onChange={e => updatePdf({ cropMarks: e.target.checked })}
+                            className="w-4 h-4 rounded bg-surface-50-950 border-surface-300-700 text-primary-500 focus:ring-primary-500"
+                        />
+                        Crop marks
+                    </label>
+                    <div className={`text-xs rounded border p-2 ${pdfValidation.valid ? 'border-success-500/30 text-success-500 bg-success-500/5' : 'border-error-500/30 text-error-500 bg-error-500/5'}`}>
+                        {pdfValidation.valid
+                            ? `${pdfValidation.grid.cols} x ${pdfValidation.grid.rows} layout on ${formatCm(page.width)} x ${formatCm(page.height)} paper.`
+                            : pdfValidation.message}
+                    </div>
+                </div>
+            </div>
+
         </div>
     );
 }
@@ -940,6 +1288,8 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     };
 
     const [config, setConfig] = useState(() => migrateConfig(DEFAULT_CONFIG));
+    const [exportSettings, setExportSettings] = useState(() => mergeExportSettings(null, DEFAULT_CONFIG));
+    const [wizardStep, setWizardStep] = useState(1);
 
     // Prevent Portal from rendering during SSR (avoids hydration attribute mismatch)
     const mounted = useHydrated();
@@ -1013,32 +1363,40 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     // File states
     const [imageFile, setImageFile] = useState(null);
     const [imageDataUrl, setImageDataUrl] = useState(null);
+    const [imageSize, setImageSize] = useState(null);
     const [fontFile, setFontFile] = useState(null);
     const [uploadExpanded, setUploadExpanded] = useState(true);
 
     const isInitialLoadRef = useRef(true);
+    const isInitialExportLoadRef = useRef(true);
 
     // Load persisted assets on mount
     useEffect(() => {
         if (!activeTournamentId) return;
+        isInitialLoadRef.current = true;
+        isInitialExportLoadRef.current = true;
         Promise.all([
             loadCardGenAsset('image', activeTournamentId),
             loadCardGenAsset('font', activeTournamentId),
-            loadCardGenAsset('config', activeTournamentId)
-        ]).then(([loadedImage, loadedFont, loadedConfig]) => {
+            loadCardGenAsset('config', activeTournamentId),
+            loadCardGenAsset('exportSettings', activeTournamentId)
+        ]).then(([loadedImage, loadedFont, loadedConfig, loadedExportSettings]) => {
             setImageFile(loadedImage || null);
             setFontFile(loadedFont || null);
+            setWizardStep(1);
 
             if (loadedConfig) {
                 const migrated = migrateConfig(loadedConfig);
                 setConfig(migrated);
                 lastSavedConfigRef.current = migrated;
                 setIsConfigDirty(false);
+                setExportSettings(mergeExportSettings(loadedExportSettings, loadedConfig));
             } else {
                 const defaultConfig = migrateConfig(DEFAULT_CONFIG);
                 setConfig(defaultConfig);
                 lastSavedConfigRef.current = defaultConfig;
                 setIsConfigDirty(false);
+                setExportSettings(mergeExportSettings(loadedExportSettings, DEFAULT_CONFIG));
             }
 
             if (loadedImage && loadedFont) {
@@ -1058,6 +1416,15 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         if (!activeTournamentId) return;
         saveCardGenAsset('config', config, activeTournamentId);
     }, [config, activeTournamentId]);
+
+    useEffect(() => {
+        if (isInitialExportLoadRef.current) {
+            isInitialExportLoadRef.current = false;
+            return;
+        }
+        if (!activeTournamentId) return;
+        saveCardGenAsset('exportSettings', exportSettings, activeTournamentId);
+    }, [exportSettings, activeTournamentId]);
 
     const handleImageFile = (file) => {
         setImageFile(file);
@@ -1086,9 +1453,15 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
     // Load image as data URL for canvas preview
     useEffect(() => {
-        if (!imageFile) { setImageDataUrl(null); return; }
+        if (!imageFile) { setImageDataUrl(null); setImageSize(null); return; }
         const reader = new FileReader();
-        reader.onload = e => setImageDataUrl(e.target.result);
+        reader.onload = e => {
+            const dataUrl = e.target.result;
+            setImageDataUrl(dataUrl);
+            const img = new window.Image();
+            img.onload = () => setImageSize({ width: img.width, height: img.height });
+            img.src = dataUrl;
+        };
         reader.readAsDataURL(imageFile);
     }, [imageFile]);
 
@@ -1130,6 +1503,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                 const data = JSON.parse(ev.target.result);
                 commitHistory();
                 updateConfig(migrateConfig(data));
+                setExportSettings(mergeExportSettings(data.exportSettings, data));
             } catch (e) {
                 showAlert('Import Failed', 'Invalid JSON config file.');
             }
@@ -1139,7 +1513,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     };
 
     const handleExportConfig = () => {
-        const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify({ ...config, exportSettings }, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         Object.assign(document.createElement('a'), { href: url, download: 'player-card-config.json' }).click();
         URL.revokeObjectURL(url);
@@ -1159,6 +1533,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     const handleImportFromTournament = async () => {
         if (!selectedImportTournamentId) return;
         const sourceConfig = await loadCardGenAsset('config', selectedImportTournamentId);
+        const sourceExportSettings = await loadCardGenAsset('exportSettings', selectedImportTournamentId);
         if (!sourceConfig) {
             const tournament = tournaments.find(t => t.id === selectedImportTournamentId);
             showAlert('No Config Found', `${tournament?.name || 'The selected tournament'} does not have a saved player card config.`);
@@ -1166,80 +1541,120 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         }
         commitHistory();
         updateConfig(migrateConfig(sourceConfig));
+        setExportSettings(mergeExportSettings(sourceExportSettings, sourceConfig));
         setShowTournamentImport(false);
     };
 
     // ── Download helpers ──────────────────────────────────────────────────────
 
     const [isDownloading, setIsDownloading] = useState(false);
+    const [exportJob, setExportJob] = useState(null);
     const [processedCount, setProcessedCount] = useState(0);
-    const [rangeStart, setRangeStart] = useState('');
-    const [rangeEnd, setRangeEnd] = useState('');
 
-    const generateCardBlob = (player) => {
-        return new Promise((resolve) => {
-            if (!imageDataUrl) { resolve(null); return; }
-            const img = new window.Image();
-            img.onload = () => {
-                const { outW, outH } = computeDimensions(config?.config?.scale, img.width, img.height);
-                const canvas = document.createElement('canvas');
-                canvas.width = outW;
-                canvas.height = outH;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, outW, outH);
+    const prepareCardRenderContext = async () => {
+        if (!imageDataUrl) return null;
+        const img = await loadImageFromDataUrl(imageDataUrl);
+        if (!img) return null;
 
-                renderCardContent(ctx, outW, outH, outW, player, config, loadedFontFamily);
+        const { outW, outH } = computeDimensions(exportSettings?.scale, img.width, img.height);
+        const pixelSize = { widthPx: outW, heightPx: outH };
+        return {
+            outW,
+            outH,
+            pixelSize,
+            physicalSize: getCardPhysicalSize(exportSettings, pixelSize),
+            templateCanvas: createScaledTemplateCanvas(img, outW, outH),
+        };
+    };
 
-                const isPng = config?.config?.outputFormat === 'png' || !config?.config?.outputFormat;
-                const format = isPng ? 'image/png' : 'image/jpeg';
-                const quality = config?.config?.quality ?? 0.9;
-                canvas.toBlob(async (blob) => {
-                    const dpiX = config?.config?.dpi?.width || 300;
-                    const dpiY = config?.config?.dpi?.height || 300;
-                    let finalBlob = blob;
-                    if (isPng) {
-                        finalBlob = await injectPngDpi(blob, dpiX, dpiY);
-                    } else {
-                        finalBlob = await injectJpegDpi(blob, dpiX, dpiY);
-                    }
-                    resolve(finalBlob);
-                }, format, quality);
-            };
-            img.src = imageDataUrl;
+    const renderCardForExport = async (player, options = {}) => {
+        const renderContext = options.renderContext || await prepareCardRenderContext();
+        if (!renderContext) return null;
+
+        const { outW, outH, pixelSize, physicalSize, templateCanvas } = renderContext;
+        const canvas = document.createElement('canvas');
+        canvas.width = outW;
+        canvas.height = outH;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(templateCanvas, 0, 0);
+
+        renderCardContent(ctx, outW, outH, outW, player, config, loadedFontFamily);
+        applyColorModeToCanvas(canvas, options.colorMode || exportSettings?.pdf?.colorMode || 'rgb');
+
+        const isPng = exportSettings?.outputFormat === 'png' || !exportSettings?.outputFormat;
+        const format = isPng ? 'image/png' : 'image/jpeg';
+        const quality = exportSettings?.quality ?? 0.9;
+        const includeBlob = options.includeBlob !== false;
+        const includeDataUrl = options.includeDataUrl !== false;
+        const result = { canvas, pixelSize, physicalSize };
+
+        if (includeDataUrl) {
+            result.dataUrl = canvas.toDataURL(format, quality);
+        }
+
+        if (!includeBlob) return result;
+
+        result.blob = await new Promise((resolve) => {
+            canvas.toBlob(async (blob) => {
+                if (!blob) {
+                    resolve(null);
+                    return;
+                }
+
+                const dpiX = exportSettings?.dpi?.width || 300;
+                const dpiY = exportSettings?.dpi?.height || 300;
+                resolve(isPng
+                    ? await injectPngDpi(blob, dpiX, dpiY)
+                    : await injectJpegDpi(blob, dpiX, dpiY));
+            }, format, quality);
         });
+
+        return result;
+    };
+
+    const getExportRange = () => {
+        const startIdx = Math.max(0, (parseInt(exportSettings.rangeStart) || 1) - 1);
+        const endIdx = Math.min(Math.max(0, players.length - 1), (parseInt(exportSettings.rangeEnd) || players.length) - 1);
+        return { startIdx, endIdx, targetPlayers: startIdx <= endIdx ? players.slice(startIdx, endIdx + 1) : [] };
     };
 
     const handleDownloadCurrent = async () => {
         if (!previewPlayer || isDownloading) return;
         setIsDownloading(true);
-        const blob = await generateCardBlob(previewPlayer);
-        if (blob) {
-            const playerName = (previewPlayer?.name || 'player').replace(/\s+/g, '_');
-            const ext = config?.config?.outputFormat === 'jpg' ? 'jpg' : 'png';
-            const url = URL.createObjectURL(blob);
-            Object.assign(document.createElement('a'), {
-                href: url,
-                download: `${playerName}_card.${ext}`,
-            }).click();
-            URL.revokeObjectURL(url);
+        setExportJob('current');
+        try {
+            const renderContext = await prepareCardRenderContext();
+            const result = await renderCardForExport(previewPlayer, { includeDataUrl: false, renderContext });
+            if (result?.blob) {
+                const playerName = (previewPlayer?.name || 'player').replace(/\s+/g, '_');
+                const ext = exportSettings?.outputFormat === 'jpg' ? 'jpg' : 'png';
+                const url = URL.createObjectURL(result.blob);
+                Object.assign(document.createElement('a'), {
+                    href: url,
+                    download: `${playerName}_card.${ext}`,
+                }).click();
+                URL.revokeObjectURL(url);
+            }
+        } catch (e) {
+            console.error('Failed to generate card', e);
+            showAlert('Export Failed', e?.message || 'Failed to generate this card.');
         }
         setIsDownloading(false);
+        setExportJob(null);
     };
 
     const handleDownloadAll = async () => {
         if (!players.length || !imageDataUrl || isDownloading) return;
 
-        const startIdx = Math.max(0, (parseInt(rangeStart) || 1) - 1);
-        const endIdx = Math.min(Math.max(0, players.length - 1), (parseInt(rangeEnd) || players.length) - 1);
+        const { startIdx, endIdx, targetPlayers } = getExportRange();
 
         if (startIdx > endIdx) {
             showAlert('Invalid Range', 'Invalid range. Check your start and end numbers.');
             return;
         }
 
-        const targetPlayers = players.slice(startIdx, endIdx + 1);
-
         setIsDownloading(true);
+        setExportJob('images');
         setProcessedCount(0);
 
         // Yield main thread to allow React to paint the 'Processing...' UI state
@@ -1247,15 +1662,16 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
         try {
             const zip = new JSZip();
+            const renderContext = await prepareCardRenderContext();
             // Process sequentially to prevent massive memory spikes and UI locking
             for (let j = 0; j < targetPlayers.length; j++) {
                 const p = targetPlayers[j];
-                const blob = await generateCardBlob(p);
-                if (blob) {
+                const result = await renderCardForExport(p, { includeDataUrl: false, renderContext });
+                if (result?.blob) {
                     const originalIndex = startIdx + j;
                     const id = p.playerUniqueId || p.id || String(originalIndex + 1);
-                    const ext = config?.config?.outputFormat === 'jpg' ? 'jpg' : 'png';
-                    zip.file(`${id}_card.${ext}`, blob);
+                    const ext = exportSettings?.outputFormat === 'jpg' ? 'jpg' : 'png';
+                    zip.file(`${id}_card.${ext}`, result.blob);
                 }
 
                 setProcessedCount(j + 1);
@@ -1277,6 +1693,88 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         }
 
         setIsDownloading(false);
+        setExportJob(null);
+    };
+
+    const drawCropMarks = (doc, x, y, w, h) => {
+        const mark = 0.3;
+        doc.setDrawColor(80);
+        doc.setLineWidth(0.01);
+        doc.line(x - mark, y, x - 0.05, y);
+        doc.line(x, y - mark, x, y - 0.05);
+        doc.line(x + w + 0.05, y, x + w + mark, y);
+        doc.line(x + w, y - mark, x + w, y - 0.05);
+        doc.line(x - mark, y + h, x - 0.05, y + h);
+        doc.line(x, y + h + 0.05, x, y + h + mark);
+        doc.line(x + w + 0.05, y + h, x + w + mark, y + h);
+        doc.line(x + w, y + h + 0.05, x + w, y + h + mark);
+    };
+
+    const handleDownloadPdf = async () => {
+        if (!players.length || !imageDataUrl || isDownloading) return;
+        const pixelSize = getCardPixelSize(exportSettings, imageSize);
+        const cardSizeCm = getCardPhysicalSize(exportSettings, pixelSize);
+        const validation = validatePdfLayout(exportSettings, cardSizeCm);
+        if (!validation.valid) {
+            showAlert('Invalid PDF Layout', validation.message);
+            return;
+        }
+
+        const { startIdx, endIdx, targetPlayers } = getExportRange();
+        if (startIdx > endIdx) {
+            showAlert('Invalid Range', 'Invalid range. Check your start and end numbers.');
+            return;
+        }
+
+        setIsDownloading(true);
+        setExportJob('pdf');
+        setProcessedCount(0);
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        try {
+            const { grid } = validation;
+            const doc = new jsPDF({
+                unit: 'cm',
+                format: [grid.page.width, grid.page.height],
+                orientation: exportSettings.pdf.orientation,
+                compress: true,
+            });
+            const imageFormat = exportSettings.outputFormat === 'jpg' ? 'JPEG' : 'PNG';
+            const renderContext = await prepareCardRenderContext();
+
+            for (let j = 0; j < targetPlayers.length; j++) {
+                if (j > 0 && j % (grid.cols * grid.rows) === 0) {
+                    doc.addPage([grid.page.width, grid.page.height], exportSettings.pdf.orientation);
+                }
+
+                const slot = j % (grid.cols * grid.rows);
+                const col = slot % grid.cols;
+                const row = Math.floor(slot / grid.cols);
+                const x = grid.margin + col * (cardSizeCm.widthCm + grid.gapX);
+                const y = grid.margin + row * (cardSizeCm.heightCm + grid.gapY);
+                const rendered = await renderCardForExport(targetPlayers[j], {
+                    colorMode: exportSettings.pdf.colorMode,
+                    includeBlob: false,
+                    renderContext,
+                });
+                if (rendered?.dataUrl) {
+                    doc.addImage(rendered.dataUrl, imageFormat, x, y, cardSizeCm.widthCm, cardSizeCm.heightCm);
+                    if (exportSettings.pdf.cropMarks) drawCropMarks(doc, x, y, cardSizeCm.widthCm, cardSizeCm.heightCm);
+                }
+
+                setProcessedCount(j + 1);
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+
+            const isAll = targetPlayers.length === players.length;
+            doc.save(isAll ? 'all_player_cards.pdf' : `player_cards_${startIdx + 1}_to_${endIdx + 1}.pdf`);
+        } catch (e) {
+            console.error('Failed to generate PDF', e);
+            showAlert('PDF Export Failed', e?.message || 'Failed to generate PDF.');
+        }
+
+        setIsDownloading(false);
+        setExportJob(null);
     };
 
     const updateConfigWithHistory = (newConfig) => {
@@ -1284,8 +1782,11 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         updateConfig(newConfig);
     };
 
-    const computedStartIdx = Math.max(0, (parseInt(rangeStart) || 1) - 1);
-    const computedEndIdx = Math.min(Math.max(0, players.length - 1), (parseInt(rangeEnd) || players.length) - 1);
+    const pixelSize = getCardPixelSize(exportSettings, imageSize);
+    const cardSizeCm = getCardPhysicalSize(exportSettings, pixelSize);
+    const pdfValidation = validatePdfLayout(exportSettings, cardSizeCm);
+    const computedStartIdx = Math.max(0, (parseInt(exportSettings.rangeStart) || 1) - 1);
+    const computedEndIdx = Math.min(Math.max(0, players.length - 1), (parseInt(exportSettings.rangeEnd) || players.length) - 1);
     const targetCount = players.length > 0 ? Math.max(0, computedEndIdx - computedStartIdx + 1) : 0;
 
     if (!open || !mounted) return null;
@@ -1417,6 +1918,45 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                             </div>
                         )}
 
+                        <div className="px-5 py-2 border-b border-surface-200-800 flex items-center gap-4 shrink-0">
+                            <Steps
+                                count={2}
+                                step={wizardStep - 1}
+                                className="flex-1 min-w-0"
+                            >
+                                <Steps.List className="flex items-center gap-2">
+                                    <Steps.Item index={0} className="flex items-center gap-2">
+                                        <Steps.Trigger
+                                            disabled
+                                            tabIndex={-1}
+                                            className={`flex items-center gap-2 px-1 py-1 text-sm transition-colors pointer-events-none ${wizardStep === 1 ? 'text-primary-500 font-semibold' : 'text-surface-500-400 opacity-70'}`}
+                                        >
+                                            <Steps.Indicator className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary-500 text-white text-[11px] font-mono">
+                                                1
+                                            </Steps.Indicator>
+                                            <span>Configure cards</span>
+                                        </Steps.Trigger>
+                                        <Steps.Separator className="h-px w-8 bg-surface-300-700" />
+                                    </Steps.Item>
+                                    <Steps.Item index={1} className="flex items-center gap-2">
+                                        <Steps.Trigger
+                                            disabled
+                                            tabIndex={-1}
+                                            className={`flex items-center gap-2 px-1 py-1 text-sm transition-colors pointer-events-none ${wizardStep === 2 ? 'text-primary-500 font-semibold' : 'text-surface-500-400 opacity-70'}`}
+                                        >
+                                            <Steps.Indicator className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary-500 text-white text-[11px] font-mono">
+                                                2
+                                            </Steps.Indicator>
+                                            <span>Export file</span>
+                                        </Steps.Trigger>
+                                    </Steps.Item>
+                                </Steps.List>
+                            </Steps>
+                            <div className="ml-auto text-xs text-surface-500-400">
+                                {cardSizeCm ? `Output: ${formatCm(cardSizeCm.widthCm)} x ${formatCm(cardSizeCm.heightCm)}` : 'Upload a template to calculate output size'}
+                            </div>
+                        </div>
+
                         {/* Body: preview | settings */}
                         <div className="flex flex-1 min-h-0 overflow-hidden">
                             {/* ── Left: Preview ── */}
@@ -1425,6 +1965,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                     <CardPreview
                                         imageDataUrl={imageDataUrl}
                                         config={config}
+                                        exportSettings={exportSettings}
                                         player={previewPlayer}
                                         fontFamily={loadedFontFamily}
                                     />
@@ -1439,16 +1980,28 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                             </div>
 
                             {/* ── Right: Settings ── */}
-                            <div className="w-80 flex flex-col shrink-0">
+                            <div className={`${wizardStep === 1 ? 'w-80' : 'w-[440px]'} flex flex-col shrink-0`}>
 
-                                {/* Config Editor */}
-                                <div className="flex flex-col h-full bg-surface-100-900 overflow-y-auto">
-                                    <ConfigEditor
-                                        config={config}
-                                        onUpdate={updateConfigWithHistory}
-                                        showConfirm={showConfirm}
+                                {wizardStep === 1 ? (
+                                    <div className="flex flex-col h-full bg-surface-100-900 overflow-y-auto">
+                                        <ConfigEditor
+                                            config={config}
+                                            exportSettings={exportSettings}
+                                            onUpdate={updateConfigWithHistory}
+                                            onUpdateExportSettings={setExportSettings}
+                                            showConfirm={showConfirm}
+                                            cardSizeCm={cardSizeCm}
+                                        />
+                                    </div>
+                                ) : (
+                                    <ExportSettingsEditor
+                                        exportSettings={exportSettings}
+                                        onUpdate={setExportSettings}
+                                        cardSizeCm={cardSizeCm}
+                                        pixelSize={pixelSize}
+                                        pdfValidation={pdfValidation}
                                     />
-                                </div>
+                                )}
 
                                 {/* Preview player selector */}
                                 <div className="border-t border-surface-200-800 px-3 py-2 flex items-center gap-2 shrink-0">
@@ -1482,77 +2035,95 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
                         {/* Footer */}
                         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-surface-200-800 shrink-0">
-                            {/* Range Selector */}
-                            <div className="flex items-center gap-1.5 mr-auto">
-                                <span className="text-sm text-surface-500-400 font-medium">Range:</span>
-                                <input
-                                    type="number"
-                                    min="1" max={players.length}
-                                    className="w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 text-sm outline-none text-center disabled:opacity-50"
-                                    placeholder="1"
-                                    value={rangeStart}
-                                    onChange={e => setRangeStart(e.target.value)}
-                                    disabled={isDownloading}
-                                />
-                                <span className="text-sm text-surface-500-400">-</span>
-                                <input
-                                    type="number"
-                                    min="1" max={players.length}
-                                    className="w-16 bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 text-sm outline-none text-center disabled:opacity-50"
-                                    placeholder={players.length || 'All'}
-                                    value={rangeEnd}
-                                    onChange={e => setRangeEnd(e.target.value)}
-                                    disabled={isDownloading}
-                                />
-                            </div>
-
                             <button
-                                className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded preset-tonal cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                                onClick={handleDownloadCurrent}
-                                disabled={!imageDataUrl || !previewPlayer || isDownloading}
-                                title={!previewPlayer ? 'Select a player to preview first' : ''}
+                                className="mr-auto flex items-center gap-1.5 text-sm px-4 py-1.5 rounded preset-tonal cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                onClick={() => setWizardStep(1)}
+                                disabled={wizardStep === 1 || isDownloading}
                             >
-                                <Download size={14} />
-                                Download current
+                                Back
                             </button>
-                            <button
-                                className={`relative overflow-hidden flex items-center justify-center gap-1.5 text-sm px-4 py-1.5 rounded transition-all min-w-[170px] ${isDownloading
-                                    ? 'preset-filled cursor-wait'
-                                    : 'preset-filled cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
-                                    }`}
-                                onClick={handleDownloadAll}
-                                disabled={!imageDataUrl || players.length === 0 || isDownloading}
-                            >
-                                {isDownloading && (
-                                    <div
-                                        className="absolute inset-0 rounded pointer-events-none"
-                                        style={{
-                                            padding: '3px',
-                                            WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-                                            WebkitMaskComposite: 'xor',
-                                            mask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-                                            maskComposite: 'exclude',
-                                        }}
+                            {wizardStep !== 2 && (
+                                <button
+                                    className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded preset-tonal cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                    onClick={() => setWizardStep(2)}
+                                    disabled={!imageDataUrl || isDownloading}
+                                >
+                                    Next: Export
+                                </button>
+                            )}
+                            {wizardStep === 2 && (
+                                <>
+                                    <button
+                                        className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded preset-tonal cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                        onClick={handleDownloadCurrent}
+                                        disabled={!previewPlayer || !cardSizeCm || isDownloading}
+                                        title={!previewPlayer ? 'Select a player to preview first' : ''}
                                     >
-                                        <div className="absolute inset-[-1000%] animate-[spin_2s_linear_infinite] bg-[conic-gradient(from_90deg_at_50%_50%,transparent_0%,rgba(255,255,255,0.9)_15%,transparent_15%,transparent_50%,rgba(255,255,255,0.9)_65%,transparent_65%)]" />
-                                    </div>
-                                )}
-
-                                {isDownloading ? (
-                                    <span className="animate-pulse tracking-wide font-medium relative z-10">
-                                        {processedCount > 0
-                                            ? `Processing (${processedCount}/${targetCount})`
-                                            : 'Processing...'}
-                                    </span>
-                                ) : (
-                                    <>
-                                        <Download size={14} className="relative z-10" />
-                                        <span className="relative z-10">
-                                            {(!rangeStart && !rangeEnd) ? 'Download all (ZIP)' : 'Download range (ZIP)'}
+                                        <Download size={14} />
+                                        {exportJob === 'current' ? 'Processing...' : 'Current image'}
+                                    </button>
+                                    <button
+                                        className={`relative overflow-hidden flex items-center justify-center gap-1.5 text-sm px-4 py-1.5 rounded transition-all min-w-[170px] ${isDownloading && exportJob === 'pdf'
+                                            ? 'preset-filled cursor-wait'
+                                            : 'preset-filled cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
+                                        }`}
+                                        onClick={handleDownloadPdf}
+                                        disabled={!players.length || isDownloading || !pdfValidation.valid}
+                                    >
+                                        {exportJob === 'pdf' && (
+                                            <div
+                                                className="absolute inset-0 rounded pointer-events-none"
+                                                style={{
+                                                    padding: '3px',
+                                                    WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                                    WebkitMaskComposite: 'xor',
+                                                    mask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                                    maskComposite: 'exclude',
+                                                }}
+                                            >
+                                                <div className="absolute inset-[-1000%] animate-[spin_2s_linear_infinite] bg-[conic-gradient(from_90deg_at_50%_50%,transparent_0%,rgba(255,255,255,0.9)_15%,transparent_15%,transparent_50%,rgba(255,255,255,0.9)_65%,transparent_65%)]" />
+                                            </div>
+                                        )}
+                                        <FileText size={14} className="relative z-10" />
+                                        <span className={`relative z-10 ${exportJob === 'pdf' ? 'animate-pulse tracking-wide font-medium' : ''}`}>
+                                            {exportJob === 'pdf' && processedCount > 0 ? `PDF (${processedCount}/${targetCount})` : 'Export PDF'}
                                         </span>
-                                    </>
-                                )}
-                            </button>
+                                    </button>
+                                    <button
+                                        className={`relative overflow-hidden flex items-center justify-center gap-1.5 text-sm px-4 py-1.5 rounded transition-all min-w-[170px] ${isDownloading && exportJob === 'images'
+                                            ? 'preset-filled cursor-wait'
+                                            : 'preset-filled cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
+                                        }`}
+                                        onClick={handleDownloadAll}
+                                        disabled={!players.length || !cardSizeCm || isDownloading}
+                                    >
+                                        {exportJob === 'images' && (
+                                            <div
+                                                className="absolute inset-0 rounded pointer-events-none"
+                                                style={{
+                                                    padding: '3px',
+                                                    WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                                    WebkitMaskComposite: 'xor',
+                                                    mask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                                                    maskComposite: 'exclude',
+                                                }}
+                                            >
+                                                <div className="absolute inset-[-1000%] animate-[spin_2s_linear_infinite] bg-[conic-gradient(from_90deg_at_50%_50%,transparent_0%,rgba(255,255,255,0.9)_15%,transparent_15%,transparent_50%,rgba(255,255,255,0.9)_65%,transparent_65%)]" />
+                                            </div>
+                                        )}
+                                        {exportJob === 'images' ? (
+                                            <span className="animate-pulse tracking-wide font-medium relative z-10">
+                                                {processedCount > 0 ? `Processing (${processedCount}/${targetCount})` : 'Processing...'}
+                                            </span>
+                                        ) : (
+                                            <>
+                                                <Download size={14} className="relative z-10" />
+                                                <span className="relative z-10">Export images ZIP</span>
+                                            </>
+                                        )}
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
