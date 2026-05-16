@@ -6,6 +6,8 @@ import { Dialog, Menu, Portal } from '@skeletonlabs/skeleton-react';
 import { ChevronDown, Plus, Copy, Edit2, Trash2, Database } from 'lucide-react';
 import GlobalDataSettingsModal from "@/components/modals/GlobalDataSettingsModal";
 
+const normalizeTournamentName = (name) => String(name || '').trim().toLowerCase();
+
 export default function TournamentSelector() {
     const {
         tournaments,
@@ -21,6 +23,11 @@ export default function TournamentSelector() {
     const [modalConfig, setModalConfig] = useState({ isOpen: false, type: '', id: '', defaultValue: '' });
     const [dataSettingsOpen, setDataSettingsOpen] = useState(false);
     const [inputValue, setInputValue] = useState('');
+    const normalizedInputValue = normalizeTournamentName(inputValue);
+    const duplicateCheckIgnoredId = modalConfig.type === 'rename' ? modalConfig.id : '';
+    const isNameDuplicate = modalConfig.type !== 'delete' && normalizedInputValue
+        ? tournaments.some(t => t.id !== duplicateCheckIgnoredId && normalizeTournamentName(t.name) === normalizedInputValue)
+        : false;
 
     const openModal = (type, id = '', defaultValue = '') => {
         setInputValue(defaultValue);
@@ -37,6 +44,7 @@ export default function TournamentSelector() {
         const { type, id } = modalConfig;
         const val = inputValue.trim();
         if (!val && type !== 'delete') return;
+        if (isNameDuplicate) return;
 
         if (type === 'add') {
             addTournament(val);
@@ -142,13 +150,20 @@ export default function TournamentSelector() {
                                             <label className="text-sm font-medium text-surface-600-400">Tournament Name</label>
                                             <input
                                                 type="text"
-                                                className="input text-sm"
+                                                className={`input text-sm ${isNameDuplicate ? 'border-error-500 focus:border-error-500 focus:ring-error-500' : ''}`}
                                                 value={inputValue}
                                                 onChange={(e) => setInputValue(e.target.value)}
                                                 placeholder="Enter tournament name..."
+                                                aria-invalid={isNameDuplicate}
+                                                aria-describedby={isNameDuplicate ? "tournament-name-error" : undefined}
                                                 autoFocus
                                                 required
                                             />
+                                            {isNameDuplicate && (
+                                                <p id="tournament-name-error" className="text-xs text-error-500">
+                                                    A tournament with this name already exists.
+                                                </p>
+                                            )}
                                         </div>
                                         {modalConfig.type === 'duplicate' && (
                                             <p className="text-xs text-surface-500-400">
@@ -164,7 +179,8 @@ export default function TournamentSelector() {
                                     </Dialog.CloseTrigger>
                                     <button
                                         type="submit"
-                                        className={`px-4 py-1.5 text-sm rounded ${modalConfig.type === 'delete' ? 'bg-error-500 hover:bg-error-600' : 'bg-primary-500 hover:bg-primary-600'} text-white transition-colors cursor-pointer font-medium`}
+                                        disabled={isNameDuplicate}
+                                        className={`px-4 py-1.5 text-sm rounded ${modalConfig.type === 'delete' ? 'bg-error-500 hover:bg-error-600' : 'bg-primary-500 hover:bg-primary-600'} text-white transition-colors cursor-pointer font-medium disabled:cursor-not-allowed disabled:opacity-50`}
                                     >
                                         {modalConfig.type === 'delete' ? 'Delete' : 'Save'}
                                     </button>

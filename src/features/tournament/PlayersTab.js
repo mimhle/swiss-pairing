@@ -54,6 +54,8 @@ const emptyPlayer = (id) => {
     return p;
 };
 
+const emptyPlayerDraft = () => Object.fromEntries(EDITABLE_KEYS.map(key => [key, '']));
+
 const exportPlayerRow = (player) => Object.fromEntries(
     COLUMNS.map(column => [column.label, player[column.key]])
 );
@@ -89,6 +91,20 @@ const normalizePlayers = (savedPlayers, preserveIds = false) => {
         ...p,
         playerUniqueId: i + 1,
     }));
+};
+
+const comparePlayersByRatingThenName = (a, b) => {
+    const aRating = Number(a.rating) || 0;
+    const bRating = Number(b.rating) || 0;
+    if (bRating !== aRating) return bRating - aRating;
+
+    const nameCompare = String(a.name || '').localeCompare(String(b.name || ''), undefined, {
+        numeric: true,
+        sensitivity: 'base',
+    });
+    if (nameCompare !== 0) return nameCompare;
+
+    return String(a.playerUniqueId || '').localeCompare(String(b.playerUniqueId || ''), undefined, { numeric: true });
 };
 
 // ─── Import parsing ──────────────────────────────────────────────────────────
@@ -306,6 +322,8 @@ const VIET_WORDS = new Set([
     'phuc', 'sang', 'tan', 'thang', 'tin', 'toan', 'trong', 'tung', 'uyen', 'my',
     'nga', 'ninh', 'sinh', 'loi', 'khiem', 'phu', 'tuong', 'tuyen',
 ]);
+
+const NAME_SPECIAL_CHARACTER_PATTERN = /[^\p{L}\p{M}\s.'-]/u;
 
 const looksLikeVietnameseAscii = (name) => {
     if (!name || VIET_DIACRITICS.test(name)) return false;
@@ -565,6 +583,82 @@ const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUM
 
 DraggableRow.displayName = 'DraggableRow';
 
+const GhostPlayerRow = memo(({ draft, setDraft, hasDraft, nextId, onCommit, hasActiveFilter }) => {
+    const handleBlur = (e) => {
+        if (!hasDraft || e.currentTarget.contains(e.relatedTarget)) return;
+        onCommit();
+    };
+
+    const handleKeyDown = (e, colIdx) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            onCommit();
+            return;
+        }
+
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            setDraft(emptyPlayerDraft());
+            return;
+        }
+
+        const maxCol = EDITABLE_KEYS.length - 1;
+        if (e.key === 'ArrowLeft' && e.target.selectionStart === 0 && colIdx > 0) {
+            e.preventDefault();
+            e.currentTarget.closest('tr')?.querySelector(`input[data-ghost-col="${colIdx - 1}"]`)?.focus();
+        } else if (e.key === 'ArrowRight' && e.target.selectionStart === e.target.value.length && colIdx < maxCol) {
+            e.preventDefault();
+            e.currentTarget.closest('tr')?.querySelector(`input[data-ghost-col="${colIdx + 1}"]`)?.focus();
+        }
+    };
+
+    return (
+        <tr
+            onBlur={handleBlur}
+            className={`border-t border-surface-200-800 transition-colors ${
+                hasDraft ? 'bg-primary-500/5 hover:bg-primary-500/10' : 'opacity-60 hover:opacity-100 hover:bg-surface-50-950'
+            }`}
+        >
+            <td className="px-2 py-1.5 text-center text-surface-400-600">
+                <Plus size={14} className="mx-auto" />
+            </td>
+            {COLUMNS.map(col => (
+                <td key={col.key} className="px-3 py-1.5">
+                    {col.editable ? (
+                        <input
+                            className="bg-transparent w-full outline-none placeholder:text-surface-400-600"
+                            type={col.type === 'number' ? 'number' : 'text'}
+                            placeholder="—"
+                            value={draft[col.key] ?? ''}
+                            data-ghost-col={EDITABLE_COL_IDX[col.key]}
+                            onChange={e => setDraft(prev => ({ ...prev, [col.key]: e.target.value }))}
+                            onKeyDown={e => handleKeyDown(e, EDITABLE_COL_IDX[col.key])}
+                        />
+                    ) : (
+                        <span className="text-surface-400-600 tabular-nums select-none">
+                            {nextId}
+                        </span>
+                    )}
+                </td>
+            ))}
+            <td className="px-1 py-1.5" />
+            <td className="px-2 py-1.5">
+                <button
+                    className="p-1 rounded text-surface-400-600 hover:text-primary-500 transition-colors disabled:opacity-30 disabled:hover:text-surface-400-600 disabled:cursor-not-allowed"
+                    onClick={onCommit}
+                    disabled={!hasDraft}
+                    title={hasActiveFilter ? 'Filters are active, so the new row may be hidden' : 'Add draft player'}
+                    aria-label="Add draft player"
+                >
+                    <Plus size={14} />
+                </button>
+            </td>
+        </tr>
+    );
+});
+
+GhostPlayerRow.displayName = 'GhostPlayerRow';
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 const MAX_HISTORY = 100;
@@ -708,6 +802,7 @@ export default function PlayersTab() {
     const [actionField, setActionField] = useState('');
     const [overwriteRating, setOverwriteRating] = useState(false);
     const [overwriteGroup, setOverwriteGroup] = useState(false);
+    const [draftPlayer, setDraftPlayer] = useState(emptyPlayerDraft);
 
     // Club/Fed mapping modal state
     const [showMappingModal, setShowMappingModal] = useState(false);
@@ -737,6 +832,21 @@ export default function PlayersTab() {
     const addPlayer = () => {
         setPlayersWithHistory(prev => [...prev, emptyPlayer(nextPlayerId(prev))]);
     };
+
+    const hasDraftPlayer = useMemo(
+        () => EDITABLE_KEYS.some(key => String(draftPlayer[key] ?? '').trim()),
+        [draftPlayer]
+    );
+
+    const commitDraftPlayer = useCallback(() => {
+        const values = Object.fromEntries(
+            EDITABLE_KEYS.map(key => [key, String(draftPlayer[key] ?? '').trim()])
+        );
+        if (!EDITABLE_KEYS.some(key => values[key])) return;
+
+        setPlayersWithHistory(prev => [...prev, { ...emptyPlayer(nextPlayerId(prev)), ...values }]);
+        setDraftPlayer(emptyPlayerDraft());
+    }, [draftPlayer, setPlayersWithHistory]);
 
     const handleCellPaste = (e, playerId, colKey) => {
         const text = e.clipboardData.getData('text');
@@ -979,6 +1089,12 @@ export default function PlayersTab() {
             });
         } else if (selectedAction === 'auto_fill_club_fed_mapping') {
             openMappingModal();
+        } else if (selectedAction === 'reorder_rating_name') {
+            if (isPlayerListLocked) {
+                showPlayerListLockedToast();
+                return;
+            }
+            setPlayersWithHistory(prev => [...prev].sort(comparePlayersByRatingThenName));
         }
     };
 
@@ -1132,6 +1248,7 @@ export default function PlayersTab() {
         warnInconsistentCapitalization: true,
         warnEmptyName: true,
         warnVietnameseNoAccent: true,
+        warnSpecialCharacters: true,
     });
 
     const toggleSetting = (key) =>
@@ -1178,6 +1295,10 @@ export default function PlayersTab() {
 
                 if (settings.warnVietnameseNoAccent && looksLikeVietnameseAscii(name)) {
                     msgs.push('Vietnamese name may be missing accent marks');
+                }
+
+                if (settings.warnSpecialCharacters && NAME_SPECIAL_CHARACTER_PATTERN.test(name)) {
+                    msgs.push('Name contains special characters');
                 }
             }
 
@@ -1481,6 +1602,7 @@ export default function PlayersTab() {
                                 <option value="auto_fill_rating">Auto Fill Rating</option>
                                 <option value="auto_fill_group_gender">Fill Group by Gender</option>
                                 <option value="auto_fill_club_fed_mapping">Map Club/Fed</option>
+                                <option value="reorder_rating_name">Reorder by Rating/Name</option>
                             </select>
                             {selectedAction === 'fill_down' && (
                                 <select
@@ -1781,6 +1903,20 @@ export default function PlayersTab() {
                                                 </p>
                                             </div>
                                         </label>
+                                        <label className="flex items-start gap-3 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="mt-0.5 accent-primary-500"
+                                                checked={settings.warnSpecialCharacters}
+                                                onChange={() => toggleSetting('warnSpecialCharacters')}
+                                            />
+                                            <div>
+                                                <p className="text-sm font-medium">Warn about special characters in names</p>
+                                                <p className="text-xs text-surface-600-400 mt-0.5">
+                                                    Allow letters, spaces, apostrophes, hyphens, and periods.
+                                                </p>
+                                            </div>
+                                        </label>
                                     </div>
                                     <div className="flex justify-end">
                                         <Dialog.CloseTrigger className="px-4 py-1.5 text-sm rounded preset-filled cursor-pointer">
@@ -2012,6 +2148,14 @@ export default function PlayersTab() {
                                         canDragPlayer={!isPlayerListLocked || !pairedPlayerIds.has(String(player.playerUniqueId))}
                                     />
                                 ))}
+                                <GhostPlayerRow
+                                    draft={draftPlayer}
+                                    setDraft={setDraftPlayer}
+                                    hasDraft={hasDraftPlayer}
+                                    nextId={nextPlayerId(players)}
+                                    onCommit={commitDraftPlayer}
+                                    hasActiveFilter={hasActiveFilter}
+                                />
                             </tbody>
                         </table>
                     </div>
