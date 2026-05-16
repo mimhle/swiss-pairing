@@ -15,6 +15,18 @@ export const DEFAULT_TEAM_STANDING_OPTIONS = {
 
 const TEAM_RANK_CRITERIA = new Set(['individualRank', 'score', 'count', 'topRank']);
 
+const getWhitePoints = (result) => {
+    if (result === '1-0' || result === '1-0f') return 1;
+    if (result === '0.5-0.5') return 0.5;
+    return 0;
+};
+
+const getBlackPoints = (result) => {
+    if (result === '0-1' || result === '0-1f') return 1;
+    if (result === '0.5-0.5') return 0.5;
+    return 0;
+};
+
 export function normalizeTeamStandingOptions(options = {}) {
     const source = options.source === 'club' ? 'club' : 'federation';
     const minPlayerCount = Math.max(1, Number(options.minPlayerCount) || DEFAULT_TEAM_STANDING_OPTIONS.minPlayerCount);
@@ -68,24 +80,31 @@ export function calculateStandings(players, rounds, tiebreakerPriority = ['bh', 
 
             if (pairing.isTournamentForfeit) {
                 if (playerMap[whiteId]) {
-                    playerMap[whiteId].results.push({ opponentId: null, result: '0-0', pointsEarned: 0, isSkip: true, isTournamentForfeit: true, roundIndex });
+                    const pointsEarned = getWhitePoints(result);
+                    playerMap[whiteId].points += pointsEarned;
+                    playerMap[whiteId].results.push({ opponentId: null, result, pointsEarned, isSkip: true, isTournamentForfeit: true, roundIndex });
                     playerMap[whiteId].unplayedRounds += 1;
+                    playerMap[whiteId].unplayedPoints += pointsEarned;
                 }
             } else if (isBye && !pairing.isSkip) {
                 if (playerMap[whiteId]) {
-                    playerMap[whiteId].points += 1;
-                    playerMap[whiteId].results.push({ opponentId: null, result: '1-0', pointsEarned: 1, isBye: true, roundIndex });
+                    const pointsEarned = getWhitePoints(result);
+                    playerMap[whiteId].points += pointsEarned;
+                    playerMap[whiteId].results.push({ opponentId: null, result, pointsEarned, isBye: true, roundIndex });
                     playerMap[whiteId].unplayedRounds += 1;
-                    playerMap[whiteId].unplayedPoints += 1;
+                    playerMap[whiteId].unplayedPoints += pointsEarned;
                 }
             } else if (isBye && pairing.isSkip) {
                 if (playerMap[whiteId]) {
-                    playerMap[whiteId].results.push({ opponentId: null, result: '0-0', pointsEarned: 0, isSkip: true, roundIndex });
+                    const pointsEarned = getWhitePoints(result);
+                    playerMap[whiteId].points += pointsEarned;
+                    playerMap[whiteId].results.push({ opponentId: null, result, pointsEarned, isSkip: true, roundIndex });
                     playerMap[whiteId].unplayedRounds += 1;
+                    playerMap[whiteId].unplayedPoints += pointsEarned;
                 }
             } else if (result) {
-                const wPoints = (result === '1-0' || result === '1-0f') ? 1 : (result === '0.5-0.5' ? 0.5 : 0);
-                const bPoints = (result === '0-1' || result === '0-1f') ? 1 : (result === '0.5-0.5' ? 0.5 : 0);
+                const wPoints = getWhitePoints(result);
+                const bPoints = getBlackPoints(result);
                 const isForfeit = result.endsWith('f');
 
                 if (playerMap[whiteId]) {

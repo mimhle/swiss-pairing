@@ -83,15 +83,19 @@ function uniqueNormalizedIds(ids) {
 }
 
 function initialSpecialAssignments(initialBoards, forfeitedPlayerIds) {
-    return {
-        byeIds: initialBoards
-            .filter(board => board.byeId && !board.isSkip && !board.forfeitId)
-            .map(board => normalizeId(board.byeId))
-            .filter(Boolean),
-        skipIds: initialBoards
+    const byeIds = uniqueNormalizedIds(initialBoards
+        .filter(board => board.byeId && !board.isSkip && !board.forfeitId)
+        .map(board => board.byeId));
+    const skipIds = uniqueNormalizedIds([
+        ...initialBoards
             .filter(board => board.byeId && board.isSkip && !board.forfeitId)
-            .map(board => normalizeId(board.byeId))
-            .filter(Boolean),
+            .map(board => board.byeId),
+        ...byeIds.slice(1),
+    ]);
+
+    return {
+        byeIds: byeIds.slice(0, 1),
+        skipIds,
         forfeitIds: uniqueNormalizedIds([
             ...initialBoards
                 .filter(board => board.forfeitId)
@@ -226,7 +230,7 @@ function SpecialDropZone({ id, label, tone }) {
     );
 }
 
-function SpecialAssignmentColumn({ title, tone, playerIds, dropId, playerMap, playerScores, onClear }) {
+function SpecialAssignmentColumn({ title, tone, playerIds, dropId, playerMap, playerScores, onClear, showDropZone = true, emptyMessage = null }) {
     return (
         <div className="rounded border border-surface-200-800 bg-surface-100-900 p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -248,13 +252,19 @@ function SpecialAssignmentColumn({ title, tone, playerIds, dropId, playerMap, pl
                         </button>
                     </div>
                 ))}
-                <SpecialDropZone id={dropId} label={title} tone={tone} />
+                {showDropZone ? (
+                    <SpecialDropZone id={dropId} label={title} tone={tone} />
+                ) : emptyMessage ? (
+                    <div className="rounded border border-surface-200-800 bg-surface-50-950 px-3 py-2 text-xs text-surface-500">
+                        {emptyMessage}
+                    </div>
+                ) : null}
             </div>
         </div>
     );
 }
 
-function ByeAssignmentColumn({ playerIds, playerMap, playerScores, onClear }) {
+function ByeAssignmentColumn({ playerIds, playerMap, playerScores, onClear, hasByeAssigned }) {
     return (
         <SpecialAssignmentColumn
             title="Bye"
@@ -264,6 +274,8 @@ function ByeAssignmentColumn({ playerIds, playerMap, playerScores, onClear }) {
             playerMap={playerMap}
             playerScores={playerScores}
             onClear={onClear}
+            showDropZone={!hasByeAssigned}
+            emptyMessage={playerIds.length ? null : 'One bye is already assigned this round.'}
         />
     );
 }
@@ -690,15 +702,10 @@ export default function ManualPairingModal({
             setSpecialAssignments(prev => {
                 const cleared = clearPlayerFromSpecial(prev, playerId);
                 if (dropKind === 'bye') {
-                    const playerGroup = getPlayerGroup(playerId);
-                    const replacedByeIds = isGroupMode
-                        ? cleared.byeIds.filter(candidate => getPlayerGroup(candidate) === playerGroup)
-                        : cleared.byeIds;
-                    const remainingByeIds = cleared.byeIds.filter(candidate => !replacedByeIds.includes(candidate));
                     return {
                         ...cleared,
-                        byeIds: [...remainingByeIds, playerId],
-                        skipIds: uniqueNormalizedIds([...cleared.skipIds, ...replacedByeIds]),
+                        byeIds: [playerId],
+                        skipIds: uniqueNormalizedIds([...cleared.skipIds, ...cleared.byeIds]),
                     };
                 }
                 if (dropKind === 'skip') {
@@ -895,6 +902,7 @@ export default function ManualPairingModal({
                                             playerMap={playerMap}
                                             playerScores={playerScores}
                                             onClear={clearSpecialPlayer}
+                                            hasByeAssigned={specialAssignments.byeIds.length > 0}
                                         />
                                         <SpecialAssignmentColumn
                                             title="Skip"

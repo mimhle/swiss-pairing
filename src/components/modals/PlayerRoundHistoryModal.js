@@ -7,22 +7,29 @@ const formatScore = (value) => {
     return Number(value).toFixed(1).replace('.0', '');
 };
 
+const getWhitePoints = (result) => {
+    if (result === '1-0' || result === '1-0f') return 1;
+    if (result === '0.5-0.5') return 0.5;
+    return 0;
+};
+
+const getBlackPoints = (result) => {
+    if (result === '0-1' || result === '0-1f') return 1;
+    if (result === '0.5-0.5') return 0.5;
+    return 0;
+};
+
 const getPlayerRoundScore = (pairing, playerId) => {
     if (!pairing.result) {
-        if (pairing.isBye && !pairing.isSkip && String(pairing.whiteId) === playerId) return 1;
-        if ((pairing.isBye || pairing.isTournamentForfeit) && String(pairing.whiteId) === playerId) return 0;
         return null;
     }
 
-    if (pairing.isTournamentForfeit) return 0;
-    if (pairing.isBye) return pairing.isSkip ? 0 : 1;
-
     const isWhite = String(pairing.whiteId) === playerId;
-    if (pairing.result === '0.5-0.5') return 0.5;
-    if (pairing.result === '1-0' || pairing.result === '1-0f') return isWhite ? 1 : 0;
-    if (pairing.result === '0-1' || pairing.result === '0-1f') return isWhite ? 0 : 1;
-    if (pairing.result === '0-0') return 0;
-    return null;
+    return isWhite ? getWhitePoints(pairing.result) : getBlackPoints(pairing.result);
+};
+
+const getPairingResultLabel = (pairing) => {
+    return pairing.result || 'Pending';
 };
 
 const getOpponentLabel = (pairing, playerId, playerMap) => {
@@ -69,7 +76,7 @@ const buildHistoryRows = (player, rounds, players) => {
             board: (round.pairings || []).indexOf(pairing) + 1,
             color: pairing.isBye ? '-' : (String(pairing.whiteId) === playerId ? 'White' : 'Black'),
             opponent: getOpponentLabel(pairing, playerId, playerMap),
-            result: pairing.isTournamentForfeit ? '0-0' : (pairing.result || 'Pending'),
+            result: getPairingResultLabel(pairing),
             score: formatScore(score),
             total: formatScore(total)
         }];

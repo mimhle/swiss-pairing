@@ -149,6 +149,16 @@ function scoreResultFromRow(row) {
     return importedResult || resultFromScores(whiteScore, blackScore);
 }
 
+function getDefaultPairingResult(pairing) {
+    if (pairing.isTournamentForfeit) return '0-0';
+    if (pairing.isBye) return pairing.isSkip ? '0-0' : '1-0';
+    return '';
+}
+
+function getPairingResult(pairing) {
+    return pairing.result || getDefaultPairingResult(pairing);
+}
+
 const pairingKey = (a, b) => [String(a), String(b)].sort().join('|');
 
 function getPlayerScoreMap(roundsBeforeTarget) {
@@ -246,10 +256,14 @@ function validateManualPairings(manualBoards, previousRounds) {
             if (whiteId || blackId) {
                 errors.push(`Board ${boardNumber} cannot have a skip/bye and regular players.`);
             }
-            if (!isSkip && !hasTrueBye && previousByes.has(byeId)) {
-                errors.push(`Player #${byeId} already received a bye in an earlier round.`);
+            if (!isSkip) {
+                if (hasTrueBye) {
+                    errors.push(`Board ${boardNumber} creates a second bye in this round.`);
+                } else if (previousByes.has(byeId)) {
+                    errors.push(`Player #${byeId} already received a bye in an earlier round.`);
+                }
+                hasTrueBye = true;
             }
-            if (!isSkip) hasTrueBye = true;
             return;
         }
 
@@ -331,12 +345,12 @@ function withOriginalPairingValues(pairing, originalPairings = []) {
     }, originalPairings);
 
     return original
-        ? { ...pairing, manual: Boolean(original.manual), result: original.result || '' }
+        ? { ...pairing, manual: Boolean(original.manual), result: getPairingResult({ ...pairing, result: original.result || '' }) }
         : pairing;
 }
 
 function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundNumber, originalPairings = [], playerGroupLookup = {}) {
-    const trueByeGroups = new Set();
+    let hasManualTrueBye = false;
     const manualRegularSlots = [];
     const manualSpecialPairings = [];
 
@@ -357,8 +371,8 @@ function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundN
         }
         if (board.byeId) {
             const group = getPairingGroup({ group: board.group, whiteId: board.byeId }, playerGroupLookup);
-            const isSkip = Boolean(board.isSkip) || trueByeGroups.has(group);
-            if (!isSkip) trueByeGroups.add(group);
+            const isSkip = Boolean(board.isSkip) || hasManualTrueBye;
+            if (!isSkip) hasManualTrueBye = true;
             manualSpecialPairings.push({
                 whiteId: String(board.byeId),
                 blackId: null,
@@ -393,19 +407,18 @@ function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundN
     const generatedSpecialPairings = generatedWithOriginalValues.filter(pairing => pairing.isBye);
     const specialPairings = [...manualSpecialPairings, ...generatedSpecialPairings];
 
-    const seenTrueByeGroups = new Set();
+    let hasTrueBye = false;
     return [...regularPairings, ...specialPairings].map((pairing, index) => {
-        let isSkip = false;
+        let isSkip = Boolean(pairing.isSkip);
         if (pairing.isBye) {
-            const group = getPairingGroup(pairing, playerGroupLookup);
-            isSkip = typeof pairing.isSkip === 'boolean' ? pairing.isSkip : seenTrueByeGroups.has(group);
-            if (!isSkip && !pairing.isTournamentForfeit) seenTrueByeGroups.add(group);
+            isSkip = Boolean(pairing.isSkip) || Boolean(pairing.isTournamentForfeit) || hasTrueBye;
+            if (!isSkip) hasTrueBye = true;
         }
         return {
             ...pairing,
             isSkip,
             id: `r${roundNumber}-p${index + 1}`,
-            result: pairing.result || '',
+            result: getPairingResult({ ...pairing, isSkip }),
         };
     });
 }
@@ -583,7 +596,7 @@ function preserveOriginalRemainderPairings(remainingPlayers, originalPairings = 
                     blackId: null,
                     isBye: true,
                     isSkip: Boolean(pairing.isSkip),
-                    result: pairing.result || '',
+                    result: getPairingResult(pairing),
                     manual: Boolean(pairing.manual),
                 });
                 usedIds.add(playerId);
@@ -636,7 +649,7 @@ async function generateManualRemainderPairingsByGroup(playersNeedingPairing, opt
                 isBye: true,
                 isSkip: previousByes.has(playerId),
                 group,
-                result: previousByes.has(playerId) ? '0-0' : '',
+                result: previousByes.has(playerId) ? '0-0' : '1-0',
             });
             onProgress?.(Math.round(((index + 1) / groups.length) * 100));
             continue;
@@ -714,7 +727,7 @@ export default function RoundsTab() {
 
     const isRoundComplete = useMemo(() => {
         if (!currentRound) return true;
-        return currentRound.pairings.every(p => p.result !== '');
+        return currentRound.pairings.every(p => getPairingResult(p) !== '');
     }, [currentRound]);
 
     const pairingBusy = isPairing || isManualPairing;
@@ -921,7 +934,7 @@ export default function RoundsTab() {
                 pairings: withPairingGroups([...newPairings, ...continuingForfeits], playerGroupLookup).map((p, idx) => ({
                     id: `r${roundNumber}-p${idx + 1}`,
                     ...p,
-                    result: p.isTournamentForfeit ? '0-0' : ''
+                    result: getPairingResult(p)
                 })),
                 status: 'in-progress',
                 timestamp: createRoundTimestamp(),
@@ -1927,7 +1940,7 @@ export default function RoundsTab() {
                 </td>
                 <td className="px-2 py-1.5">
                     <select
-                        value={pairing.isTournamentForfeit ? '0-0' : pairing.result}
+                        value={getPairingResult(pairing)}
                         onChange={(e) => updateResult(pairing.id, e.target.value)}
                         disabled={pairing.isTournamentForfeit}
                         className="w-full bg-surface-50-950 border border-surface-200-800 rounded px-1 py-0.5 text-center font-bold text-[11px] outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"

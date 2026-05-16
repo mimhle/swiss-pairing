@@ -1773,7 +1773,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     };
 
     const drawCropMarks = (doc, x, y, w, h) => {
-        const mark = 0.3;
+        const mark = 0.6;
         doc.setDrawColor(80);
         doc.setLineWidth(0.01);
         doc.line(x - mark, y, x - 0.05, y);
