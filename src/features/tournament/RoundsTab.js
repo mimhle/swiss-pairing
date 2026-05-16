@@ -517,6 +517,17 @@ function getRoundPlayerIds(round) {
     return ids;
 }
 
+function hasPlayerName(player) {
+    return String(player?.name || '').trim().length > 0;
+}
+
+function getActivePairablePlayers(players = [], forfeitedIds = new Set()) {
+    return players.filter(player => (
+        hasPlayerName(player) &&
+        !forfeitedIds.has(String(player.playerUniqueId))
+    ));
+}
+
 function addMissingPlayerSkips(roundsToUpdate, players) {
     if (!roundsToUpdate.length || !players.length) return roundsToUpdate;
 
@@ -689,13 +700,6 @@ export default function RoundsTab() {
         }
     }, [activeTournamentId, activeTab]);
 
-    // If no config exists, open config modal automatically
-    useEffect(() => {
-        if (!isLoadingConfig && !tournamentConfig && activeTournamentId) {
-            setShowConfigModal(true);
-        }
-    }, [isLoadingConfig, tournamentConfig, activeTournamentId]);
-
     // Update currentRoundIdx to the latest round when rounds change
     useEffect(() => {
         if (rounds.length > 0) {
@@ -762,7 +766,7 @@ export default function RoundsTab() {
 
         const assignedIds = getRoundPlayerIds(currentRound);
         return players
-            .filter(player => !assignedIds.has(String(player.playerUniqueId)))
+            .filter(player => hasPlayerName(player) && !assignedIds.has(String(player.playerUniqueId)))
             .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
     }, [currentRound, players, rounds.length]);
 
@@ -782,9 +786,26 @@ export default function RoundsTab() {
         return true;
     };
 
-    const validateRoundCountForPlayers = (activePlayers, configuredRounds, title = 'Pairing Blocked', config = tournamentConfig) => {
+    const getRoundCountWarningForPlayers = (activePlayers, configuredRounds, config = tournamentConfig) => {
+        if (activePlayers.length < 2) {
+            return {
+                message: 'Add at least 2 active players before starting the first round.',
+                details: [],
+            };
+        }
+
         if (isGroupPairingMode(config)) {
-            if (!validateGroupPairingPlayers(activePlayers, title)) return false;
+            const blankGroupPlayers = getBlankGroupPlayers(activePlayers);
+            if (blankGroupPlayers.length) {
+                return {
+                    message: 'Every active player must have a Group before using By Group pairing.',
+                    details: blankGroupPlayers.map(player => ({
+                        line: player.playerUniqueId,
+                        reason: `${player.name || 'Unnamed'} has no group.`
+                    })),
+                };
+            }
+
             const invalidGroups = [...getGroupedPlayers(activePlayers).entries()]
                 .map(([group, groupPlayers]) => ({
                     group,
@@ -794,36 +815,29 @@ export default function RoundsTab() {
                 .filter(groupInfo => groupInfo.playerCount < 2 || configuredRounds > groupInfo.maxRounds);
 
             if (invalidGroups.length) {
-                showAlert(
-                    title,
-                    'Round count must be valid for every group.',
-                    invalidGroups.map(groupInfo => ({
+                return {
+                    message: 'Round count must be valid for every group.',
+                    details: invalidGroups.map(groupInfo => ({
                         line: groupInfo.group,
                         reason: groupInfo.playerCount < 2
                             ? `Group ${groupInfo.group} needs at least 2 active players.`
                             : `Group ${groupInfo.group} has ${groupInfo.playerCount} players, so it supports at most ${groupInfo.maxRounds} round${groupInfo.maxRounds !== 1 ? 's' : ''}.`
-                    }))
-                );
-                return false;
+                    })),
+                };
             }
-            return true;
+
+            return null;
         }
 
         const maxRounds = getMaximumRoundCount(activePlayers.length);
-        if (activePlayers.length < 2) {
-            showAlert(title, 'Add at least 2 players before starting the first round.');
-            return false;
-        }
-
         if (configuredRounds > maxRounds) {
-            showAlert(
-                title,
-                `This tournament has ${activePlayers.length} players, so the round count cannot be greater than ${maxRounds}.`
-            );
-            return false;
+            return {
+                message: `This tournament has ${activePlayers.length} players, so the round count cannot be greater than ${maxRounds}.`,
+                details: [],
+            };
         }
 
-        return true;
+        return null;
     };
 
     const generatePairingsForMode = async (activePlayers, options, previousRounds, config, tournamentName, onProgress, allPlayersForGroups = activePlayers) => {
@@ -853,12 +867,6 @@ export default function RoundsTab() {
     };
 
     const openRoundSetup = async () => {
-        if (rounds.length === 0 || !currentRound) {
-            setRoundModalMode('setup');
-            setShowSetupModal(true);
-            return;
-        }
-
         let latestPlayers;
         try {
             latestPlayers = await loadPlayers(activeTournamentId);
@@ -874,24 +882,25 @@ export default function RoundsTab() {
 
     const handleStartPairing = async (options) => {
         setIsPairing(true);
-        setShowSetupModal(false);
 
         try {
             // 1. Get current players
             const latestPlayers = await loadPlayers(activeTournamentId);
             setPlayers(latestPlayers); // Sync local state for lookup
             const forfeitedIds = getTournamentForfeitSet(rounds);
-            const activePlayers = latestPlayers.filter(player => !forfeitedIds.has(String(player.playerUniqueId)));
+            const activePlayers = getActivePairablePlayers(latestPlayers, forfeitedIds);
             const continuingForfeits = buildContinuingForfeitPairings(forfeitedIds);
-            const roundsWithPlayerSkips = addMissingPlayerSkips(rounds, latestPlayers);
+            const roundsWithPlayerSkips = addMissingPlayerSkips(rounds, activePlayers);
 
             if (rounds.length === 0) {
                 const configuredRounds = Number(tournamentConfig?.numRounds) || 0;
 
-                if (!validateRoundCountForPlayers(activePlayers, configuredRounds, 'Pairing Blocked')) return;
+                if (getRoundCountWarningForPlayers(activePlayers, configuredRounds)) return;
             } else if (isGroupPairingMode(tournamentConfig) && !validateGroupPairingPlayers(activePlayers, 'Pairing Blocked')) {
                 return;
             }
+
+            setShowSetupModal(false);
 
             // 2. Generate pairings
             const tournamentName = tournamentConfig?.name || "Tournament";
@@ -982,9 +991,9 @@ export default function RoundsTab() {
 
             if (manualPairingMode !== 'edit' && rounds.length === 0) {
                 const configuredRounds = Number(tournamentConfig?.numRounds) || 0;
-                const activePlayers = latestPlayers.filter(player => !getTournamentForfeitSet(rounds).has(String(player.playerUniqueId)));
+                const activePlayers = getActivePairablePlayers(latestPlayers, getTournamentForfeitSet(rounds));
 
-                if (!validateRoundCountForPlayers(activePlayers, configuredRounds, 'Manual Pairing Blocked')) return;
+                if (getRoundCountWarningForPlayers(activePlayers, configuredRounds)) return;
             }
 
             const normalizedBoards = boards
@@ -1011,12 +1020,14 @@ export default function RoundsTab() {
                 [board.whiteId, board.blackId, board.byeId, board.forfeitId].filter(Boolean).forEach(id => usedIds.add(String(id)));
             });
 
+            const pairableLatestPlayers = latestPlayers.filter(hasPlayerName);
             const roundsWithPlayerSkips = manualPairingMode === 'edit'
                 ? rounds
-                : addMissingPlayerSkips(rounds, latestPlayers);
+                : addMissingPlayerSkips(rounds, pairableLatestPlayers);
             const previousRounds = manualPairingMode === 'edit' ? rounds.slice(0, currentRoundIdx) : roundsWithPlayerSkips;
             const alreadyForfeited = getTournamentForfeitSet(previousRounds);
             const remainingPlayers = latestPlayers.filter(player => (
+                hasPlayerName(player) &&
                 !usedIds.has(String(player.playerUniqueId)) &&
                 !alreadyForfeited.has(String(player.playerUniqueId))
             ));
@@ -1031,7 +1042,7 @@ export default function RoundsTab() {
                     }
                 });
                 if (!validateGroupPairingPlayers(
-                    latestPlayers.filter(player => !alreadyForfeited.has(String(player.playerUniqueId))),
+                    getActivePairablePlayers(latestPlayers, alreadyForfeited),
                     'Manual Pairing Blocked'
                 )) return;
             }
@@ -1352,14 +1363,15 @@ export default function RoundsTab() {
         const multiRoundImport = importAllRounds || hasSelectedRounds;
         const selectedMaxRound = hasSelectedRounds ? Math.max(...selectedRoundSet) : maxImportedRound;
         const shouldIncreaseRounds = multiRoundImport && roundLimitAction === 'increase' && selectedMaxRound > configuredRounds;
-        const maxRounds = getMaximumRoundCountForMode(players, tournamentConfig);
+        const validPlayers = players.filter(hasPlayerName);
+        const maxRounds = getMaximumRoundCountForMode(validPlayers, tournamentConfig);
 
         if (shouldIncreaseRounds && selectedMaxRound > maxRounds) {
             showAlert(
                 'Score Import Blocked',
                 isGroupPairingMode(tournamentConfig)
                     ? `By Group pairing supports at most ${maxRounds} round${maxRounds !== 1 ? 's' : ''} with the current groups.`
-                    : `This tournament has ${players.length} players, so the round count cannot be greater than ${maxRounds}.`
+                    : `This tournament has ${validPlayers.length} active players, so the round count cannot be greater than ${maxRounds}.`
             );
             return;
         }
@@ -1601,8 +1613,9 @@ export default function RoundsTab() {
         }
 
         setPlayers(latestPlayers);
-        const activePlayers = latestPlayers.filter(player => !getTournamentForfeitSet(rounds).has(String(player.playerUniqueId)));
-        if (!validateRoundCountForPlayers(activePlayers, nextRoundCount, 'Tournament Setup Blocked', normalizedConfig)) return false;
+        const activePlayers = getActivePairablePlayers(latestPlayers, getTournamentForfeitSet(rounds));
+        const roundCountWarning = getRoundCountWarningForPlayers(activePlayers, nextRoundCount, normalizedConfig);
+        if (roundCountWarning) return { warning: roundCountWarning };
 
         if (rounds.length > nextRoundCount) {
             const deletedRounds = rounds.length - nextRoundCount;
@@ -1819,6 +1832,32 @@ export default function RoundsTab() {
         [currentRound, playerGroupLookup, tournamentConfig]
     );
     const groupPairingMode = isGroupPairingMode(tournamentConfig);
+    const validPlayers = players.filter(hasPlayerName);
+    const activePairablePlayers = getActivePairablePlayers(players, getTournamentForfeitSet(rounds));
+    const hasEnoughValidPlayerNames = validPlayers.length >= 2;
+    const setupMaxRoundCount = Math.max(1, getMaximumRoundCount(validPlayers.length));
+    const setupDefaultRoundCount = Math.min(5, setupMaxRoundCount);
+    const firstRoundSetupWarning = tournamentConfig && rounds.length === 0
+        ? getRoundCountWarningForPlayers(activePairablePlayers, Number(tournamentConfig.numRounds) || 0, tournamentConfig)
+        : null;
+    const getConfigRoundCountWarning = (nextConfig) => getRoundCountWarningForPlayers(
+        activePairablePlayers,
+        Number(nextConfig?.numRounds) || 1,
+        nextConfig
+    );
+    const confirmationModal = (
+        <ConfirmationModal
+            open={modal.open}
+            onOpenChange={(open) => setModal(prev => ({ ...prev, open }))}
+            title={modal.title}
+            description={modal.description}
+            onConfirm={modal.onConfirm}
+            isAlert={modal.isAlert}
+            variant={modal.variant}
+            confirmText={modal.confirmText}
+            details={modal.details}
+        />
+    );
     const isPairingGroupOpen = (sectionKey) => openPairingGroups[sectionKey] ?? true;
     const togglePairingGroup = (sectionKey) => {
         setOpenPairingGroups(prev => ({
@@ -1941,10 +1980,17 @@ export default function RoundsTab() {
                     <p className="text-sm text-surface-600-400 mb-4">You need to configure the tournament before starting the first round.</p>
                     <button
                         onClick={() => setShowConfigModal(true)}
-                        className="px-6 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors text-sm font-medium"
+                        disabled={!hasEnoughValidPlayerNames}
+                        title={!hasEnoughValidPlayerNames ? 'Add at least two player names before setting up the tournament' : undefined}
+                        className="px-6 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         Setup Tournament
                     </button>
+                    {!hasEnoughValidPlayerNames && (
+                        <p className="mt-2 text-xs font-medium text-warning-600-400">
+                            Add at least two player names before setting up the tournament.
+                        </p>
+                    )}
                 </div>
                 <TournamentConfigModal
                     open={showConfigModal}
@@ -1952,7 +1998,11 @@ export default function RoundsTab() {
                     config={tournamentConfig}
                     onSave={saveTournamentConfig}
                     lockPairingMode={rounds.length > 0}
+                    defaultNumRounds={setupDefaultRoundCount}
+                    maxNumRounds={setupMaxRoundCount}
+                    getRoundCountWarning={getConfigRoundCountWarning}
                 />
+                {confirmationModal}
             </div>
         );
     }
@@ -2447,6 +2497,9 @@ export default function RoundsTab() {
                 config={tournamentConfig}
                 onSave={saveTournamentConfig}
                 lockPairingMode={rounds.length > 0}
+                defaultNumRounds={setupDefaultRoundCount}
+                maxNumRounds={Math.max(20, setupMaxRoundCount)}
+                getRoundCountWarning={getConfigRoundCountWarning}
             />
 
             <RoundSetupModal
@@ -2459,6 +2512,7 @@ export default function RoundsTab() {
                 showDelete={roundModalMode === 'settings'}
                 excludedPlayers={nextRoundExcludedPlayers}
                 unassignedPlayers={currentRoundUnassignedPlayers}
+                validationWarning={roundModalMode === 'setup' ? firstRoundSetupWarning : null}
                 onDeleteRounds={handleDeleteRounds}
             />
 
@@ -2475,6 +2529,7 @@ export default function RoundsTab() {
                 previousByeSet={getPlayersWithBye(manualPreviousRounds)}
                 forfeitedPlayerIds={forfeitedPlayerIds}
                 isSaving={isManualPairing}
+                validationWarning={manualPairingMode !== 'edit' ? firstRoundSetupWarning : null}
                 onClose={() => setShowManualPairingModal(false)}
                 onSave={stageManualPairingSave}
             />
@@ -2487,17 +2542,7 @@ export default function RoundsTab() {
                 onClose={() => setSelectedPlayer(null)}
             />
 
-            <ConfirmationModal
-                open={modal.open}
-                onOpenChange={(open) => setModal(prev => ({ ...prev, open }))}
-                title={modal.title}
-                description={modal.description}
-                onConfirm={modal.onConfirm}
-                isAlert={modal.isAlert}
-                variant={modal.variant}
-                confirmText={modal.confirmText}
-                details={modal.details}
-            />
+            {confirmationModal}
         </div>
     );
 }

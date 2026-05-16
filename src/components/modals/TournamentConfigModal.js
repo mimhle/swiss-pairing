@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Dialog, Portal } from '@skeletonlabs/skeleton-react';
-import { Settings, X, Check, GripVertical } from 'lucide-react';
+import { AlertTriangle, Settings, X, Check, GripVertical } from 'lucide-react';
 import ScrollLock from '@/components/utility/ScrollLock';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -21,11 +21,12 @@ const TIEBREAK_OPTIONS = [
     { id: 'progressive', label: 'Progressive Score', description: 'Sum of cumulative scores after each round' },
 ];
 
-export default function TournamentConfigModal({ open, onClose, config, onSave, lockPairingMode = false }) {
+export default function TournamentConfigModal({ open, onClose, config, onSave, lockPairingMode = false, defaultNumRounds = 5, maxNumRounds = 20, getRoundCountWarning }) {
     const [numRounds, setNumRounds] = useState(5);
     const [pairingMode, setPairingMode] = useState('all');
     const [tiebreakOrder, setTiebreakOrder] = useState(TIEBREAK_OPTIONS.map(opt => opt.id));
     const [activeTiebreaks, setActiveTiebreaks] = useState(['bh', 'sb', 'wins']);
+    const [saveWarning, setSaveWarning] = useState(null);
 
     useEffect(() => {
         if (config) {
@@ -41,12 +42,16 @@ export default function TournamentConfigModal({ open, onClose, config, onSave, l
             });
             setTiebreakOrder(savedOrder);
         } else {
-            setNumRounds(5);
+            setNumRounds(defaultNumRounds);
             setPairingMode('all');
             setActiveTiebreaks(['bh', 'sb', 'wins']);
             setTiebreakOrder(TIEBREAK_OPTIONS.map(opt => opt.id));
         }
-    }, [config, open]);
+    }, [config, defaultNumRounds, open]);
+
+    useEffect(() => {
+        setSaveWarning(null);
+    }, [numRounds, pairingMode, open]);
 
     const sensors = useSensors(useSensor(PointerSensor));
 
@@ -70,18 +75,35 @@ export default function TournamentConfigModal({ open, onClose, config, onSave, l
     };
 
     const handleSave = async () => {
+        if (inlineWarning) {
+            setSaveWarning(inlineWarning);
+            return;
+        }
+
         // Only save active tiebreaks in the order they appear in tiebreakOrder
         const finalTiebreaks = tiebreakOrder.filter(id => activeTiebreaks.includes(id));
         const shouldClose = await onSave({
             ...(config || {}),
-            numRounds,
+            numRounds: Number(numRounds) || 1,
             pairingMode,
             tiebreaks: finalTiebreaks,
         });
+
+        if (shouldClose?.warning) {
+            setSaveWarning(shouldClose.warning);
+            return;
+        }
+
         if (shouldClose !== false) onClose();
     };
 
     if (!open) return null;
+
+    const inlineWarning = saveWarning || getRoundCountWarning?.({
+        ...(config || {}),
+        numRounds: Number(numRounds) || 1,
+        pairingMode,
+    });
 
     return (
         <Portal>
@@ -105,12 +127,16 @@ export default function TournamentConfigModal({ open, onClose, config, onSave, l
                             <input
                                 type="number"
                                 min="1"
-                                max="20"
+                                max={maxNumRounds}
                                 className="bg-surface-50-950 border border-surface-200-800 rounded-md px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary-500 transition-all font-mono"
                                 value={numRounds}
                                 onChange={(e) => setNumRounds(parseInt(e.target.value) || 1)}
                             />
                         </label>
+
+                        {inlineWarning && (
+                            <InlineWarning warning={inlineWarning} />
+                        )}
 
                         <div className="space-y-2">
                             <div className="flex items-center justify-between gap-3">
@@ -183,7 +209,8 @@ export default function TournamentConfigModal({ open, onClose, config, onSave, l
                         </button>
                         <button
                             onClick={handleSave}
-                            className="px-6 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 transition-colors font-bold shadow-lg shadow-primary-500/20"
+                            disabled={Boolean(inlineWarning)}
+                            className="px-6 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 transition-colors font-bold shadow-lg shadow-primary-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Save
                         </button>
@@ -191,6 +218,29 @@ export default function TournamentConfigModal({ open, onClose, config, onSave, l
                 </div>
             </div>
         </Portal>
+    );
+}
+
+function InlineWarning({ warning }) {
+    return (
+        <div className="space-y-2 rounded-lg border border-warning-500/30 bg-warning-500/10 p-3">
+            <div className="flex items-start gap-2 text-sm font-semibold text-warning-700 dark:text-warning-400">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>{warning.message}</span>
+            </div>
+            {warning.details?.length > 0 && (
+                <div className="space-y-1 pl-6">
+                    {warning.details.map((detail, index) => (
+                        <div key={`${detail.line || index}-${detail.reason}`} className="flex items-start gap-2 text-xs text-surface-700-300">
+                            {detail.line !== undefined && (
+                                <span className="shrink-0 font-mono text-surface-500">{detail.line}</span>
+                            )}
+                            <span>{detail.reason}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
     );
 }
 

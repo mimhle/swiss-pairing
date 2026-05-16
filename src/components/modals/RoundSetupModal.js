@@ -5,7 +5,7 @@ import { Portal } from '@skeletonlabs/skeleton-react';
 import { AlertTriangle, Play, X, Shield, Palette, Trash2, UserX } from 'lucide-react';
 import ScrollLock from '@/components/utility/ScrollLock';
 
-export default function RoundSetupModal({ open, onClose, onStart, roundNumber, rounds = [], canStart = true, showDelete = true, excludedPlayers = [], unassignedPlayers = [], onDeleteRounds }) {
+export default function RoundSetupModal({ open, onClose, onStart, roundNumber, rounds = [], canStart = true, showDelete = true, excludedPlayers = [], unassignedPlayers = [], validationWarning = null, onDeleteRounds }) {
     const [startingColor, setStartingColor] = useState('white');
     const [protectClub, setProtectClub] = useState(false);
     const [deleteMode, setDeleteMode] = useState('selected');
@@ -31,6 +31,7 @@ export default function RoundSetupModal({ open, onClose, onStart, roundNumber, r
     };
 
     const selectedCount = deleteMode === 'all' ? rounds.length : selectedRoundIndexes.length;
+    const canGeneratePairings = canStart && !validationWarning;
 
     if (!open) return null;
 
@@ -55,6 +56,26 @@ export default function RoundSetupModal({ open, onClose, onStart, roundNumber, r
                             <h3 className="text-sm font-semibold uppercase tracking-wider text-surface-500">
                                 Round {roundNumber} Setup
                             </h3>
+                            {validationWarning && (
+                                <div className="space-y-2 rounded-lg border border-warning-500/30 bg-warning-500/10 p-3">
+                                    <div className="flex items-start gap-2 text-sm font-semibold text-warning-700 dark:text-warning-400">
+                                        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                                        <span>{validationWarning.message}</span>
+                                    </div>
+                                    {validationWarning.details?.length > 0 && (
+                                        <div className="space-y-1 pl-6">
+                                            {validationWarning.details.map((detail, index) => (
+                                                <div key={`${detail.line || index}-${detail.reason}`} className="flex items-start gap-2 text-xs text-surface-700-300">
+                                                    {detail.line !== undefined && (
+                                                        <span className="shrink-0 font-mono text-surface-500">{detail.line}</span>
+                                                    )}
+                                                    <span>{detail.reason}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                             {unassignedPlayers.length > 0 && (
                                 <div className="space-y-2 rounded-lg border border-warning-500/30 bg-warning-500/10 p-3">
                                     <div className="flex items-center gap-2 text-sm font-semibold text-warning-700 dark:text-warning-400">
@@ -239,7 +260,8 @@ export default function RoundSetupModal({ open, onClose, onStart, roundNumber, r
                         {canStart && (
                             <button
                                 onClick={() => onStart({ startingColor, protectClub })}
-                                className="px-6 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 transition-colors font-medium shadow-lg shadow-primary-500/20 flex items-center gap-2"
+                                disabled={!canGeneratePairings}
+                                className="px-6 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 transition-colors font-medium shadow-lg shadow-primary-500/20 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <Play size={14} />
                                 Generate Pairings

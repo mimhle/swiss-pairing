@@ -401,6 +401,7 @@ export default function ManualPairingModal({
     previousByeSet = new Set(),
     forfeitedPlayerIds = new Set(),
     isSaving = false,
+    validationWarning = null,
     onClose,
     onSave,
 }) {
@@ -550,6 +551,7 @@ export default function ManualPairingModal({
     }, [boardWarnings, specialWarnings]);
     const blockingWarningCount = manualWarningCount + remainderWarnings.length;
     const hasManualWarnings = manualWarningCount > 0;
+    const hasValidationWarning = Boolean(validationWarning);
     const hasBlockingWarnings = blockingWarningCount > 0;
 
     const clearPlayerFromBoards = (items, playerId) => {
@@ -932,8 +934,10 @@ export default function ManualPairingModal({
                     </DndContext>
 
                     <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-surface-200-800">
-                        <p className={`text-xs ${hasBlockingWarnings ? 'text-error-600 dark:text-error-400 font-medium' : 'text-surface-500'}`}>
-                            {hasManualWarnings
+                        <p className={`text-xs ${hasValidationWarning || hasBlockingWarnings ? 'text-error-600 dark:text-error-400 font-medium' : 'text-surface-500'}`}>
+                            {hasValidationWarning
+                                ? validationWarning.message
+                                : hasManualWarnings
                                 ? `Resolve ${manualWarningCount} manual pairing warning${manualWarningCount !== 1 ? 's' : ''} before saving.`
                                 : remainderWarnings.length > 0
                                     ? `Resolve ${remainderWarnings.length} remainder warning${remainderWarnings.length !== 1 ? 's' : ''} before pairing the rest, or leave them unassigned.`
@@ -951,8 +955,8 @@ export default function ManualPairingModal({
                             </button>
                             <button
                                 onClick={() => onSave(buildSaveBoards(), { pairRest: false })}
-                                disabled={isSaving || hasManualWarnings}
-                                title={hasManualWarnings ? 'Resolve manual pairing warnings before saving' : undefined}
+                                disabled={isSaving || hasValidationWarning || hasManualWarnings}
+                                title={hasValidationWarning ? validationWarning.message : hasManualWarnings ? 'Resolve manual pairing warnings before saving' : undefined}
                                 className="flex items-center gap-2 px-4 py-2 text-sm rounded preset-tonal disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                             >
                                 <Save size={15} />
@@ -960,8 +964,8 @@ export default function ManualPairingModal({
                             </button>
                             <button
                                 onClick={() => onSave(buildSaveBoards(), { pairRest: true })}
-                                disabled={isSaving || hasBlockingWarnings}
-                                title={hasBlockingWarnings ? 'Resolve pairing warnings before saving' : undefined}
+                                disabled={isSaving || hasValidationWarning || hasBlockingWarnings}
+                                title={hasValidationWarning ? validationWarning.message : hasBlockingWarnings ? 'Resolve pairing warnings before saving' : undefined}
                                 className="flex items-center gap-2 px-5 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                             >
                                 <Save size={15} />

@@ -70,6 +70,12 @@ const TEAM_EXPORT_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone=
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
 
+const DEFAULT_TOURNAMENT_CONFIG = {
+    numRounds: 5,
+    pairingMode: 'all',
+    tiebreaks: ['bh', 'sb', 'wins'],
+};
+
 const formatNumber = (value) => Number(value || 0).toFixed(1).replace('.0', '');
 
 const safeFilePart = (value) => {
@@ -122,6 +128,11 @@ const filterRoundsForGroup = (rounds = [], group, playerGroupLookup = {}) => rou
 
 export default function StandingsTab() {
     const { activeTournamentId, activeTab, rounds, tournamentConfig, updateTournamentConfig } = useTournament();
+    const standingConfig = useMemo(() => ({
+        ...DEFAULT_TOURNAMENT_CONFIG,
+        ...(tournamentConfig || {}),
+        tiebreaks: tournamentConfig?.tiebreaks ?? DEFAULT_TOURNAMENT_CONFIG.tiebreaks,
+    }), [tournamentConfig]);
     const [players, setPlayers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [standingMode, setStandingMode] = useState('individual');
@@ -141,14 +152,14 @@ export default function StandingsTab() {
     const standings = useMemo(() => {
         // Use tiebreaks from config if they exist (even if empty array). 
         // Fallback to default only if config is missing or the tiebreaks field is missing.
-        const tiebreaks = tournamentConfig?.tiebreaks ?? ['bh', 'sb', 'wins'];
+        const tiebreaks = standingConfig.tiebreaks;
         return calculateStandings(players, rounds, tiebreaks);
-    }, [players, rounds, tournamentConfig]);
+    }, [players, rounds, standingConfig]);
 
     const groupedStandings = useMemo(() => {
-        if (!isGroupPairingMode(tournamentConfig)) return [];
+        if (!isGroupPairingMode(standingConfig)) return [];
 
-        const tiebreaks = tournamentConfig?.tiebreaks ?? ['bh', 'sb', 'wins'];
+        const tiebreaks = standingConfig.tiebreaks;
         const playerGroupLookup = buildPlayerGroupLookup(players);
         return [...getGroupedPlayers(players).entries()]
             .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
@@ -156,10 +167,10 @@ export default function StandingsTab() {
                 group,
                 standings: calculateStandings(groupPlayers, filterRoundsForGroup(rounds, group, playerGroupLookup), tiebreaks)
             }));
-    }, [players, rounds, tournamentConfig]);
+    }, [players, rounds, standingConfig]);
 
     const individualStandingRows = useMemo(() => {
-        if (!isGroupPairingMode(tournamentConfig)) {
+        if (!isGroupPairingMode(standingConfig)) {
             return standings.map((player, index) => ({ type: 'player', player, rank: index + 1 }));
         }
 
@@ -167,24 +178,22 @@ export default function StandingsTab() {
             { type: 'group', group, count: groupStandings.length },
             ...groupStandings.map((player, index) => ({ type: 'player', player, rank: index + 1, group }))
         ]);
-    }, [groupedStandings, standings, tournamentConfig]);
+    }, [groupedStandings, standings, standingConfig]);
 
     const teamStandingOptions = useMemo(() => {
-        return normalizeTeamStandingOptions(tournamentConfig?.teamStandingOptions);
-    }, [tournamentConfig]);
+        return normalizeTeamStandingOptions(standingConfig.teamStandingOptions);
+    }, [standingConfig]);
 
     const teamStandings = useMemo(() => {
-        const tiebreaks = tournamentConfig?.tiebreaks ?? ['bh', 'sb', 'wins'];
+        const tiebreaks = standingConfig.tiebreaks;
         return calculateTeamStandings(players, rounds, tiebreaks, teamStandingOptions);
-    }, [players, rounds, tournamentConfig, teamStandingOptions]);
+    }, [players, rounds, standingConfig, teamStandingOptions]);
 
     const activeTiebreakers = useMemo(() => {
-        return tournamentConfig?.tiebreaks ?? ['bh', 'sb', 'wins'];
-    }, [tournamentConfig]);
+        return standingConfig.tiebreaks;
+    }, [standingConfig]);
 
-    const groupedMode = isGroupPairingMode(tournamentConfig);
-
-    if (!tournamentConfig) return null;
+    const groupedMode = isGroupPairingMode(standingConfig);
 
     const PlayerInfo = ({ player }) => (
         <Tooltip>
@@ -275,7 +284,7 @@ export default function StandingsTab() {
 
     const handleSaveTeamStandingOptions = (teamStandingOptions) => {
         updateTournamentConfig({
-            ...tournamentConfig,
+            ...standingConfig,
             teamStandingOptions
         });
     };
@@ -753,7 +762,7 @@ export default function StandingsTab() {
             <TeamStandingConfigModal
                 open={showTeamConfigModal}
                 onClose={() => setShowTeamConfigModal(false)}
-                config={tournamentConfig}
+                config={standingConfig}
                 onSave={handleSaveTeamStandingOptions}
             />
 

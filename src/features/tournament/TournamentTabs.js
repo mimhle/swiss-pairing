@@ -17,7 +17,7 @@ const tabs = [
 ];
 
 export default function TournamentTabs() {
-    const { activeTab, setActiveTab, tournamentConfig } = useTournament();
+    const { activeTab, setActiveTab } = useTournament();
 
     return (
         <Tabs value={activeTab} onValueChange={(e) => setActiveTab(e.value)}>
@@ -27,7 +27,6 @@ export default function TournamentTabs() {
                         <Tabs.Trigger 
                             value={value} 
                             className="flex items-center gap-2"
-                            disabled={(value === 'rounds' || value === 'standings') && !tournamentConfig}
                         >
                             <Icon size={15} />
                             {label}

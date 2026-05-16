@@ -2243,22 +2243,11 @@ export default function PlayersTab() {
                     </div>
 
                     <button 
-                        className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded cursor-pointer transition-all ${
-                            tournamentConfig ? 'bg-primary-500/10 text-primary-500 border border-primary-500/20 hover:bg-primary-500/20' : 'preset-filled'
-                        }`}
+                        className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded cursor-pointer transition-all bg-primary-500/10 text-primary-500 border border-primary-500/20 hover:bg-primary-500/20"
                         onClick={() => setActiveTab('rounds')}
                     >
-                        {tournamentConfig ? (
-                            <>
-                                <ArrowRight size={14} />
-                                Go to Rounds
-                            </>
-                        ) : (
-                            <>
-                                <Play size={14} />
-                                Start Pairing
-                            </>
-                        )}
+                        <ArrowRight size={14} />
+                        Go to Rounds
                     </button>
                 </div>
             )}
