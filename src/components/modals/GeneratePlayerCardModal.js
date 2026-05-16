@@ -577,6 +577,47 @@ function mergeExportSettings(saved, legacyConfig) {
     return merged;
 }
 
+function getConfigExportJson(config, exportSettings) {
+    return JSON.stringify({ ...config, exportSettings }, null, 2);
+}
+
+function parseConfigJsonString(raw) {
+    const trimmed = String(raw || '').trim().replace(/^\uFEFF/, '');
+    const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    return JSON.parse(fenced ? fenced[1] : trimmed);
+}
+
+function looksLikeCardConfig(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    if (Array.isArray(value.layers)) return true;
+    return Object.values(value).some(item => (
+        item
+        && typeof item === 'object'
+        && !Array.isArray(item)
+        && (item.template !== undefined || item.anchor !== undefined)
+    ));
+}
+
+function normalizeImportedConfigData(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('Config must be a JSON object.');
+    }
+
+    const source = looksLikeCardConfig(data.config)
+        ? { ...data.config, exportSettings: data.exportSettings || data.config.exportSettings }
+        : data;
+    const migrated = migrateConfig(source);
+
+    if (!migrated || !Array.isArray(migrated.layers)) {
+        throw new Error('Config JSON must contain player card layers.');
+    }
+
+    return {
+        config: migrated,
+        exportSettings: mergeExportSettings(source.exportSettings || data.exportSettings, source),
+    };
+}
+
 function getPdfPageSize(settings) {
     const pdf = settings?.pdf || DEFAULT_EXPORT_SETTINGS.pdf;
     const preset = PAPER_SIZES_CM[pdf.paperSize] || PAPER_SIZES_CM.a4;
@@ -1493,6 +1534,18 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     const importConfigRef = useRef(null);
     const [showTournamentImport, setShowTournamentImport] = useState(false);
     const [selectedImportTournamentId, setSelectedImportTournamentId] = useState('');
+    const [showJsonImport, setShowJsonImport] = useState(false);
+    const [jsonImportText, setJsonImportText] = useState('');
+    const [jsonImportError, setJsonImportError] = useState('');
+    const [showJsonExport, setShowJsonExport] = useState(false);
+    const [jsonCopyStatus, setJsonCopyStatus] = useState('');
+
+    const applyImportedConfig = useCallback((data) => {
+        const imported = normalizeImportedConfigData(data);
+        commitHistory();
+        updateConfig(imported.config);
+        setExportSettings(imported.exportSettings);
+    }, [commitHistory, updateConfig]);
 
     const handleImportConfig = (e) => {
         const file = e.target.files[0];
@@ -1501,10 +1554,8 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         reader.onload = (ev) => {
             try {
                 const data = JSON.parse(ev.target.result);
-                commitHistory();
-                updateConfig(migrateConfig(data));
-                setExportSettings(mergeExportSettings(data.exportSettings, data));
-            } catch (e) {
+                applyImportedConfig(data);
+            } catch (_) {
                 showAlert('Import Failed', 'Invalid JSON config file.');
             }
         };
@@ -1512,11 +1563,38 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
         e.target.value = '';
     };
 
+    const openJsonImport = () => {
+        setJsonImportText('');
+        setJsonImportError('');
+        setShowJsonImport(true);
+    };
+
+    const handleImportJsonString = () => {
+        try {
+            const data = parseConfigJsonString(jsonImportText);
+            applyImportedConfig(data);
+            setShowJsonImport(false);
+            setJsonImportText('');
+            setJsonImportError('');
+        } catch (error) {
+            setJsonImportError(error?.message || 'Invalid JSON config string.');
+        }
+    };
+
     const handleExportConfig = () => {
-        const blob = new Blob([JSON.stringify({ ...config, exportSettings }, null, 2)], { type: 'application/json' });
+        const blob = new Blob([getConfigExportJson(config, exportSettings)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         Object.assign(document.createElement('a'), { href: url, download: 'player-card-config.json' }).click();
         URL.revokeObjectURL(url);
+    };
+
+    const handleCopyConfigJson = async () => {
+        try {
+            await navigator.clipboard.writeText(getConfigExportJson(config, exportSettings));
+            setJsonCopyStatus('Copied');
+        } catch (_) {
+            setJsonCopyStatus('Select and copy manually');
+        }
     };
 
     const otherTournaments = tournaments.filter(t => t.id !== activeTournamentId);
@@ -1539,9 +1617,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
             showAlert('No Config Found', `${tournament?.name || 'The selected tournament'} does not have a saved player card config.`);
             return;
         }
-        commitHistory();
-        updateConfig(migrateConfig(sourceConfig));
-        setExportSettings(mergeExportSettings(sourceExportSettings, sourceConfig));
+        applyImportedConfig({ ...sourceConfig, exportSettings: sourceExportSettings });
         setShowTournamentImport(false);
     };
 
@@ -1788,6 +1864,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     const computedStartIdx = Math.max(0, (parseInt(exportSettings.rangeStart) || 1) - 1);
     const computedEndIdx = Math.min(Math.max(0, players.length - 1), (parseInt(exportSettings.rangeEnd) || players.length) - 1);
     const targetCount = players.length > 0 ? Math.max(0, computedEndIdx - computedStartIdx + 1) : 0;
+    const exportConfigJson = getConfigExportJson(config, exportSettings);
 
     if (!open || !mounted) return null;
 
@@ -1839,6 +1916,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                 <Menu
                                     onSelect={({ value }) => {
                                         if (value === 'file') importConfigRef.current?.click();
+                                        if (value === 'json') openJsonImport();
                                         if (value === 'tournament') openTournamentImport();
                                     }}
                                 >
@@ -1854,6 +1932,12 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                                     <Menu.ItemText className="flex items-center gap-2">
                                                         <FileUp size={13} />
                                                         From file
+                                                    </Menu.ItemText>
+                                                </Menu.Item>
+                                                <Menu.Item value="json" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                    <Menu.ItemText className="flex items-center gap-2">
+                                                        <FileText size={13} />
+                                                        Paste JSON
                                                     </Menu.ItemText>
                                                 </Menu.Item>
                                                 <Menu.Item value="tournament" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
@@ -1873,13 +1957,40 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                     className="hidden"
                                     onChange={handleImportConfig}
                                 />
-                                <button
-                                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
-                                    onClick={handleExportConfig}
+                                <Menu
+                                    onSelect={({ value }) => {
+                                        if (value === 'json') {
+                                            setJsonCopyStatus('');
+                                            setShowJsonExport(true);
+                                            handleCopyConfigJson();
+                                        }
+                                        if (value === 'file') handleExportConfig();
+                                    }}
                                 >
-                                    <FileDown size={13} />
-                                    Export config
-                                </button>
+                                    <Menu.Trigger className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
+                                        <FileDown size={13} />
+                                        Export config
+                                        <ChevronDown size={12} />
+                                    </Menu.Trigger>
+                                    <Portal>
+                                        <Menu.Positioner>
+                                            <Menu.Content className="card p-1 preset-filled-surface-100-900 shadow-lg min-w-48 z-[70]">
+                                                <Menu.Item value="json" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                    <Menu.ItemText className="flex items-center gap-2">
+                                                        <Copy size={13} />
+                                                        Copy JSON
+                                                    </Menu.ItemText>
+                                                </Menu.Item>
+                                                <Menu.Item value="file" className="px-3 py-1.5 rounded text-sm cursor-default hover:preset-tonal-primary">
+                                                    <Menu.ItemText className="flex items-center gap-2">
+                                                        <FileDown size={13} />
+                                                        To file
+                                                    </Menu.ItemText>
+                                                </Menu.Item>
+                                            </Menu.Content>
+                                        </Menu.Positioner>
+                                    </Portal>
+                                </Menu>
                                 <div className="w-px h-4 bg-surface-200-800 mx-1"></div>
                                 <button
                                     className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors"
@@ -2024,7 +2135,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                         <option value="">------</option>
                                         {players.map((p, i) => (
                                             <option key={i} value={i}>
-                                                {p.name || `Player ${p.playerUniqueId}`}
+                                                {`(${p.playerUniqueId}) ${p.name}` || `Player ${p.playerUniqueId}`}
                                             </option>
                                         ))}
                                     </select>
@@ -2129,6 +2240,108 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                 </div>
 
             </Portal>
+            {showJsonImport && (
+                <Portal>
+                    <div
+                        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[120]"
+                        onClick={() => setShowJsonImport(false)}
+                    />
+                    <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+                        <div
+                            className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-2xl space-y-4 shadow-xl"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <div>
+                                <h3 className="text-base font-semibold">Import config JSON</h3>
+                                <p className="text-sm text-surface-600-400 mt-1">
+                                    Paste a player card config JSON string.
+                                </p>
+                            </div>
+                            <textarea
+                                className="w-full min-h-72 font-mono text-xs bg-surface-50-950 border border-surface-200-800 rounded px-3 py-2 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 resize-y"
+                                value={jsonImportText}
+                                onChange={e => {
+                                    setJsonImportText(e.target.value);
+                                    if (jsonImportError) setJsonImportError('');
+                                }}
+                                placeholder='{"layers":[...],"exportSettings":{...}}'
+                                spellCheck={false}
+                                autoFocus
+                            />
+                            {jsonImportError && (
+                                <div className="text-sm text-error-500 bg-error-500/10 border border-error-500/20 rounded px-3 py-2">
+                                    {jsonImportError}
+                                </div>
+                            )}
+                            <div className="flex justify-end gap-2">
+                                <button
+                                    className="px-4 py-1.5 text-sm rounded preset-tonal cursor-pointer"
+                                    onClick={() => setShowJsonImport(false)}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    className="px-4 py-1.5 text-sm rounded bg-primary-500 hover:bg-primary-600 text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                    onClick={handleImportJsonString}
+                                    disabled={!jsonImportText.trim()}
+                                >
+                                    Import
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </Portal>
+            )}
+            {showJsonExport && (
+                <Portal>
+                    <div
+                        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[120]"
+                        onClick={() => setShowJsonExport(false)}
+                    />
+                    <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+                        <div
+                            className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-2xl space-y-4 shadow-xl"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <div className="flex items-start justify-between gap-4">
+                                <div>
+                                    <h3 className="text-base font-semibold">Export config JSON</h3>
+                                    <p className="text-sm text-surface-600-400 mt-1">
+                                        Copy this player card config JSON string.
+                                    </p>
+                                </div>
+                                {jsonCopyStatus && (
+                                    <span className="text-xs rounded preset-tonal px-2 py-1 shrink-0">
+                                        {jsonCopyStatus}
+                                    </span>
+                                )}
+                            </div>
+                            <textarea
+                                className="w-full min-h-72 font-mono text-xs bg-surface-50-950 border border-surface-200-800 rounded px-3 py-2 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 resize-y"
+                                value={exportConfigJson}
+                                readOnly
+                                spellCheck={false}
+                                onFocus={e => e.target.select()}
+                            />
+                            <div className="flex justify-end gap-2">
+                                <button
+                                    className="px-4 py-1.5 text-sm rounded preset-tonal cursor-pointer"
+                                    onClick={() => setShowJsonExport(false)}
+                                >
+                                    Close
+                                </button>
+                                <button
+                                    className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded bg-primary-500 hover:bg-primary-600 text-white transition-colors cursor-pointer"
+                                    onClick={handleCopyConfigJson}
+                                >
+                                    <Copy size={14} />
+                                    Copy JSON
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </Portal>
+            )}
             {showTournamentImport && (
                 <Portal>
                     <div
