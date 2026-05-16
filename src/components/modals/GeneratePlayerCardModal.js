@@ -1962,7 +1962,6 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                                         if (value === 'json') {
                                             setJsonCopyStatus('');
                                             setShowJsonExport(true);
-                                            handleCopyConfigJson();
                                         }
                                         if (value === 'file') handleExportConfig();
                                     }}
