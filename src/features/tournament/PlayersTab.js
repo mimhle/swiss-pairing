@@ -583,7 +583,7 @@ const DraggableRow = memo(({ player, rowIdx, displayIndex, playerWarnings, COLUM
 
 DraggableRow.displayName = 'DraggableRow';
 
-const GhostPlayerRow = memo(({ draft, setDraft, hasDraft, nextId, onCommit, hasActiveFilter }) => {
+const GhostPlayerRow = memo(({ draft, setDraft, hasDraft, nextId, onCommit, onPaste, hasActiveFilter }) => {
     const handleBlur = (e) => {
         if (!hasDraft || e.currentTarget.contains(e.relatedTarget)) return;
         onCommit();
@@ -632,6 +632,7 @@ const GhostPlayerRow = memo(({ draft, setDraft, hasDraft, nextId, onCommit, hasA
                             value={draft[col.key] ?? ''}
                             data-ghost-col={EDITABLE_COL_IDX[col.key]}
                             onChange={e => setDraft(prev => ({ ...prev, [col.key]: e.target.value }))}
+                            onPaste={e => onPaste(e, col.key)}
                             onKeyDown={e => handleKeyDown(e, EDITABLE_COL_IDX[col.key])}
                         />
                     ) : (
@@ -845,6 +846,42 @@ export default function PlayersTab() {
         if (!EDITABLE_KEYS.some(key => values[key])) return;
 
         setPlayersWithHistory(prev => [...prev, { ...emptyPlayer(nextPlayerId(prev)), ...values }]);
+        setDraftPlayer(emptyPlayerDraft());
+    }, [draftPlayer, setPlayersWithHistory]);
+
+    const handleGhostPaste = useCallback((e, colKey) => {
+        const text = e.clipboardData.getData('text');
+        const rawRows = text.split(/\r?\n/);
+        while (rawRows.length && rawRows[rawRows.length - 1] === '') rawRows.pop();
+        if (rawRows.length <= 1 && !(rawRows[0] ?? '').includes('\t')) return;
+
+        e.preventDefault();
+        const editableCols = COLUMNS.filter(c => c.editable);
+        const startColIdx = editableCols.findIndex(c => c.key === colKey);
+        const pasteRows = rawRows.map(r => r.split('\t'));
+        const draftValues = Object.fromEntries(
+            EDITABLE_KEYS.map(key => [key, String(draftPlayer[key] ?? '').trim()])
+        );
+
+        setPlayersWithHistory(prev => {
+            const next = [...prev];
+            let id = nextPlayerId(next);
+            pasteRows.forEach((cells, ri) => {
+                const player = ri === 0
+                    ? { ...emptyPlayer(id), ...draftValues }
+                    : emptyPlayer(id);
+
+                cells.forEach((val, ci) => {
+                    const col = editableCols[startColIdx + ci];
+                    if (!col) return;
+                    player[col.key] = val.trim();
+                });
+
+                next.push(player);
+                id += 1;
+            });
+            return next;
+        });
         setDraftPlayer(emptyPlayerDraft());
     }, [draftPlayer, setPlayersWithHistory]);
 
@@ -2154,6 +2191,7 @@ export default function PlayersTab() {
                                     hasDraft={hasDraftPlayer}
                                     nextId={nextPlayerId(players)}
                                     onCommit={commitDraftPlayer}
+                                    onPaste={handleGhostPaste}
                                     hasActiveFilter={hasActiveFilter}
                                 />
                             </tbody>
