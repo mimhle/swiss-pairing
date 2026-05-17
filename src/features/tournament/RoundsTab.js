@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { useTournament } from '@/context/TournamentContext';
-import { Swords, Play, Settings, ChevronRight, ChevronLeft, ChevronDown, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download } from 'lucide-react';
+import { Swords, Play, Settings, ChevronRight, ChevronLeft, ChevronDown, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download, UserX, RotateCcw, X } from 'lucide-react';
 import { Dialog, Tooltip, Portal } from '@skeletonlabs/skeleton-react';
 import TournamentConfigModal from '@/components/modals/TournamentConfigModal';
 import RoundSetupModal from '@/components/modals/RoundSetupModal';
@@ -213,17 +213,23 @@ function getPlayersWithBye(roundsBeforeTarget) {
 function getTournamentForfeitSet(roundsBeforeTarget) {
     const forfeits = new Set();
     roundsBeforeTarget.forEach(round => {
+        const returnedIds = [
+            ...(round.returnedForfeitPlayerIds || []),
+            ...(round.options?.returnedForfeitPlayerIds || []),
+        ];
+        returnedIds.forEach(playerId => forfeits.delete(String(playerId)));
         round.pairings?.forEach(pairing => {
             if (pairing.isTournamentForfeit && pairing.whiteId) forfeits.add(String(pairing.whiteId));
-            if (pairing.result === '1-0f' && pairing.blackId) forfeits.add(String(pairing.blackId));
-            if (pairing.result === '0-1f' && pairing.whiteId) forfeits.add(String(pairing.whiteId));
-            if (!pairing.isBye && pairing.result === '0-0') {
-                if (pairing.whiteId) forfeits.add(String(pairing.whiteId));
-                if (pairing.blackId) forfeits.add(String(pairing.blackId));
-            }
         });
     });
     return forfeits;
+}
+
+function getNextForfeitSet(currentForfeitedIds, newForfeitPlayerIds = [], returnedForfeitPlayerIds = []) {
+    const next = new Set([...currentForfeitedIds].map(String));
+    returnedForfeitPlayerIds.forEach(playerId => next.delete(String(playerId)));
+    newForfeitPlayerIds.forEach(playerId => next.add(String(playerId)));
+    return next;
 }
 
 function validateManualPairings(manualBoards, previousRounds, options = {}) {
@@ -558,6 +564,25 @@ function getRoundsPlayerIds(roundsToRead = []) {
     return ids;
 }
 
+function getManualBoardPlayerIds(boards = []) {
+    const ids = new Set();
+    boards.forEach(board => {
+        [board.whiteId, board.blackId, board.byeId, board.forfeitId]
+            .filter(Boolean)
+            .forEach(playerId => ids.add(String(playerId)));
+    });
+    return ids;
+}
+
+function getManualBoardForfeitIds(boards = []) {
+    return new Set(
+        boards
+            .map(board => board.forfeitId)
+            .filter(Boolean)
+            .map(String)
+    );
+}
+
 function hasPlayerName(player) {
     return String(player?.name || '').trim().length > 0;
 }
@@ -659,10 +684,19 @@ function preserveOriginalRemainderPairings(remainingPlayers, originalPairings = 
 }
 
 async function generateManualRemainderPairingsByGroup(playersNeedingPairing, options, previousRounds, config, tournamentName, onProgress, allPlayersForGroups = playersNeedingPairing) {
-    const playerGroupLookup = buildPlayerGroupLookup(allPlayersForGroups);
+    const pairingPlayers = allPlayersForGroups.filter(hasPlayerName);
+    const playerGroupLookup = buildPlayerGroupLookup(pairingPlayers);
     const previousByes = getPlayersWithBye(previousRounds);
+    const activePlayerIds = new Set(playersNeedingPairing.map(player => String(player.playerUniqueId)));
+    const excludedPlayerIds = new Set([
+        ...(options.excludedPlayerIds || []).map(String),
+        ...pairingPlayers
+            .map(player => String(player.playerUniqueId))
+            .filter(playerId => !activePlayerIds.has(playerId)),
+    ]);
     const groups = [...getGroupedPlayers(playersNeedingPairing).entries()]
         .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+    const allGroups = getGroupedPlayers(pairingPlayers);
     const generated = [];
 
     for (let index = 0; index < groups.length; index += 1) {
@@ -685,8 +719,8 @@ async function generateManualRemainderPairingsByGroup(playersNeedingPairing, opt
 
         const groupRounds = filterRoundsForGroup(previousRounds, group, playerGroupLookup);
         const groupPairings = await generatePairings(
-            groupPlayers,
-            options,
+            allGroups.get(group) || groupPlayers,
+            { ...options, excludedPlayerIds: [...excludedPlayerIds] },
             groupRounds,
             config,
             `${tournamentName} - ${group}`,
@@ -713,6 +747,7 @@ export default function RoundsTab() {
     const [showConfigModal, setShowConfigModal] = useState(false);
     const [showSetupModal, setShowSetupModal] = useState(false);
     const [showManualPairingModal, setShowManualPairingModal] = useState(false);
+    const [showForfeitModal, setShowForfeitModal] = useState(false);
     const [manualPairingMode, setManualPairingMode] = useState('create');
     const [pendingManualBoards, setPendingManualBoards] = useState(null);
     const [roundModalMode, setRoundModalMode] = useState('setup');
@@ -731,6 +766,10 @@ export default function RoundsTab() {
     const [scoreRoundOptions, setScoreRoundOptions] = useState(DEFAULT_SCORE_ROUND_OPTIONS);
     const [selectedPlayer, setSelectedPlayer] = useState(null);
     const [openPairingGroups, setOpenPairingGroups] = useState({});
+    const [selectedForfeitPlayerId, setSelectedForfeitPlayerId] = useState('');
+    const [pendingForfeitPlayerIds, setPendingForfeitPlayerIds] = useState([]);
+    const [selectedReturnPlayerId, setSelectedReturnPlayerId] = useState('');
+    const [pendingReturnPlayerIds, setPendingReturnPlayerIds] = useState([]);
     const scoreFileInputRef = useRef(null);
     const roundSelectorRef = useRef(null);
 
@@ -773,8 +812,11 @@ export default function RoundsTab() {
     }, [manualPreviousRounds]);
 
     const forfeitedPlayerIds = useMemo(() => {
-        return getTournamentForfeitSet(manualPreviousRounds);
-    }, [manualPreviousRounds]);
+        const forfeits = getTournamentForfeitSet(manualPreviousRounds);
+        return manualPairingMode === 'create'
+            ? getNextForfeitSet(forfeits, pendingForfeitPlayerIds, pendingReturnPlayerIds)
+            : forfeits;
+    }, [manualPairingMode, manualPreviousRounds, pendingForfeitPlayerIds, pendingReturnPlayerIds]);
 
     const manualInitialBoards = useMemo(() => {
         if (manualPairingMode !== 'edit' || !currentRound) return [];
@@ -790,17 +832,43 @@ export default function RoundsTab() {
         }));
     }, [currentRound, manualPairingMode]);
 
-    const nextRoundExcludedPlayers = useMemo(() => {
-        const forfeitSet = getTournamentForfeitSet(rounds);
-        const playerById = players.reduce((acc, player) => {
+    const playerById = useMemo(() => {
+        return players.reduce((acc, player) => {
             acc[String(player.playerUniqueId)] = player;
             return acc;
         }, {});
+    }, [players]);
 
-        return [...forfeitSet]
+    const currentForfeitedPlayerIds = useMemo(() => getTournamentForfeitSet(rounds), [rounds]);
+    const pendingManualForfeitPlayerIds = useMemo(() => (
+        roundModalMode === 'manual-options' && pendingManualBoards
+            ? getManualBoardForfeitIds(pendingManualBoards)
+            : new Set()
+    ), [pendingManualBoards, roundModalMode]);
+    const pendingManualForfeitPlayerIdList = useMemo(() => (
+        [...pendingManualForfeitPlayerIds]
+    ), [pendingManualForfeitPlayerIds]);
+
+    const pendingModalForfeitPlayerSet = useMemo(() => new Set(pendingForfeitPlayerIds.map(String)), [pendingForfeitPlayerIds]);
+    const pendingForfeitPlayerSet = useMemo(() => new Set([
+        ...pendingForfeitPlayerIds.map(String),
+        ...pendingManualForfeitPlayerIdList,
+    ]), [pendingForfeitPlayerIds, pendingManualForfeitPlayerIdList]);
+    const pendingReturnPlayerSet = useMemo(() => new Set(pendingReturnPlayerIds.map(String)), [pendingReturnPlayerIds]);
+
+    const nextRoundForfeitedPlayerIds = useMemo(() => {
+        return getNextForfeitSet(
+            currentForfeitedPlayerIds,
+            [...pendingForfeitPlayerIds, ...pendingManualForfeitPlayerIdList],
+            pendingReturnPlayerIds
+        );
+    }, [currentForfeitedPlayerIds, pendingForfeitPlayerIds, pendingManualForfeitPlayerIdList, pendingReturnPlayerIds]);
+
+    const nextRoundExcludedPlayers = useMemo(() => {
+        return [...nextRoundForfeitedPlayerIds]
             .map(playerId => playerById[playerId] || { playerUniqueId: playerId, name: `Player #${playerId}` })
             .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
-    }, [players, rounds]);
+    }, [nextRoundForfeitedPlayerIds, playerById]);
 
     const currentRoundUnassignedPlayers = useMemo(() => {
         if (!currentRound || rounds.length === 0) return [];
@@ -825,14 +893,75 @@ export default function RoundsTab() {
     const nextRoundLockingPlayers = useMemo(() => {
         if (rounds.length === 0) return [];
 
-        const forfeitedIds = getTournamentForfeitSet(rounds);
         return players
             .filter(player => (
                 unlockedMidTournamentPlayerIds.has(String(player.playerUniqueId)) &&
-                !forfeitedIds.has(String(player.playerUniqueId))
+                !nextRoundForfeitedPlayerIds.has(String(player.playerUniqueId))
             ))
             .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
-    }, [players, rounds, unlockedMidTournamentPlayerIds]);
+    }, [nextRoundForfeitedPlayerIds, players, rounds.length, unlockedMidTournamentPlayerIds]);
+
+    const nextRoundForfeitCandidates = useMemo(() => {
+        const pendingAssignedIds = roundModalMode === 'manual-options' && pendingManualBoards
+            ? getManualBoardPlayerIds(pendingManualBoards)
+            : new Set();
+
+        return players
+            .filter(player => {
+                const playerId = String(player.playerUniqueId);
+                return hasPlayerName(player) &&
+                    !currentForfeitedPlayerIds.has(playerId) &&
+                    !pendingForfeitPlayerSet.has(playerId) &&
+                    !pendingAssignedIds.has(playerId);
+            })
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [currentForfeitedPlayerIds, pendingForfeitPlayerSet, pendingManualBoards, players, roundModalMode]);
+
+    const forfeitReturnCandidates = useMemo(() => {
+        return [...currentForfeitedPlayerIds]
+            .filter(playerId => !pendingReturnPlayerSet.has(playerId))
+            .map(playerId => playerById[playerId] || { playerUniqueId: playerId, name: `Player #${playerId}` })
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [currentForfeitedPlayerIds, pendingReturnPlayerSet, playerById]);
+
+    const pendingForfeitPlayers = useMemo(() => {
+        return pendingForfeitPlayerIds
+            .map(playerId => playerById[String(playerId)])
+            .filter(Boolean)
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [pendingForfeitPlayerIds, playerById]);
+
+    const pendingManualForfeitPlayers = useMemo(() => {
+        return pendingManualForfeitPlayerIdList
+            .filter(playerId => !pendingModalForfeitPlayerSet.has(String(playerId)))
+            .map(playerId => playerById[String(playerId)])
+            .filter(Boolean)
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [pendingManualForfeitPlayerIdList, pendingModalForfeitPlayerSet, playerById]);
+
+    const pendingReturnPlayers = useMemo(() => {
+        return pendingReturnPlayerIds
+            .map(playerId => playerById[String(playerId)] || { playerUniqueId: playerId, name: `Player #${playerId}` })
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [pendingReturnPlayerIds, playerById]);
+
+    useEffect(() => {
+        const candidateIds = new Set(nextRoundForfeitCandidates.map(player => String(player.playerUniqueId)));
+        setSelectedForfeitPlayerId(prev => candidateIds.has(String(prev)) ? prev : '');
+        setPendingForfeitPlayerIds(prev => {
+            const next = prev.filter(playerId => playerById[String(playerId)] && !currentForfeitedPlayerIds.has(String(playerId)));
+            return next.length === prev.length ? prev : next;
+        });
+    }, [currentForfeitedPlayerIds, nextRoundForfeitCandidates, playerById]);
+
+    useEffect(() => {
+        const candidateIds = new Set(forfeitReturnCandidates.map(player => String(player.playerUniqueId)));
+        setSelectedReturnPlayerId(prev => candidateIds.has(String(prev)) ? prev : '');
+        setPendingReturnPlayerIds(prev => {
+            const next = prev.filter(playerId => currentForfeitedPlayerIds.has(String(playerId)));
+            return next.length === prev.length ? prev : next;
+        });
+    }, [currentForfeitedPlayerIds, forfeitReturnCandidates]);
 
     const validateGroupPairingPlayers = (activePlayers, title = 'Pairing Blocked') => {
         const blankGroupPlayers = getBlankGroupPlayers(activePlayers);
@@ -905,20 +1034,32 @@ export default function RoundsTab() {
     };
 
     const generatePairingsForMode = async (activePlayers, options, previousRounds, config, tournamentName, onProgress, allPlayersForGroups = activePlayers) => {
+        const activePlayerIds = new Set((activePlayers || []).map(player => String(player.playerUniqueId)));
+        const pairingPlayers = (allPlayersForGroups || activePlayers || []).filter(hasPlayerName);
+        const excludedPlayerIds = new Set([
+            ...(options.excludedPlayerIds || []).map(String),
+            ...pairingPlayers
+                .map(player => String(player.playerUniqueId))
+                .filter(playerId => !activePlayerIds.has(playerId)),
+        ]);
+        const pairingOptions = { ...options, excludedPlayerIds: [...excludedPlayerIds] };
+
         if (!isGroupPairingMode(config)) {
-            return generatePairings(activePlayers, options, previousRounds, config, tournamentName, onProgress);
+            return generatePairings(pairingPlayers, pairingOptions, previousRounds, config, tournamentName, onProgress);
         }
 
-        const playerGroupLookup = buildPlayerGroupLookup(allPlayersForGroups);
+        const playerGroupLookup = buildPlayerGroupLookup(pairingPlayers);
         const groups = [...getGroupedPlayers(activePlayers).entries()].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+        const allGroups = getGroupedPlayers(pairingPlayers);
         const generated = [];
 
         for (let index = 0; index < groups.length; index += 1) {
             const [group, groupPlayers] = groups[index];
+            const groupPairingPlayers = allGroups.get(group) || groupPlayers;
             const groupRounds = filterRoundsForGroup(previousRounds, group, playerGroupLookup);
             const groupPairings = await generatePairings(
-                groupPlayers,
-                options,
+                groupPairingPlayers,
+                pairingOptions,
                 groupRounds,
                 config,
                 `${tournamentName} - ${group}`,
@@ -928,6 +1069,50 @@ export default function RoundsTab() {
         }
 
         return enforceSingleRoundBye(generated, pairing => pairing.group || '');
+    };
+
+    const getPreRoundForfeitOptions = () => ({
+        newForfeitPlayerIds: pendingForfeitPlayerIds,
+        returnedForfeitPlayerIds: pendingReturnPlayerIds,
+    });
+
+    const clearPreRoundForfeitAssignments = () => {
+        setSelectedForfeitPlayerId('');
+        setPendingForfeitPlayerIds([]);
+        setSelectedReturnPlayerId('');
+        setPendingReturnPlayerIds([]);
+    };
+
+    const addPendingForfeitPlayer = () => {
+        if (!selectedForfeitPlayerId) return;
+        setPendingForfeitPlayerIds(prev => prev.includes(selectedForfeitPlayerId) ? prev : [...prev, selectedForfeitPlayerId]);
+        setSelectedForfeitPlayerId('');
+    };
+
+    const removePendingForfeitPlayer = (playerId) => {
+        setPendingForfeitPlayerIds(prev => prev.filter(candidate => String(candidate) !== String(playerId)));
+    };
+
+    const addPendingReturnPlayer = () => {
+        if (!selectedReturnPlayerId) return;
+        setPendingReturnPlayerIds(prev => prev.includes(selectedReturnPlayerId) ? prev : [...prev, selectedReturnPlayerId]);
+        setSelectedReturnPlayerId('');
+    };
+
+    const removePendingReturnPlayer = (playerId) => {
+        setPendingReturnPlayerIds(prev => prev.filter(candidate => String(candidate) !== String(playerId)));
+    };
+
+    const openForfeitModal = async () => {
+        try {
+            const latestPlayers = await loadPlayers(activeTournamentId);
+            setPlayers(latestPlayers);
+        } catch {
+            showAlert('Forfeit Setup Blocked', 'Could not load players to update forfeit assignments.');
+            return;
+        }
+
+        setShowForfeitModal(true);
     };
 
     const openRoundSetup = async () => {
@@ -952,9 +1137,13 @@ export default function RoundsTab() {
             const latestPlayers = await loadPlayers(activeTournamentId);
             setPlayers(latestPlayers); // Sync local state for lookup
             const forfeitedIds = getTournamentForfeitSet(rounds);
-            const activePlayers = getActivePairablePlayers(latestPlayers, forfeitedIds);
-            const continuingForfeits = buildContinuingForfeitPairings(forfeitedIds);
-            const roundsWithPlayerSkips = addMissingPlayerSkips(rounds, activePlayers);
+            const newForfeitedIds = new Set((options.newForfeitPlayerIds || []).map(String));
+            const returnedForfeitIds = new Set((options.returnedForfeitPlayerIds || []).map(String));
+            const excludedForfeitIds = getNextForfeitSet(forfeitedIds, newForfeitedIds, returnedForfeitIds);
+            const pairablePlayers = latestPlayers.filter(hasPlayerName);
+            const activePlayers = getActivePairablePlayers(latestPlayers, excludedForfeitIds);
+            const continuingForfeits = buildContinuingForfeitPairings(excludedForfeitIds);
+            const roundsWithPlayerSkips = addMissingPlayerSkips(rounds, getActivePairablePlayers(latestPlayers, forfeitedIds));
 
             if (rounds.length === 0) {
                 const configuredRounds = Number(tournamentConfig?.numRounds) || 0;
@@ -969,12 +1158,13 @@ export default function RoundsTab() {
             // 2. Generate pairings
             const tournamentName = tournamentConfig?.name || "Tournament";
             const newPairings = await generatePairingsForMode(
-                activePlayers, 
-                options, 
+                activePlayers,
+                { ...options, excludedPlayerIds: [...excludedForfeitIds] },
                 roundsWithPlayerSkips, 
                 tournamentConfig, 
                 tournamentName,
-                (p) => setPairingProgress(p)
+                (p) => setPairingProgress(p),
+                pairablePlayers
             );
 
             // 3. Add new round
@@ -992,10 +1182,12 @@ export default function RoundsTab() {
                 })),
                 status: 'in-progress',
                 timestamp: createRoundTimestamp(),
+                returnedForfeitPlayerIds: [...returnedForfeitIds],
                 options
             };
 
             updateRounds([...roundsWithPlayerSkips, newRound]);
+            clearPreRoundForfeitAssignments();
         } catch {
             showAlert('Pairing Failed', 'Could not generate pairings for this round.');
         } finally {
@@ -1004,11 +1196,15 @@ export default function RoundsTab() {
     };
 
     const handleRoundSetupStart = (options) => {
+        const optionsWithPreAssignments = {
+            ...options,
+            ...getPreRoundForfeitOptions(),
+        };
         if (roundModalMode === 'manual-options' && pendingManualBoards) {
-            handleManualPairingSave(pendingManualBoards, options);
+            handleManualPairingSave(pendingManualBoards, optionsWithPreAssignments);
             return;
         }
-        handleStartPairing(options);
+        handleStartPairing(optionsWithPreAssignments);
     };
 
     const handleRoundSetupClose = () => {
@@ -1037,7 +1233,7 @@ export default function RoundsTab() {
             return;
         }
         if (!pairRest) {
-            handleManualPairingSave(boards, { manualRemainder: false }, { pairRest: false });
+            handleManualPairingSave(boards, { manualRemainder: false, ...getPreRoundForfeitOptions() }, { pairRest: false });
             return;
         }
         setPendingManualBoards(boards);
@@ -1055,15 +1251,20 @@ export default function RoundsTab() {
             const latestPlayers = await loadPlayers(activeTournamentId);
             setPlayers(latestPlayers);
             const latestPlayerGroupLookup = buildPlayerGroupLookup(latestPlayers);
+            const requestedForfeitIds = new Set((options.newForfeitPlayerIds || []).map(String));
+            const requestedReturnIds = new Set((options.returnedForfeitPlayerIds || []).map(String));
 
             if (manualPairingMode !== 'edit' && rounds.length === 0) {
                 const configuredRounds = Number(tournamentConfig?.numRounds) || 0;
-                const activePlayers = getActivePairablePlayers(latestPlayers, getTournamentForfeitSet(rounds));
+                const activePlayers = getActivePairablePlayers(
+                    latestPlayers,
+                    getNextForfeitSet(getTournamentForfeitSet(rounds), requestedForfeitIds, requestedReturnIds)
+                );
 
                 if (getRoundCountWarningForPlayers(activePlayers, configuredRounds)) return;
             }
 
-            const normalizedBoards = boards
+            let normalizedBoards = boards
                 .map(board => ({
                     whiteId: board.whiteId ? String(board.whiteId) : null,
                     blackId: board.blackId ? String(board.blackId) : null,
@@ -1082,6 +1283,19 @@ export default function RoundsTab() {
                     }, latestPlayerGroupLookup),
                 }));
 
+            const boardForfeitIds = new Set(normalizedBoards.map(board => board.forfeitId).filter(Boolean));
+            const setupForfeitBoards = [...requestedForfeitIds]
+                .filter(playerId => !boardForfeitIds.has(playerId))
+                .map(playerId => ({
+                    whiteId: null,
+                    blackId: null,
+                    byeId: null,
+                    forfeitId: playerId,
+                    isSkip: true,
+                    group: latestPlayerGroupLookup[playerId] || '',
+                }));
+            normalizedBoards = [...normalizedBoards, ...setupForfeitBoards];
+
             const usedIds = new Set();
             normalizedBoards.forEach(board => {
                 [board.whiteId, board.blackId, board.byeId, board.forfeitId].filter(Boolean).forEach(id => usedIds.add(String(id)));
@@ -1093,10 +1307,11 @@ export default function RoundsTab() {
                 : addMissingPlayerSkips(rounds, pairableLatestPlayers);
             const previousRounds = manualPairingMode === 'edit' ? rounds.slice(0, currentRoundIdx) : roundsWithPlayerSkips;
             const alreadyForfeited = getTournamentForfeitSet(previousRounds);
+            const activeForfeitedForRound = getNextForfeitSet(alreadyForfeited, requestedForfeitIds, requestedReturnIds);
             const remainingPlayers = latestPlayers.filter(player => (
                 hasPlayerName(player) &&
                 !usedIds.has(String(player.playerUniqueId)) &&
-                !alreadyForfeited.has(String(player.playerUniqueId))
+                !activeForfeitedForRound.has(String(player.playerUniqueId))
             ));
             const errors = validateManualPairings(normalizedBoards, previousRounds, {
                 getByeScope: isGroupPairingMode(tournamentConfig)
@@ -1113,7 +1328,7 @@ export default function RoundsTab() {
                     }
                 });
                 if (!validateGroupPairingPlayers(
-                    getActivePairablePlayers(latestPlayers, alreadyForfeited),
+                    getActivePairablePlayers(latestPlayers, activeForfeitedForRound),
                     'Manual Pairing Blocked'
                 )) return;
             }
@@ -1155,7 +1370,7 @@ export default function RoundsTab() {
                 : [];
             const continuingForfeits = manualPairingMode === 'edit'
                 ? []
-                : buildContinuingForfeitPairings(alreadyForfeited, usedIds);
+                : buildContinuingForfeitPairings(activeForfeitedForRound, usedIds);
 
             const roundNumber = manualPairingMode === 'edit' && currentRound
                 ? (currentRound.roundNumber || currentRoundIdx + 1)
@@ -1195,6 +1410,7 @@ export default function RoundsTab() {
                     roundNumber,
                     pairings: mergedPairings,
                     status: 'in-progress',
+                    returnedForfeitPlayerIds: [...requestedReturnIds],
                     options: { ...options, manualPairing: true }
                 };
                 updateRounds([...roundsWithPlayerSkips, newRound]);
@@ -1203,6 +1419,7 @@ export default function RoundsTab() {
             setShowManualPairingModal(false);
             setPendingManualBoards(null);
             setRoundModalMode('setup');
+            clearPreRoundForfeitAssignments();
         } catch (error) {
             showAlert('Manual Pairing Failed', error?.message || 'Could not generate the automatic remainder.');
         } finally {
@@ -1913,7 +2130,7 @@ export default function RoundsTab() {
     );
     const groupPairingMode = isGroupPairingMode(tournamentConfig);
     const validPlayers = players.filter(hasPlayerName);
-    const activePairablePlayers = getActivePairablePlayers(players, getTournamentForfeitSet(rounds));
+    const activePairablePlayers = getActivePairablePlayers(players, nextRoundForfeitedPlayerIds);
     const hasEnoughValidPlayerNames = validPlayers.length >= 2;
     const setupMaxRoundCount = Math.max(1, getMaximumRoundCount(validPlayers.length));
     const setupDefaultRoundCount = Math.min(5, setupMaxRoundCount);
@@ -1950,6 +2167,7 @@ export default function RoundsTab() {
     const maxScoreImportRound = Math.max(0, ...scoreImportRoundNumbers);
     const configuredScoreRounds = tournamentConfig?.numRounds || 0;
     const scoreImportExceedsConfig = maxScoreImportRound > configuredScoreRounds;
+    const pendingForfeitChangeCount = pendingForfeitPlayers.length + pendingManualForfeitPlayers.length + pendingReturnPlayers.length;
     const pairingTableHead = (
         <thead className="bg-surface-50-950 border-b border-surface-200-800">
             <tr>
@@ -2515,14 +2733,32 @@ export default function RoundsTab() {
                             {currentRound.pairings.length} boards paired
                         </div>
                         {isLatestRound && (
-                            <button
-                                onClick={() => openManualPairing('edit')}
-                                disabled={pairingBusy}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold disabled:opacity-50"
-                            >
-                                <Swords size={14} />
-                                Change Pairing
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {rounds.length < tournamentConfig.numRounds && (
+                                    <button
+                                        onClick={openForfeitModal}
+                                        disabled={pairingBusy}
+                                        className="relative flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title="Pre-assign forfeits and returns"
+                                    >
+                                        <UserX size={14} />
+                                        Forfeits
+                                        {pendingForfeitChangeCount > 0 && (
+                                            <span className="ml-0.5 rounded bg-error-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                                                {pendingForfeitChangeCount}
+                                            </span>
+                                        )}
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => openManualPairing('edit')}
+                                    disabled={pairingBusy}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold disabled:opacity-50"
+                                >
+                                    <Swords size={14} />
+                                    Change Pairing
+                                </button>
+                            </div>
                         )}
                     </div>
 
@@ -2547,7 +2783,7 @@ export default function RoundsTab() {
                                             </span>
                                         </button>
                                         {isOpen && (
-                                            <table className="w-full text-sm">
+                                            <table className="w-full table-fixed text-sm">
                                                 {pairingTableHead}
                                                 <tbody className="divide-y divide-surface-200-800">
                                                     {renderPairingRows(section.pairings)}
@@ -2560,7 +2796,7 @@ export default function RoundsTab() {
                         </div>
                     ) : (
                         <div className="border border-surface-200-800 rounded-xl overflow-hidden bg-surface-100-900 shadow-sm">
-                            <table className="w-full text-sm">
+                            <table className="w-full table-fixed text-sm">
                                 {pairingTableHead}
                                 <tbody className="divide-y divide-surface-200-800">
                                     {renderPairingRows(currentRoundSections[0]?.pairings || [])}
@@ -2581,6 +2817,173 @@ export default function RoundsTab() {
                 maxNumRounds={Math.max(20, setupMaxRoundCount)}
                 getRoundCountWarning={getConfigRoundCountWarning}
             />
+
+            {showForfeitModal && (
+                <Portal>
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100]" onClick={() => setShowForfeitModal(false)} />
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 pointer-events-none">
+                        <div className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-2xl space-y-5 shadow-xl pointer-events-auto max-h-[90vh] overflow-y-auto">
+                            <div className="flex items-start justify-between gap-4">
+                                <div>
+                                    <h2 className="text-lg font-bold flex items-center gap-2">
+                                        <UserX className="text-error-500" size={20} />
+                                        Pre-assign forfeits
+                                    </h2>
+                                    <p className="mt-1 text-xs text-surface-600-400">
+                                        Changes apply when round {rounds.length + 1} is generated.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowForfeitModal(false)}
+                                    className="p-1 hover:bg-surface-200-800 rounded transition-colors"
+                                    aria-label="Close forfeit setup"
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            {(pendingForfeitPlayers.length > 0 || pendingReturnPlayers.length > 0) && (
+                                <div className="flex justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={clearPreRoundForfeitAssignments}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold"
+                                    >
+                                        <X size={13} />
+                                        Clear pending changes
+                                    </button>
+                                </div>
+                            )}
+
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <div className="space-y-3">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-surface-500">Forfeit next round</div>
+                                    <div className="flex gap-2">
+                                        <select
+                                            value={selectedForfeitPlayerId}
+                                            onChange={(event) => setSelectedForfeitPlayerId(event.target.value)}
+                                            disabled={nextRoundForfeitCandidates.length === 0}
+                                            className="min-w-0 flex-1 bg-surface-50-950 border border-surface-200-800 rounded px-2.5 py-2 text-sm outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:opacity-50"
+                                        >
+                                            <option value="">{nextRoundForfeitCandidates.length ? 'Player to forfeit' : 'No available players'}</option>
+                                            {nextRoundForfeitCandidates.map(player => (
+                                                <option key={player.playerUniqueId} value={String(player.playerUniqueId)}>
+                                                    #{player.playerUniqueId} {player.name || 'Unnamed'}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            type="button"
+                                            onClick={addPendingForfeitPlayer}
+                                            disabled={!selectedForfeitPlayerId}
+                                            className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded preset-tonal text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            <UserX size={14} />
+                                            Forfeit
+                                        </button>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {pendingForfeitPlayers.map(player => (
+                                            <div key={player.playerUniqueId} className="flex items-center justify-between gap-3 rounded border border-error-500/20 bg-error-500/5 px-2 py-1.5 text-xs">
+                                                <span className="min-w-0 truncate font-medium">{player.name || 'Unnamed'}</span>
+                                                <div className="flex shrink-0 items-center gap-2">
+                                                    <span className="font-mono text-surface-600-400">#{player.playerUniqueId}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removePendingForfeitPlayer(player.playerUniqueId)}
+                                                        className="p-0.5 rounded text-surface-400 hover:text-error-500 transition-colors"
+                                                        aria-label={`Remove ${player.name || `player ${player.playerUniqueId}`} from pending forfeits`}
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {pendingManualForfeitPlayers.map(player => (
+                                            <div key={`manual-${player.playerUniqueId}`} className="flex items-center justify-between gap-3 rounded border border-error-500/20 bg-error-500/5 px-2 py-1.5 text-xs">
+                                                <span className="min-w-0 truncate font-medium">{player.name || 'Unnamed'}</span>
+                                                <div className="flex shrink-0 items-center gap-2">
+                                                    <span className="rounded bg-primary-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400">
+                                                        Manual pairing
+                                                    </span>
+                                                    <span className="font-mono text-surface-600-400">#{player.playerUniqueId}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {pendingForfeitPlayers.length === 0 && pendingManualForfeitPlayers.length === 0 && (
+                                            <div className="rounded border border-surface-200-800 bg-surface-50-950 px-3 py-2 text-xs text-surface-500">
+                                                No pending forfeits.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-surface-500">Return to pairings</div>
+                                    <div className="flex gap-2">
+                                        <select
+                                            value={selectedReturnPlayerId}
+                                            onChange={(event) => setSelectedReturnPlayerId(event.target.value)}
+                                            disabled={forfeitReturnCandidates.length === 0}
+                                            className="min-w-0 flex-1 bg-surface-50-950 border border-surface-200-800 rounded px-2.5 py-2 text-sm outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:opacity-50"
+                                        >
+                                            <option value="">{forfeitReturnCandidates.length ? 'Player to return' : 'No forfeited players'}</option>
+                                            {forfeitReturnCandidates.map(player => (
+                                                <option key={player.playerUniqueId} value={String(player.playerUniqueId)}>
+                                                    #{player.playerUniqueId} {player.name || 'Unnamed'}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            type="button"
+                                            onClick={addPendingReturnPlayer}
+                                            disabled={!selectedReturnPlayerId}
+                                            className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded preset-tonal text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            <RotateCcw size={14} />
+                                            Return
+                                        </button>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {pendingReturnPlayers.map(player => (
+                                            <div key={player.playerUniqueId} className="flex items-center justify-between gap-3 rounded border border-success-500/20 bg-success-500/5 px-2 py-1.5 text-xs">
+                                                <span className="min-w-0 truncate font-medium">{player.name || 'Unnamed'}</span>
+                                                <div className="flex shrink-0 items-center gap-2">
+                                                    <span className="font-mono text-surface-600-400">#{player.playerUniqueId}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removePendingReturnPlayer(player.playerUniqueId)}
+                                                        className="p-0.5 rounded text-surface-400 hover:text-error-500 transition-colors"
+                                                        aria-label={`Remove ${player.name || `player ${player.playerUniqueId}`} from pending returns`}
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {pendingReturnPlayers.length === 0 && (
+                                            <div className="rounded border border-surface-200-800 bg-surface-50-950 px-3 py-2 text-xs text-surface-500">
+                                                No pending returns.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end gap-3 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowForfeitModal(false)}
+                                    className="px-4 py-2 text-sm rounded preset-tonal cursor-pointer"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </Portal>
+            )}
 
             <RoundSetupModal
                 open={showSetupModal}

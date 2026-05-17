@@ -108,14 +108,12 @@ function getForfeitedPlayerIds(rounds = []) {
     const forfeitedIds = new Set();
 
     rounds.forEach((round) => {
+        [
+            ...(round.returnedForfeitPlayerIds || []),
+            ...(round.options?.returnedForfeitPlayerIds || []),
+        ].forEach((playerId) => forfeitedIds.delete(String(playerId)));
         round.pairings?.forEach((pairing) => {
             if (pairing.isTournamentForfeit && pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
-            if (pairing.result === "1-0f" && pairing.blackId) forfeitedIds.add(String(pairing.blackId));
-            if (pairing.result === "0-1f" && pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
-            if (!pairing.isBye && pairing.result === "0-0") {
-                if (pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
-                if (pairing.blackId) forfeitedIds.add(String(pairing.blackId));
-            }
         });
     });
 
@@ -165,6 +163,16 @@ function resultCodeForPlayer(pairing, playerColor) {
     return " ";
 }
 
+function unplayedResultCodeForPlayer(pairing, playerColor) {
+    const points = playerColor === "w"
+        ? resultPointsForWhite(pairing.result)
+        : resultPointsForBlack(pairing.result);
+
+    if (points === 1) return "F";
+    if (points === 0.5) return "H";
+    return "Z";
+}
+
 function calculateScores(players, previousRounds) {
     const scores = new Map(players.map((player) => [String(player.playerUniqueId), 0]));
 
@@ -195,8 +203,9 @@ function buildRoundLookup(playerId, round, activePlayerLookup) {
     ));
 
     if (!pairing) return null;
-    if (pairing.isTournamentForfeit || (pairing.isBye && pairing.isSkip)) {
-        return { opponentId: "0000", color: "-", result: "Z" };
+    if (pairing.isTournamentForfeit) return { opponentId: "0000", color: "-", result: "Z" };
+    if (pairing.isBye && pairing.isSkip) {
+        return { opponentId: "0000", color: "-", result: unplayedResultCodeForPlayer(pairing, "w") };
     }
     if (pairing.isBye) return { opponentId: "0000", color: "-", result: "U" };
 
@@ -217,6 +226,7 @@ function buildTrf(players, previousRounds, options = {}) {
     const { sortedPlayers, byAppId } = normalizePlayers(players);
     const scores = calculateScores(players, previousRounds);
     const includeNextRound = options.includeNextRound !== false;
+    const excludedPlayerIds = new Set((options.excludedPlayerIds || []).map(String));
     const totalRounds = Math.max(
         Number(options.totalRounds) || Number(options.numRounds) || 5,
         previousRounds.length + (includeNextRound ? 1 : 0)
@@ -229,12 +239,14 @@ function buildTrf(players, previousRounds, options = {}) {
     ];
 
     sortedPlayers.forEach((player, index) => {
-        const lineLength = 89 + previousRounds.length * 10;
+        const playerId = String(player.playerUniqueId);
+        const isExcludedFromNextPairing = includeNextRound && excludedPlayerIds.has(playerId);
+        const lineLength = 89 + (previousRounds.length + (isExcludedFromNextPairing ? 1 : 0)) * 10;
         const chars = Array(lineLength).fill(" ");
         const pairingId = index + 1;
         const name = player.name || `Player ${player.playerUniqueId}`;
         const rating = Number(player.rating) || 0;
-        const score = (scores.get(String(player.playerUniqueId)) || 0).toFixed(1);
+        const score = (scores.get(playerId) || 0).toFixed(1);
 
         putField(chars, 1, 3, "001", "left");
         putField(chars, 5, 4, pairingId);
@@ -248,7 +260,7 @@ function buildTrf(players, previousRounds, options = {}) {
 
         previousRounds.forEach((round, roundIndex) => {
             const fieldStart = 92 + roundIndex * 10;
-            const roundData = buildRoundLookup(String(player.playerUniqueId), round, byAppId);
+            const roundData = buildRoundLookup(playerId, round, byAppId);
 
             if (!roundData) {
                 putField(chars, fieldStart, 4, "0000");
@@ -262,6 +274,13 @@ function buildTrf(players, previousRounds, options = {}) {
             putField(chars, fieldStart + 5, 1, roundData.color, "left");
             putField(chars, fieldStart + 7, 1, roundData.result, "left");
         });
+
+        if (isExcludedFromNextPairing) {
+            const fieldStart = 92 + previousRounds.length * 10;
+            putField(chars, fieldStart, 4, "0000");
+            putField(chars, fieldStart + 5, 1, "-", "left");
+            putField(chars, fieldStart + 7, 1, "Z", "left");
+        }
 
         lines.push(chars.join("").trimEnd());
     });
@@ -330,7 +349,11 @@ export async function generatePairings(players, options = {}, previousRounds = [
     console.log("[Pairing Engine] Generating pairings for round", previousRounds.length + 1);
 
     const forfeitedIds = getForfeitedPlayerIds(previousRounds);
-    const eligiblePlayers = (players || []).filter(player => !forfeitedIds.has(getPlayerId(player)));
+    const excludedPlayerIds = new Set([
+        ...forfeitedIds,
+        ...(options.excludedPlayerIds || []).map(String),
+    ]);
+    const eligiblePlayers = (players || []).filter(player => !excludedPlayerIds.has(getPlayerId(player)));
 
     if (!eligiblePlayers || eligiblePlayers.length < 2) {
         return eligiblePlayers?.length === 1
@@ -340,8 +363,11 @@ export async function generatePairings(players, options = {}, previousRounds = [
 
     await initPairingEngine();
 
-    const { byPairingId } = normalizePlayers(eligiblePlayers);
-    const trf = buildTrf(eligiblePlayers, previousRounds, options);
+    const { byPairingId } = normalizePlayers(players || []);
+    const trf = buildTrf(players || [], previousRounds, {
+        ...options,
+        excludedPlayerIds: [...excludedPlayerIds],
+    });
 
     try {
         const { bbpRuntime, stderr } = await createBbpInstance();

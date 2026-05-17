@@ -587,6 +587,10 @@ function parseConfigJsonString(raw) {
     return JSON.parse(fenced ? fenced[1] : trimmed);
 }
 
+function isReadableBlob(value) {
+    return typeof Blob !== 'undefined' && value instanceof Blob;
+}
+
 function looksLikeCardConfig(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     if (Array.isArray(value.layers)) return true;
@@ -1422,8 +1426,10 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
             loadCardGenAsset('config', activeTournamentId),
             loadCardGenAsset('exportSettings', activeTournamentId)
         ]).then(([loadedImage, loadedFont, loadedConfig, loadedExportSettings]) => {
-            setImageFile(loadedImage || null);
-            setFontFile(loadedFont || null);
+            const validImage = isReadableBlob(loadedImage) ? loadedImage : null;
+            const validFont = isReadableBlob(loadedFont) ? loadedFont : null;
+            setImageFile(validImage);
+            setFontFile(validFont);
             setWizardStep(1);
 
             if (loadedConfig) {
@@ -1440,7 +1446,10 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
                 setExportSettings(mergeExportSettings(loadedExportSettings, DEFAULT_CONFIG));
             }
 
-            if (loadedImage && loadedFont) {
+            if (loadedImage && !validImage) saveCardGenAsset('image', null, activeTournamentId);
+            if (loadedFont && !validFont) saveCardGenAsset('font', null, activeTournamentId);
+
+            if (validImage && validFont) {
                 setUploadExpanded(false);
             } else {
                 setUploadExpanded(true);
@@ -1494,7 +1503,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
 
     // Load image as data URL for canvas preview
     useEffect(() => {
-        if (!imageFile) { setImageDataUrl(null); setImageSize(null); return; }
+        if (!isReadableBlob(imageFile)) { setImageDataUrl(null); setImageSize(null); return; }
         const reader = new FileReader();
         reader.onload = e => {
             const dataUrl = e.target.result;
@@ -1509,7 +1518,7 @@ export default function GeneratePlayerCardModal({ open, onClose, players = [] })
     // Load custom font file
     const [loadedFontFamily, setLoadedFontFamily] = useState('');
     useEffect(() => {
-        if (!fontFile) {
+        if (!isReadableBlob(fontFile)) {
             setLoadedFontFamily('');
             return;
         }

@@ -8,14 +8,12 @@ function getForfeitedPlayerIds(rounds = []) {
     const forfeitedIds = new Set();
 
     rounds.forEach((round) => {
+        [
+            ...(round.returnedForfeitPlayerIds || []),
+            ...(round.options?.returnedForfeitPlayerIds || []),
+        ].forEach((playerId) => forfeitedIds.delete(String(playerId)));
         round.pairings?.forEach((pairing) => {
             if (pairing.isTournamentForfeit && pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
-            if (pairing.result === "1-0f" && pairing.blackId) forfeitedIds.add(String(pairing.blackId));
-            if (pairing.result === "0-1f" && pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
-            if (!pairing.isBye && pairing.result === "0-0") {
-                if (pairing.whiteId) forfeitedIds.add(String(pairing.whiteId));
-                if (pairing.blackId) forfeitedIds.add(String(pairing.blackId));
-            }
         });
     });
 
@@ -35,15 +33,18 @@ function getForfeitedPlayerIds(rounds = []) {
  */
 export async function generatePairings(players, options = {}, previousRounds = [], tournamentConfig = {}, tournamentName = "Tournament", onProgress = null) {
     const forfeitedIds = getForfeitedPlayerIds(previousRounds);
-    const eligiblePlayers = (players || []).filter(player => !forfeitedIds.has(getPlayerId(player)));
+    const excludedPlayerIds = new Set([
+        ...forfeitedIds,
+        ...(options.excludedPlayerIds || []).map(String),
+    ]);
 
-    console.log("[Pairing] Generating pairings. Players:", eligiblePlayers.length, "Round:", previousRounds.length + 1);
+    console.log("[Pairing] Generating pairings. Players:", (players || []).length - excludedPlayerIds.size, "Round:", previousRounds.length + 1);
 
     if (onProgress) onProgress(50);
 
     const pairings = await engineGeneratePairings(
-        eligiblePlayers,
-        { ...options, totalRounds: tournamentConfig?.numRounds },
+        players,
+        { ...options, totalRounds: tournamentConfig?.numRounds, excludedPlayerIds: [...excludedPlayerIds] },
         previousRounds
     );
 

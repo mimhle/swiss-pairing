@@ -53,6 +53,84 @@ const runStore = async (storeName, mode, fn) => {
     });
 };
 
+const SKIP_IMPORT_VALUE = Symbol('skip-import-value');
+const SERIALIZED_CARD_ASSET_MARKER = 'swiss-pairing-card-asset-v1';
+
+function isBlobValue(value) {
+    return typeof Blob !== 'undefined' && value instanceof Blob;
+}
+
+function getCardGenBinaryAssetType(key) {
+    const normalizedKey = String(key || '');
+    if (normalizedKey === 'image' || normalizedKey.endsWith('_image') || normalizedKey.endsWith('-image')) return 'image';
+    if (normalizedKey === 'font' || normalizedKey.endsWith('_font') || normalizedKey.endsWith('-font')) return 'font';
+    return null;
+}
+
+function readBlobAsDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = event => resolve(event.target.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function dataUrlToBlob(dataUrl, fallbackType = '') {
+    const response = await fetch(dataUrl);
+    const blob = await response.blob();
+    return fallbackType && blob.type !== fallbackType
+        ? blob.slice(0, blob.size, fallbackType)
+        : blob;
+}
+
+async function serializeStoreValue(storeName, key, value) {
+    const assetType = storeName === CARD_GEN_STORE_NAME ? getCardGenBinaryAssetType(key) : null;
+    if (!assetType || !isBlobValue(value)) return value;
+
+    return {
+        __type: SERIALIZED_CARD_ASSET_MARKER,
+        assetType,
+        name: value.name || '',
+        mimeType: value.type || '',
+        lastModified: typeof value.lastModified === 'number' ? value.lastModified : null,
+        dataUrl: await readBlobAsDataUrl(value),
+    };
+}
+
+async function deserializeStoreValue(storeName, key, value) {
+    const assetType = storeName === CARD_GEN_STORE_NAME ? getCardGenBinaryAssetType(key) : null;
+    if (!assetType) return value;
+    if (!value) return SKIP_IMPORT_VALUE;
+    if (isBlobValue(value)) return value;
+
+    if (
+        value
+        && typeof value === 'object'
+        && value.__type === SERIALIZED_CARD_ASSET_MARKER
+        && typeof value.dataUrl === 'string'
+    ) {
+        let blob;
+        try {
+            blob = await dataUrlToBlob(value.dataUrl, value.mimeType || '');
+        } catch (_) {
+            return SKIP_IMPORT_VALUE;
+        }
+        const fileName = value.name || `${assetType}.${assetType === 'font' ? 'bin' : 'png'}`;
+
+        if (typeof File !== 'undefined') {
+            return new File([blob], fileName, {
+                type: value.mimeType || blob.type,
+                lastModified: typeof value.lastModified === 'number' ? value.lastModified : Date.now(),
+            });
+        }
+
+        return blob;
+    }
+
+    return SKIP_IMPORT_VALUE;
+}
+
 export const loadPlayers = async (tournamentId = 'default') => {
     try {
         return await runStore(STORE_NAME, 'readonly', store => new Promise((resolve, reject) => {
@@ -288,37 +366,41 @@ export const deleteTournamentData = async (tournamentId) => {
 export const exportAllData = async () => {
     try {
         const db = await openDb();
-        const data = {
-            players: [],
-            mappings: [],
-            cardGen: [],
-            configs: [],
-            rounds: []
-        };
         
-        const exportStore = (storeName, arrayRef) => {
+        const readStoreEntries = (storeName) => {
             return new Promise((resolve, reject) => {
+                const entries = [];
                 const tx = db.transaction(storeName, 'readonly');
                 const store = tx.objectStore(storeName);
                 const request = store.openCursor();
                 request.onsuccess = (event) => {
                     const cursor = event.target.result;
                     if (cursor) {
-                        arrayRef.push({ key: cursor.key, value: cursor.value });
+                        entries.push({ key: cursor.key, value: cursor.value });
                         cursor.continue();
                     } else {
-                        resolve();
+                        resolve(entries);
                     }
                 };
                 request.onerror = () => reject(request.error);
             });
         };
 
-        await exportStore(STORE_NAME, data.players);
-        await exportStore(MAPPINGS_STORE_NAME, data.mappings);
-        await exportStore(CARD_GEN_STORE_NAME, data.cardGen);
-        await exportStore(CONFIG_STORE_NAME, data.configs);
-        await exportStore(ROUNDS_STORE_NAME, data.rounds);
+        const exportStore = async (storeName) => {
+            const entries = await readStoreEntries(storeName);
+            return Promise.all(entries.map(async item => ({
+                key: item.key,
+                value: await serializeStoreValue(storeName, item.key, item.value),
+            })));
+        };
+
+        const data = {
+            players: await exportStore(STORE_NAME),
+            mappings: await exportStore(MAPPINGS_STORE_NAME),
+            cardGen: await exportStore(CARD_GEN_STORE_NAME),
+            configs: await exportStore(CONFIG_STORE_NAME),
+            rounds: await exportStore(ROUNDS_STORE_NAME)
+        };
 
         return data;
     } catch (e) {
@@ -331,7 +413,13 @@ export const importAllData = async (data) => {
     try {
         const db = await openDb();
 
-        const importStore = (storeName, arrayRef) => {
+        const importStore = async (storeName, arrayRef) => {
+            const items = Array.isArray(arrayRef) ? arrayRef : [];
+            const preparedItems = await Promise.all(items.map(async item => ({
+                key: item.key,
+                value: await deserializeStoreValue(storeName, item.key, item.value),
+            })));
+
             return new Promise((resolve, reject) => {
                 const tx = db.transaction(storeName, 'readwrite');
                 const store = tx.objectStore(storeName);
@@ -339,8 +427,9 @@ export const importAllData = async (data) => {
                 // Clear existing data
                 store.clear();
 
-                if (arrayRef && arrayRef.length > 0) {
-                    arrayRef.forEach(item => {
+                if (preparedItems.length > 0) {
+                    preparedItems.forEach(item => {
+                        if (item.value === SKIP_IMPORT_VALUE) return;
                         store.put(item.value, item.key);
                     });
                 }
