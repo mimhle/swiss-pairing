@@ -5,7 +5,7 @@ import { Portal } from '@skeletonlabs/skeleton-react';
 import { AlertTriangle, Play, X, Shield, Palette, Trash2, UserX } from 'lucide-react';
 import ScrollLock from '@/components/utility/ScrollLock';
 
-export default function RoundSetupModal({ open, onClose, onStart, roundNumber, rounds = [], canStart = true, showDelete = true, excludedPlayers = [], unassignedPlayers = [], validationWarning = null, onDeleteRounds }) {
+export default function RoundSetupModal({ open, onClose, onStart, roundNumber, rounds = [], canStart = true, showDelete = true, excludedPlayers = [], unassignedPlayers = [], lockingPlayers = [], validationWarning = null, onDeleteRounds }) {
     const [startingColor, setStartingColor] = useState('white');
     const [protectClub, setProtectClub] = useState(false);
     const [deleteMode, setDeleteMode] = useState('selected');
@@ -87,6 +87,28 @@ export default function RoundSetupModal({ open, onClose, onStart, roundNumber, r
                                     </p>
                                     <div className="space-y-1">
                                         {unassignedPlayers.map(player => {
+                                            const playerId = player.playerUniqueId ?? player.id;
+                                            return (
+                                                <div key={playerId} className="flex items-center justify-between gap-3 text-xs">
+                                                    <span className="min-w-0 truncate font-medium">{player.name || 'Unnamed'}</span>
+                                                    <span className="shrink-0 font-mono text-surface-600-400">#{playerId}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                            {lockingPlayers.length > 0 && (
+                                <div className="space-y-2 rounded-lg border border-warning-500/30 bg-warning-500/10 p-3">
+                                    <div className="flex items-center gap-2 text-sm font-semibold text-warning-700 dark:text-warning-400">
+                                        <AlertTriangle size={14} />
+                                        New Players Will Be Locked
+                                    </div>
+                                    <p className="text-xs text-surface-700-300">
+                                        These mid-tournament players have not appeared in any round yet. After this round is generated, they will be assigned to a round and cannot be removed from the player list.
+                                    </p>
+                                    <div className="space-y-1">
+                                        {lockingPlayers.map(player => {
                                             const playerId = player.playerUniqueId ?? player.id;
                                             return (
                                                 <div key={playerId} className="flex items-center justify-between gap-3 text-xs">

@@ -82,19 +82,34 @@ function uniqueNormalizedIds(ids) {
     return [...new Set(ids.map(normalizeId).filter(Boolean))];
 }
 
-function initialSpecialAssignments(initialBoards, forfeitedPlayerIds) {
-    const byeIds = uniqueNormalizedIds(initialBoards
+function initialSpecialAssignments(initialBoards, forfeitedPlayerIds, allowByePerGroup = false) {
+    const byeIds = [];
+    const extraByeIds = [];
+    const byeGroups = new Set();
+    initialBoards
         .filter(board => board.byeId && !board.isSkip && !board.forfeitId)
-        .map(board => board.byeId));
+        .forEach(board => {
+            const byeId = normalizeId(board.byeId);
+            if (!byeId) return;
+
+            const group = allowByePerGroup ? String(board.group || '').trim() : '';
+            if (byeGroups.has(group)) {
+                extraByeIds.push(byeId);
+                return;
+            }
+
+            byeGroups.add(group);
+            byeIds.push(byeId);
+        });
     const skipIds = uniqueNormalizedIds([
         ...initialBoards
             .filter(board => board.byeId && board.isSkip && !board.forfeitId)
             .map(board => board.byeId),
-        ...byeIds.slice(1),
+        ...extraByeIds,
     ]);
 
     return {
-        byeIds: byeIds.slice(0, 1),
+        byeIds: uniqueNormalizedIds(byeIds),
         skipIds,
         forfeitIds: uniqueNormalizedIds([
             ...initialBoards
@@ -406,6 +421,7 @@ export default function ManualPairingModal({
     mode = 'create',
     roundNumber,
     players = [],
+    unlockedPlayerIds = new Set(),
     pairingMode = 'all',
     playerScores = {},
     initialBoards = [],
@@ -419,8 +435,8 @@ export default function ManualPairingModal({
 }) {
     const [boards, setBoards] = useState(() => initialRegularBoards(initialBoards));
     const initialSpecial = useMemo(
-        () => initialSpecialAssignments(initialBoards, forfeitedPlayerIds),
-        [forfeitedPlayerIds, initialBoards]
+        () => initialSpecialAssignments(initialBoards, forfeitedPlayerIds, pairingMode === 'group'),
+        [forfeitedPlayerIds, initialBoards, pairingMode]
     );
     const [specialAssignments, setSpecialAssignments] = useState(() => initialSpecial);
     const [activePlayerId, setActivePlayerId] = useState(null);
@@ -510,6 +526,18 @@ export default function ManualPairingModal({
         () => getVisibleSpecialIds(specialAssignments.forfeitIds),
         [getVisibleSpecialIds, specialAssignments.forfeitIds]
     );
+    const newlyAssignedLockingPlayers = useMemo(() => {
+        return [...assignedIds]
+            .filter(playerId => unlockedPlayerIds.has(String(playerId)))
+            .map(playerId => playerMap[playerId])
+            .filter(Boolean)
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [assignedIds, playerMap, unlockedPlayerIds]);
+    const availableLockingPlayers = useMemo(() => {
+        return availablePlayers
+            .filter(player => unlockedPlayerIds.has(String(player.playerUniqueId)))
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [availablePlayers, unlockedPlayerIds]);
 
     const manualSkipCount = specialAssignments.skipIds.length;
     const manualForfeitCount = specialAssignments.forfeitIds.length;
@@ -702,10 +730,18 @@ export default function ManualPairingModal({
             setSpecialAssignments(prev => {
                 const cleared = clearPlayerFromSpecial(prev, playerId);
                 if (dropKind === 'bye') {
+                    const byeGroup = getPlayerGroup(playerId);
+                    const replacedByeIds = isGroupMode
+                        ? cleared.byeIds.filter(candidate => getPlayerGroup(candidate) === byeGroup)
+                        : cleared.byeIds;
+                    const keptByeIds = isGroupMode
+                        ? cleared.byeIds.filter(candidate => getPlayerGroup(candidate) !== byeGroup)
+                        : [];
+
                     return {
                         ...cleared,
-                        byeIds: [playerId],
-                        skipIds: uniqueNormalizedIds([...cleared.skipIds, ...cleared.byeIds]),
+                        byeIds: uniqueNormalizedIds([...keptByeIds, playerId]),
+                        skipIds: uniqueNormalizedIds([...cleared.skipIds, ...replacedByeIds]),
                     };
                 }
                 if (dropKind === 'skip') {
@@ -902,7 +938,7 @@ export default function ManualPairingModal({
                                             playerMap={playerMap}
                                             playerScores={playerScores}
                                             onClear={clearSpecialPlayer}
-                                            hasByeAssigned={specialAssignments.byeIds.length > 0}
+                                            hasByeAssigned={visibleByeIds.length > 0}
                                         />
                                         <SpecialAssignmentColumn
                                             title="Skip"
@@ -934,6 +970,33 @@ export default function ManualPairingModal({
                                         </div>
                                     )}
                                 </div>
+
+                                {(newlyAssignedLockingPlayers.length > 0 || availableLockingPlayers.length > 0) && (
+                                    <div className="mt-3 space-y-2 rounded-lg border border-warning-500/30 bg-warning-500/10 p-3">
+                                        <div className="flex items-center gap-2 text-sm font-semibold text-warning-700 dark:text-warning-400">
+                                            <AlertTriangle size={14} />
+                                            New Players Will Be Locked
+                                        </div>
+                                        {newlyAssignedLockingPlayers.length > 0 && (
+                                            <div className="space-y-1">
+                                                <p className="text-xs text-surface-700-300">
+                                                    These mid-tournament players will be assigned after saving and cannot be removed from the player list.
+                                                </p>
+                                                {newlyAssignedLockingPlayers.map(player => (
+                                                    <div key={`assigned-lock-${player.playerUniqueId}`} className="flex items-center justify-between gap-3 text-xs">
+                                                        <span className="min-w-0 truncate font-medium">{player.name || 'Unnamed'}</span>
+                                                        <span className="shrink-0 font-mono text-surface-600-400">#{player.playerUniqueId}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        {availableLockingPlayers.length > 0 && (
+                                            <p className="text-xs text-surface-700-300">
+                                                Save and Pair the Rest will also assign and lock {availableLockingPlayers.length} new player{availableLockingPlayers.length !== 1 ? 's' : ''} still in Available.
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </div>
                         <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}>

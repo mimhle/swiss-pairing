@@ -159,6 +159,10 @@ function getPairingResult(pairing) {
     return pairing.result || getDefaultPairingResult(pairing);
 }
 
+function getFinalPairingResult(pairing) {
+    return pairing.isBye ? getDefaultPairingResult(pairing) : getPairingResult(pairing);
+}
+
 const pairingKey = (a, b) => [String(a), String(b)].sort().join('|');
 
 function getPlayerScoreMap(roundsBeforeTarget) {
@@ -222,12 +226,13 @@ function getTournamentForfeitSet(roundsBeforeTarget) {
     return forfeits;
 }
 
-function validateManualPairings(manualBoards, previousRounds) {
+function validateManualPairings(manualBoards, previousRounds, options = {}) {
     const errors = [];
     const usedIds = new Set();
     const previousOpponents = getPreviousOpponentSet(previousRounds);
     const previousByes = getPlayersWithBye(previousRounds);
-    let hasTrueBye = false;
+    const trueByeScopes = new Set();
+    const getByeScope = options.getByeScope || (() => '');
 
     manualBoards.forEach((board, index) => {
         const boardNumber = index + 1;
@@ -257,12 +262,13 @@ function validateManualPairings(manualBoards, previousRounds) {
                 errors.push(`Board ${boardNumber} cannot have a skip/bye and regular players.`);
             }
             if (!isSkip) {
-                if (hasTrueBye) {
+                const byeScope = getByeScope(board);
+                if (trueByeScopes.has(byeScope)) {
                     errors.push(`Board ${boardNumber} creates a second bye in this round.`);
                 } else if (previousByes.has(byeId)) {
                     errors.push(`Player #${byeId} already received a bye in an earlier round.`);
                 }
-                hasTrueBye = true;
+                trueByeScopes.add(byeScope);
             }
             return;
         }
@@ -349,8 +355,28 @@ function withOriginalPairingValues(pairing, originalPairings = []) {
         : pairing;
 }
 
-function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundNumber, originalPairings = [], playerGroupLookup = {}) {
-    let hasManualTrueBye = false;
+function enforceSingleRoundBye(pairings = [], getByeScope = null) {
+    const trueByeScopes = new Set();
+
+    return pairings.map(pairing => {
+        if (!pairing.isBye) return pairing;
+
+        const byeScope = getByeScope ? getByeScope(pairing) : '';
+        const isSkip = Boolean(pairing.isSkip) || Boolean(pairing.isTournamentForfeit) || trueByeScopes.has(byeScope);
+        if (!isSkip) trueByeScopes.add(byeScope);
+
+        return {
+            ...pairing,
+            isSkip,
+        };
+    });
+}
+
+function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundNumber, originalPairings = [], playerGroupLookup = {}, options = {}) {
+    const manualTrueByeScopes = new Set();
+    const getByeScope = options.enforceByeByGroup
+        ? (pairing) => getPairingGroup(pairing, playerGroupLookup)
+        : null;
     const manualRegularSlots = [];
     const manualSpecialPairings = [];
 
@@ -371,8 +397,9 @@ function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundN
         }
         if (board.byeId) {
             const group = getPairingGroup({ group: board.group, whiteId: board.byeId }, playerGroupLookup);
-            const isSkip = Boolean(board.isSkip) || hasManualTrueBye;
-            if (!isSkip) hasManualTrueBye = true;
+            const byeScope = options.enforceByeByGroup ? group : '';
+            const isSkip = Boolean(board.isSkip) || manualTrueByeScopes.has(byeScope);
+            if (!isSkip) manualTrueByeScopes.add(byeScope);
             manualSpecialPairings.push({
                 whiteId: String(board.byeId),
                 blackId: null,
@@ -407,18 +434,11 @@ function mergeManualAndGeneratedPairings(manualBoards, generatedPairings, roundN
     const generatedSpecialPairings = generatedWithOriginalValues.filter(pairing => pairing.isBye);
     const specialPairings = [...manualSpecialPairings, ...generatedSpecialPairings];
 
-    let hasTrueBye = false;
-    return [...regularPairings, ...specialPairings].map((pairing, index) => {
-        let isSkip = Boolean(pairing.isSkip);
-        if (pairing.isBye) {
-            isSkip = Boolean(pairing.isSkip) || Boolean(pairing.isTournamentForfeit) || hasTrueBye;
-            if (!isSkip) hasTrueBye = true;
-        }
+    return enforceSingleRoundBye([...regularPairings, ...specialPairings], getByeScope).map((pairing, index) => {
         return {
             ...pairing,
-            isSkip,
             id: `r${roundNumber}-p${index + 1}`,
-            result: getPairingResult({ ...pairing, isSkip }),
+            result: getFinalPairingResult(pairing),
         };
     });
 }
@@ -527,6 +547,14 @@ function getRoundPlayerIds(round) {
         if (!pairing.isBye && pairing.blackId) ids.add(String(pairing.blackId));
     });
 
+    return ids;
+}
+
+function getRoundsPlayerIds(roundsToRead = []) {
+    const ids = new Set();
+    roundsToRead.forEach(round => {
+        getRoundPlayerIds(round).forEach(playerId => ids.add(playerId));
+    });
     return ids;
 }
 
@@ -783,6 +811,29 @@ export default function RoundsTab() {
             .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
     }, [currentRound, players, rounds.length]);
 
+    const unlockedMidTournamentPlayerIds = useMemo(() => {
+        if (rounds.length === 0) return new Set();
+
+        const assignedIds = getRoundsPlayerIds(rounds);
+        return new Set(
+            players
+                .filter(player => hasPlayerName(player) && !assignedIds.has(String(player.playerUniqueId)))
+                .map(player => String(player.playerUniqueId))
+        );
+    }, [players, rounds]);
+
+    const nextRoundLockingPlayers = useMemo(() => {
+        if (rounds.length === 0) return [];
+
+        const forfeitedIds = getTournamentForfeitSet(rounds);
+        return players
+            .filter(player => (
+                unlockedMidTournamentPlayerIds.has(String(player.playerUniqueId)) &&
+                !forfeitedIds.has(String(player.playerUniqueId))
+            ))
+            .sort((a, b) => Number(a.playerUniqueId) - Number(b.playerUniqueId));
+    }, [players, rounds, unlockedMidTournamentPlayerIds]);
+
     const validateGroupPairingPlayers = (activePlayers, title = 'Pairing Blocked') => {
         const blankGroupPlayers = getBlankGroupPlayers(activePlayers);
         if (blankGroupPlayers.length) {
@@ -876,7 +927,7 @@ export default function RoundsTab() {
             generated.push(...groupPairings.map(pairing => ({ ...pairing, group })));
         }
 
-        return generated;
+        return enforceSingleRoundBye(generated, pairing => pairing.group || '');
     };
 
     const openRoundSetup = async () => {
@@ -931,10 +982,13 @@ export default function RoundsTab() {
             const playerGroupLookup = buildPlayerGroupLookup(latestPlayers);
             const newRound = {
                 roundNumber,
-                pairings: withPairingGroups([...newPairings, ...continuingForfeits], playerGroupLookup).map((p, idx) => ({
+                pairings: enforceSingleRoundBye(
+                    withPairingGroups([...newPairings, ...continuingForfeits], playerGroupLookup),
+                    isGroupPairingMode(tournamentConfig) ? pairing => getPairingGroup(pairing, playerGroupLookup) : null
+                ).map((p, idx) => ({
                     id: `r${roundNumber}-p${idx + 1}`,
                     ...p,
-                    result: getPairingResult(p)
+                    result: getFinalPairingResult(p)
                 })),
                 status: 'in-progress',
                 timestamp: createRoundTimestamp(),
@@ -1044,7 +1098,11 @@ export default function RoundsTab() {
                 !usedIds.has(String(player.playerUniqueId)) &&
                 !alreadyForfeited.has(String(player.playerUniqueId))
             ));
-            const errors = validateManualPairings(normalizedBoards, previousRounds);
+            const errors = validateManualPairings(normalizedBoards, previousRounds, {
+                getByeScope: isGroupPairingMode(tournamentConfig)
+                    ? board => getPairingGroup({ group: board.group, whiteId: board.byeId }, latestPlayerGroupLookup)
+                    : null,
+            });
             if (isGroupPairingMode(tournamentConfig)) {
                 normalizedBoards.forEach((board, index) => {
                     if (!board.whiteId || !board.blackId) return;
@@ -1107,21 +1165,30 @@ export default function RoundsTab() {
                 [...preservedPairings, ...generatedPairings, ...continuingForfeits],
                 roundNumber,
                 originalPairings,
-                latestPlayerGroupLookup
+                latestPlayerGroupLookup,
+                { enforceByeByGroup: isGroupPairingMode(tournamentConfig) }
             ).map(pairing => ({
                 ...pairing,
                 group: getPairingGroup(pairing, latestPlayerGroupLookup),
             }));
 
             if (manualPairingMode === 'edit') {
-                const updatedRounds = rounds.map((round, index) => index === currentRoundIdx
-                    ? {
-                        ...round,
-                        pairings: mergedPairings,
-                        options: { ...(round.options || {}), ...options, manualPairing: true },
-                    }
-                    : round
+                const currentRoundPlayerIds = getRoundPlayerIds({ pairings: mergedPairings });
+                const currentRoundPlayers = latestPlayers.filter(player => currentRoundPlayerIds.has(String(player.playerUniqueId)));
+                const previousRoundsWithPlayerSkips = addMissingPlayerSkips(
+                    rounds.slice(0, currentRoundIdx),
+                    currentRoundPlayers
                 );
+                const updatedCurrentRound = {
+                    ...currentRound,
+                    pairings: mergedPairings,
+                    options: { ...(currentRound.options || {}), ...options, manualPairing: true },
+                };
+                const updatedRounds = [
+                    ...previousRoundsWithPlayerSkips,
+                    updatedCurrentRound,
+                    ...rounds.slice(currentRoundIdx + 1),
+                ];
                 updateRounds(updatedRounds);
             } else {
                 const newRound = {
@@ -2525,6 +2592,7 @@ export default function RoundsTab() {
                 showDelete={roundModalMode === 'settings'}
                 excludedPlayers={nextRoundExcludedPlayers}
                 unassignedPlayers={currentRoundUnassignedPlayers}
+                lockingPlayers={roundModalMode === 'setup' || roundModalMode === 'manual-options' ? nextRoundLockingPlayers : []}
                 validationWarning={roundModalMode === 'setup' ? firstRoundSetupWarning : null}
                 onDeleteRounds={handleDeleteRounds}
             />
@@ -2535,6 +2603,7 @@ export default function RoundsTab() {
                 mode={manualPairingMode}
                 roundNumber={manualTargetRoundNumber}
                 players={players}
+                unlockedPlayerIds={unlockedMidTournamentPlayerIds}
                 pairingMode={tournamentConfig?.pairingMode || 'all'}
                 playerScores={manualPlayerScores}
                 initialBoards={manualInitialBoards}
