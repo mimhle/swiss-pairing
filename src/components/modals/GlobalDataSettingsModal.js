@@ -2,12 +2,23 @@
 
 import { useState } from "react";
 import { Dialog, Portal } from "@skeletonlabs/skeleton-react";
-import { Download, Upload, AlertTriangle, Trash2, Database, X } from "lucide-react";
-import { exportAllData, importAllData, clearAllData } from "@/lib/tournamentStore";
+import { Cloud, Download, RefreshCw, Upload, AlertTriangle, Trash2, Database, X, Unplug } from "lucide-react";
+import { clearAllData } from "@/lib/tournamentStore";
+import { createBackupEnvelope, parseBackupJson, restoreBackupEnvelope } from "@/lib/backupData";
+import { useDriveSync } from "@/context/DriveSyncContext";
+import { DRIVE_ACCESS_TOKEN_EXPIRES_AT_KEY, DRIVE_ACCESS_TOKEN_KEY } from "@/lib/googleDriveBackup";
 import ConfirmationModal from "./ConfirmationModal";
+
+function formatDateTime(value) {
+    if (!value) return "Never";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Never";
+    return date.toLocaleString();
+}
 
 export default function GlobalDataSettingsModal({ open, onOpenChange }) {
     const [modal, setModal] = useState({ open: false, title: "", description: "", onConfirm: null, isAlert: false, variant: "primary", confirmText: "Confirm" });
+    const driveSync = useDriveSync();
 
     const showAlert = (title, description) => {
         setModal({ open: true, title, description, onConfirm: () => setModal(prev => ({ ...prev, open: false })), isAlert: true, variant: "primary", confirmText: "OK" });
@@ -18,20 +29,13 @@ export default function GlobalDataSettingsModal({ open, onOpenChange }) {
     };
 
     const handleExport = async () => {
-        const idbData = await exportAllData();
-        if (!idbData) {
+        let exportData;
+        try {
+            exportData = await createBackupEnvelope();
+        } catch (_) {
             showAlert("Export Failed", "Failed to export database data.");
             return;
         }
-
-        const exportData = {
-            version: 1,
-            localStorage: {
-                swiss_tournaments: localStorage.getItem("swiss_tournaments"),
-                swiss_active_tournament: localStorage.getItem("swiss_active_tournament")
-            },
-            indexedDB: idbData
-        };
 
         const blob = new Blob([JSON.stringify(exportData)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
@@ -52,28 +56,17 @@ export default function GlobalDataSettingsModal({ open, onOpenChange }) {
         const reader = new FileReader();
         reader.onload = async (event) => {
             try {
-                const data = JSON.parse(event.target.result);
-                if (!data.version || !data.localStorage || !data.indexedDB) {
-                    showAlert("Invalid Backup", "Invalid backup file format.");
-                    return;
-                }
+                const data = await parseBackupJson(event.target.result);
 
                 showConfirm(
                     "Restore Backup?",
                     "Are you sure you want to restore this backup? This will OVERWRITE all current tournaments and data.",
                     async () => {
-                        if (data.localStorage.swiss_tournaments) {
-                            localStorage.setItem("swiss_tournaments", data.localStorage.swiss_tournaments);
-                        }
-                        if (data.localStorage.swiss_active_tournament) {
-                            localStorage.setItem("swiss_active_tournament", data.localStorage.swiss_active_tournament);
-                        }
-
-                        const success = await importAllData(data.indexedDB);
-                        if (success) {
+                        try {
+                            await restoreBackupEnvelope(data);
                             showAlert("Success", "Backup restored successfully. The page will now reload.");
                             setTimeout(() => window.location.reload(), 1500);
-                        } else {
+                        } catch (_) {
                             showAlert("Restore Failed", "Failed to restore some database data.");
                         }
                     },
@@ -82,7 +75,10 @@ export default function GlobalDataSettingsModal({ open, onOpenChange }) {
                 );
             } catch (err) {
                 console.error("Import error:", err);
-                showAlert("Error", "Error reading the backup file.");
+                showAlert(
+                    err?.message === "Invalid backup file format." ? "Invalid Backup" : "Error",
+                    err?.message === "Invalid backup file format." ? "Invalid backup file format." : "Error reading the backup file."
+                );
             }
         };
         reader.readAsText(file);
@@ -100,6 +96,13 @@ export default function GlobalDataSettingsModal({ open, onOpenChange }) {
                     async () => {
                         localStorage.removeItem("swiss_tournaments");
                         localStorage.removeItem("swiss_active_tournament");
+                        localStorage.removeItem("swiss_drive_sync_enabled");
+                        localStorage.removeItem("swiss_drive_last_backup_at");
+                        localStorage.removeItem("swiss_drive_last_known_hash");
+                        localStorage.removeItem("swiss_drive_account_name");
+                        localStorage.removeItem("swiss_drive_account_email");
+                        localStorage.removeItem(DRIVE_ACCESS_TOKEN_KEY);
+                        localStorage.removeItem(DRIVE_ACCESS_TOKEN_EXPIRES_AT_KEY);
 
                         const success = await clearAllData();
                         if (success) {
@@ -136,6 +139,97 @@ export default function GlobalDataSettingsModal({ open, onOpenChange }) {
                             </div>
 
                             <div className="grid gap-4">
+                                <section className="bg-surface-50-950 border border-surface-200-800 rounded-lg p-4">
+                                    <div className="mb-4">
+                                        <h2 className="text-base font-semibold flex items-center gap-2">
+                                            <Cloud className="text-primary-500" size={18} />
+                                            Google Drive Sync
+                                        </h2>
+                                        <p className="text-sm text-surface-600-400 mt-1">
+                                            Back up page data to your Google Drive app data folder and restore it on this device.
+                                        </p>
+                                    </div>
+
+                                    {!driveSync.isConfigured ? (
+                                        <div className="p-3 bg-warning-500/10 border border-warning-500/20 rounded text-warning-700 dark:text-warning-400 text-sm flex items-start gap-3">
+                                            <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+                                            <div>
+                                                <strong className="block font-semibold mb-0.5">Google Drive is not configured</strong>
+                                                Set NEXT_PUBLIC_GOOGLE_CLIENT_ID to enable Drive backup and restore.
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <div className="grid gap-2 text-sm text-surface-600-400">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="font-medium text-surface-950-50">Status:</span>
+                                                    <span>{driveSync.statusMessage || (driveSync.isEnabled ? "Google Drive sync is enabled." : "Google Drive sync is disconnected.")}</span>
+                                                </div>
+                                                {(driveSync.connectedAccount.name || driveSync.connectedAccount.email) && (
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className="font-medium text-surface-950-50">Account:</span>
+                                                        <span>
+                                                            {driveSync.connectedAccount.name}
+                                                            {driveSync.connectedAccount.email && driveSync.connectedAccount.email !== driveSync.connectedAccount.name
+                                                                ? ` (${driveSync.connectedAccount.email})`
+                                                                : ""}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                <div>Last backup: {formatDateTime(driveSync.lastBackupAt)}</div>
+                                                <div>Last check: {formatDateTime(driveSync.lastCheckAt)}</div>
+                                                {driveSync.isEnabled && (
+                                                    <div>Auto-backup: {driveSync.isConnected && !driveSync.needsReconnect ? "Every 1 minute" : "Paused until connected"}</div>
+                                                )}
+                                            </div>
+
+                                            <div className="flex flex-wrap gap-2">
+                                                {!driveSync.isEnabled || !driveSync.isConnected || driveSync.needsReconnect ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={driveSync.connect}
+                                                        disabled={driveSync.isSyncing}
+                                                        className="flex items-center gap-1.5 text-sm px-4 py-2 rounded bg-primary-500 hover:bg-primary-600 text-white cursor-pointer font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        <Cloud size={16} />
+                                                        {driveSync.isSyncing ? "Connecting..." : "Connect Google Drive"}
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        type="button"
+                                                        onClick={driveSync.disconnect}
+                                                        disabled={driveSync.isSyncing}
+                                                        className="flex items-center gap-1.5 text-sm px-4 py-2 rounded preset-tonal cursor-pointer font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        <Unplug size={16} />
+                                                        Disconnect
+                                                    </button>
+                                                )}
+
+                                                <button
+                                                    type="button"
+                                                    onClick={driveSync.backupNow}
+                                                    disabled={!driveSync.isEnabled || driveSync.isSyncing}
+                                                    className="flex items-center gap-1.5 text-sm px-4 py-2 rounded preset-tonal cursor-pointer font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    <Upload size={16} />
+                                                    Back Up Now
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={driveSync.checkNow}
+                                                    disabled={!driveSync.isEnabled || driveSync.isSyncing}
+                                                    className="flex items-center gap-1.5 text-sm px-4 py-2 rounded preset-tonal cursor-pointer font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    <RefreshCw size={16} />
+                                                    Check Drive Backup
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </section>
+
                                 <section className="bg-surface-50-950 border border-surface-200-800 rounded-lg p-4">
                                     <div className="mb-4">
                                         <h2 className="text-base font-semibold flex items-center gap-2">

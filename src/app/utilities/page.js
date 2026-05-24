@@ -2,12 +2,14 @@
 
 import { Fragment } from 'react';
 import { Tabs } from '@skeletonlabs/skeleton-react';
-import { QrCode, Table } from 'lucide-react';
+import { Image as ImageIcon, QrCode, Table } from 'lucide-react';
+import ImageConverter from '@/features/utilities/ImageConverter';
 import QRCodeGenerator from '@/features/utilities/QRCodeGenerator';
 import QuickStandingsCalculator from '@/features/utilities/QuickStandingsCalculator';
 
 const tabs = [
     { value: "quick-standings", label: "Quick Team Standing", icon: Table },
+    { value: "image", label: "Image Converter", icon: ImageIcon },
     { value: "qr", label: "QR Code", icon: QrCode },
 ];
 
@@ -28,11 +30,14 @@ export default function Utilities() {
                     ))}
                     <Tabs.Indicator />
                 </Tabs.List>
-                <Tabs.Content value="qr" className="pt-6">
-                    <QRCodeGenerator />
-                </Tabs.Content>
                 <Tabs.Content value="quick-standings" className="pt-6">
                     <QuickStandingsCalculator />
+                </Tabs.Content>
+                <Tabs.Content value="image" className="pt-6">
+                    <ImageConverter />
+                </Tabs.Content>
+                <Tabs.Content value="qr" className="pt-6">
+                    <QRCodeGenerator />
                 </Tabs.Content>
             </Tabs>
         </main>

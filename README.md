@@ -22,6 +22,7 @@ Live site: [https://swiss-pairing.vercel.app/](https://swiss-pairing.vercel.app/
 - Player round-history modal from standings and rounds views.
 - Player card generator with template layers, image assets, per-tournament saved config, single-card downloads, and ZIP batch export.
 - Complete local data backup, restore, and clear actions.
+- Optional Google Drive backup/restore sync through a public OAuth Client ID and the Drive app data folder.
 - QR code generator utility with color, logo, dot style, margin, and error-correction controls.
 - Light and dark mode.
 
@@ -41,6 +42,12 @@ Install dependencies:
 
 ```bash
 npm install
+```
+
+Optional Google Drive sync requires a browser OAuth Client ID:
+
+```bash
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
 ```
 
 Start the development server:

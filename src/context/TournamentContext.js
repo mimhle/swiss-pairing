@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 import { duplicateTournamentData, deleteTournamentData, loadTournamentConfig, saveTournamentConfig, loadRounds, saveRounds } from "@/lib/tournamentStore";
+import { notifyDataChanged } from "@/lib/dataChangeSignal";
 
 const TournamentContext = createContext();
 const VALID_TABS = new Set(["players", "rounds", "standings", "settings"]);
@@ -10,6 +11,12 @@ function getTabFromHash() {
     if (typeof window === "undefined") return null;
     const tab = window.location.hash.replace(/^#/, "");
     return VALID_TABS.has(tab) ? tab : null;
+}
+
+function saveLocalData(key, value) {
+    if (localStorage.getItem(key) === value) return;
+    localStorage.setItem(key, value);
+    notifyDataChanged();
 }
 
 export function TournamentProvider({ children }) {
@@ -71,12 +78,12 @@ export function TournamentProvider({ children }) {
 
     useEffect(() => {
         if (!isLoaded) return;
-        localStorage.setItem("swiss_tournaments", JSON.stringify(tournaments));
+        saveLocalData("swiss_tournaments", JSON.stringify(tournaments));
     }, [tournaments, isLoaded]);
 
     useEffect(() => {
         if (!isLoaded || !activeTournamentId) return;
-        localStorage.setItem("swiss_active_tournament", activeTournamentId);
+        saveLocalData("swiss_active_tournament", activeTournamentId);
         
         // Load tournament specific data
         setIsLoadingConfig(true);

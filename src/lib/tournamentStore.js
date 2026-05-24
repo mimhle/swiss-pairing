@@ -1,3 +1,5 @@
+import { notifyDataChanged } from "@/lib/dataChangeSignal";
+
 const DB_NAME = 'swiss-pairing';
 const DB_VERSION = 4;
 const STORE_NAME = 'players';
@@ -146,6 +148,7 @@ export const loadPlayers = async (tournamentId = 'default') => {
 export const savePlayers = async (players, tournamentId = 'default') => {
     try {
         await runStore(STORE_NAME, 'readwrite', store => store.put(players, getPlayersKey(tournamentId)));
+        notifyDataChanged();
     } catch (_) {
         // Ignore save failures (e.g., storage blocked).
     }
@@ -166,6 +169,7 @@ export const loadClubFedMapping = async (tournamentId = 'default') => {
 export const saveClubFedMapping = async (mapping, tournamentId = 'default') => {
     try {
         await runStore(MAPPINGS_STORE_NAME, 'readwrite', store => store.put(mapping, getMappingKey(tournamentId)));
+        notifyDataChanged();
     } catch (_) {
         // Ignore save failures (e.g., storage blocked).
     }
@@ -186,6 +190,7 @@ export const loadCardGenAsset = async (key, tournamentId = 'default') => {
 export const saveCardGenAsset = async (key, data, tournamentId = 'default') => {
     try {
         await runStore(CARD_GEN_STORE_NAME, 'readwrite', store => store.put(data, getCardAssetKey(tournamentId, key)));
+        notifyDataChanged();
     } catch (_) {
     }
 };
@@ -205,6 +210,7 @@ export const loadTournamentConfig = async (tournamentId = 'default') => {
 export const saveTournamentConfig = async (config, tournamentId = 'default') => {
     try {
         await runStore(CONFIG_STORE_NAME, 'readwrite', store => store.put(config, getConfigKey(tournamentId)));
+        notifyDataChanged();
     } catch (_) {
     }
 };
@@ -224,6 +230,7 @@ export const loadRounds = async (tournamentId = 'default') => {
 export const saveRounds = async (rounds, tournamentId = 'default') => {
     try {
         await runStore(ROUNDS_STORE_NAME, 'readwrite', store => store.put(rounds, getRoundsKey(tournamentId)));
+        notifyDataChanged();
     } catch (_) {
     }
 };
@@ -310,6 +317,7 @@ export const duplicateTournamentData = async (sourceId, targetId) => {
         await copyStoreData(CARD_GEN_STORE_NAME, sourceId, targetId, false);
         await copyStoreData(CONFIG_STORE_NAME, getConfigKey(sourceId), getConfigKey(targetId), true);
         await copyStoreData(ROUNDS_STORE_NAME, getRoundsKey(sourceId), getRoundsKey(targetId), true);
+        notifyDataChanged();
 
     } catch (e) {
         console.error("Failed to duplicate tournament data", e);
@@ -357,6 +365,7 @@ export const deleteTournamentData = async (tournamentId) => {
         await deleteStoreData(CARD_GEN_STORE_NAME, tournamentId, false);
         await deleteStoreData(CONFIG_STORE_NAME, getConfigKey(tournamentId), true);
         await deleteStoreData(ROUNDS_STORE_NAME, getRoundsKey(tournamentId), true);
+        notifyDataChanged();
 
     } catch (e) {
         console.error("Failed to delete tournament data", e);
@@ -444,6 +453,7 @@ export const importAllData = async (data) => {
         await importStore(CARD_GEN_STORE_NAME, data.cardGen || []);
         await importStore(CONFIG_STORE_NAME, data.configs || []);
         await importStore(ROUNDS_STORE_NAME, data.rounds || []);
+        notifyDataChanged();
         
         return true;
     } catch (e) {
@@ -471,6 +481,7 @@ export const clearAllData = async () => {
         await clearStore(CARD_GEN_STORE_NAME);
         await clearStore(CONFIG_STORE_NAME);
         await clearStore(ROUNDS_STORE_NAME);
+        notifyDataChanged();
 
         return true;
     } catch (e) {
