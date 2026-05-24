@@ -79,11 +79,21 @@ function parseScoreExcel(arrayBuffer) {
     return { headers, rows };
 }
 
+function normalizeScoreHeaderKey(header) {
+    return String(header ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[đĐ]/g, 'd')
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, ' ');
+}
+
 function suggestScoreMapping(headers) {
     const mapping = {};
     const used = new Set();
     headers.forEach((header, i) => {
-        const key = header.normalize('NFC').toLowerCase().trim();
+        const key = normalizeScoreHeaderKey(header);
         const field = SCORE_HEADER_FIELD_MAP.get(key) ?? '';
         if (field && !used.has(field)) {
             mapping[i] = field;
@@ -585,6 +595,37 @@ function getManualBoardForfeitIds(boards = []) {
 
 function hasPlayerName(player) {
     return String(player?.name || '').trim().length > 0;
+}
+
+function getImportedPairingAllocatedByeIds(players = [], usedIds = new Set(), playerGroupLookup = {}, useGroupScopes = false) {
+    const activePlayers = players.filter(hasPlayerName);
+    const playersByScope = new Map();
+    const missingByScope = new Map();
+
+    const getScope = (playerId) => useGroupScopes ? (playerGroupLookup[String(playerId)] || '') : '';
+
+    activePlayers.forEach(player => {
+        const playerId = String(player.playerUniqueId);
+        if (!playerId) return;
+        const scope = getScope(playerId);
+        if (!playersByScope.has(scope)) playersByScope.set(scope, []);
+        playersByScope.get(scope).push(playerId);
+        if (!usedIds.has(playerId)) {
+            if (!missingByScope.has(scope)) missingByScope.set(scope, []);
+            missingByScope.get(scope).push(playerId);
+        }
+    });
+
+    const byeIds = new Set();
+    missingByScope.forEach((missingIds, scope) => {
+        const scopePlayerIds = playersByScope.get(scope) || [];
+        const usedCount = scopePlayerIds.filter(playerId => usedIds.has(playerId)).length;
+        if (scopePlayerIds.length % 2 === 1 && missingIds.length === 1 && usedCount === scopePlayerIds.length - 1) {
+            byeIds.add(missingIds[0]);
+        }
+    });
+
+    return byeIds;
 }
 
 function getActivePairablePlayers(players = [], forfeitedIds = new Set()) {
@@ -1419,7 +1460,9 @@ export default function RoundsTab() {
             setShowManualPairingModal(false);
             setPendingManualBoards(null);
             setRoundModalMode('setup');
-            clearPreRoundForfeitAssignments();
+            if (manualPairingMode !== 'edit') {
+                clearPreRoundForfeitAssignments();
+            }
         } catch (error) {
             showAlert('Manual Pairing Failed', error?.message || 'Could not generate the automatic remainder.');
         } finally {
@@ -1493,6 +1536,7 @@ export default function RoundsTab() {
             values.roundNumber = parseImportedRound(values.round);
             values.whiteId = parseImportedPlayerId(values.whiteId);
             values.blackId = parseImportedPlayerId(values.blackId);
+            values.absentId = parseImportedPlayerId(values.absentId);
             return values;
         });
     };
@@ -1503,11 +1547,12 @@ export default function RoundsTab() {
         raw: (row.__raw || []).join(';')
     });
 
-    const applyRowsToPairings = (pairings, rowsForRound) => {
+    const applyRowsToPairings = (pairings, rowsForRound, roundNumber = 0) => {
         const byBoard = new Map();
         const byPlayers = new Map();
         const matchedRows = new Set();
         const skippedRows = [];
+        const importPlayerGroupLookup = buildPlayerGroupLookup(players);
 
         rowsForRound.forEach(row => {
             if (row.board) byBoard.set(String(parseInt(row.board, 10)), row);
@@ -1516,7 +1561,7 @@ export default function RoundsTab() {
 
         let imported = 0;
         let skipped = 0;
-        const pairingsWithResults = pairings.map((pairing, index) => {
+        let pairingsWithResults = pairings.map((pairing, index) => {
             const row = byBoard.get(String(index + 1))
                 ?? byPlayers.get(`${pairing.whiteId}|${pairing.blackId || ''}`)
                 ?? rowsForRound[index];
@@ -1537,6 +1582,27 @@ export default function RoundsTab() {
             return { ...pairing, result };
         });
 
+        rowsForRound
+            .filter(row => row.absentId)
+            .forEach(row => {
+                const playerId = String(row.absentId);
+                matchedRows.add(row.__index);
+                if (getRoundPlayerIds({ pairings: pairingsWithResults }).has(playerId)) return;
+                imported += 1;
+                pairingsWithResults = [
+                    ...pairingsWithResults,
+                    {
+                        id: `r${roundNumber}-p${pairingsWithResults.length + 1}`,
+                        whiteId: playerId,
+                        blackId: null,
+                        isBye: true,
+                        isSkip: true,
+                        group: importPlayerGroupLookup[playerId] || '',
+                        result: '0-0',
+                    }
+                ];
+            });
+
         rowsForRound.forEach(row => {
             if (!matchedRows.has(row.__index)) {
                 skipped += 1;
@@ -1552,6 +1618,7 @@ export default function RoundsTab() {
         rowsForRound.forEach(row => {
             if (row.whiteId) ids.add(String(row.whiteId));
             if (row.blackId) ids.add(String(row.blackId));
+            if (row.absentId) ids.add(String(row.absentId));
         });
         return ids;
     };
@@ -1562,6 +1629,7 @@ export default function RoundsTab() {
         const skippedRows = [];
         const importPlayerGroupLookup = buildPlayerGroupLookup(players);
         const importedPlayerIds = getImportedRowPlayerIds(rowsForRound);
+        const absentIds = [...new Set(rowsForRound.map(row => row.absentId).filter(Boolean).map(String))];
         const sortedRows = [...rowsForRound].sort((a, b) => {
             const aBoard = parseInt(a.board, 10);
             const bBoard = parseInt(b.board, 10);
@@ -1588,19 +1656,40 @@ export default function RoundsTab() {
             };
         }).filter(Boolean);
 
+        absentIds.forEach(playerId => {
+            if (getRoundPlayerIds({ pairings }).has(playerId)) return;
+            imported += 1;
+            pairings.push({
+                id: `r${roundNumber}-p${pairings.length + 1}`,
+                whiteId: playerId,
+                blackId: null,
+                isBye: true,
+                isSkip: true,
+                group: importPlayerGroupLookup[playerId] || '',
+                result: '0-0',
+            });
+        });
+
         if (markMissingPlayersAsSkips && importedPlayerIds.size > 0) {
             const usedIds = getRoundPlayerIds({ pairings });
+            const pairingAllocatedByeIds = getImportedPairingAllocatedByeIds(
+                players,
+                usedIds,
+                importPlayerGroupLookup,
+                isGroupPairingMode(tournamentConfig)
+            );
             players.forEach(player => {
                 const playerId = String(player.playerUniqueId);
                 if (!playerId || importedPlayerIds.has(playerId) || usedIds.has(playerId)) return;
+                const isPairingAllocatedBye = pairingAllocatedByeIds.has(playerId);
                 pairings.push({
                     id: `r${roundNumber}-p${pairings.length + 1}`,
                     whiteId: playerId,
                     blackId: null,
                     isBye: true,
-                    isSkip: true,
+                    isSkip: !isPairingAllocatedBye,
                     group: importPlayerGroupLookup[playerId] || '',
-                    result: '0-0',
+                    result: isPairingAllocatedBye ? '1-0' : '0-0',
                 });
             });
         }
@@ -1715,9 +1804,9 @@ export default function RoundsTab() {
                 if (!rowsForRound) return round;
                 if (roundIdx < currentRoundIdx && !overwritePrevious) return round;
 
-                const applied = rowsForRound.some(row => row.whiteId)
-                    ? createPairingsFromRows(roundNumber, rowsForRound, { markMissingPlayersAsSkips: true })
-                    : applyRowsToPairings(round.pairings, rowsForRound);
+                const applied = round.pairings?.length
+                    ? applyRowsToPairings(round.pairings, rowsForRound, roundNumber)
+                    : createPairingsFromRows(roundNumber, rowsForRound, { markMissingPlayersAsSkips: true });
                 imported += applied.imported;
                 skipped += applied.skipped;
                 skippedRows.push(...applied.skippedRows);
@@ -1756,9 +1845,9 @@ export default function RoundsTab() {
             updatedRounds = rounds.map((round, roundIdx) => {
                 if (roundIdx !== currentRoundIdx) return round;
 
-                const applied = rowsForCurrentRound.some(row => row.whiteId)
-                    ? createPairingsFromRows(currentRoundNumber, rowsForCurrentRound, { markMissingPlayersAsSkips: true })
-                    : applyRowsToPairings(round.pairings, rowsForCurrentRound);
+                const applied = round.pairings?.length
+                    ? applyRowsToPairings(round.pairings, rowsForCurrentRound, currentRoundNumber)
+                    : createPairingsFromRows(currentRoundNumber, rowsForCurrentRound, { markMissingPlayersAsSkips: true });
                 imported += applied.imported;
                 skipped += applied.skipped;
                 skippedRows.push(...applied.skippedRows);
