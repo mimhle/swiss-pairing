@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Dialog, Portal, Progress } from "@skeletonlabs/skeleton-react";
 import { AlertTriangle, Check, Cloud, X } from "lucide-react";
 import { createBackupEnvelope, getBackupHash, parseBackupJson, restoreBackupEnvelope } from "@/lib/backupData";
-import { DATA_CHANGED_EVENT } from "@/lib/dataChangeSignal";
+import { DATA_CHANGED_EVENT, LOCAL_DATA_UPDATED_AT_KEY } from "@/lib/dataChangeSignal";
 import {
     clearGoogleDriveToken,
     DRIVE_ACCESS_TOKEN_EXPIRES_AT_KEY,
@@ -282,6 +282,8 @@ export function DriveSyncProvider({ children }) {
                 remoteData: { ...remoteData, sourceHash: remoteHash },
                 remoteFile,
                 remoteModifiedTime: remoteFile.modifiedTime,
+                remoteUpdatedAt: remoteData.localUpdatedAt || remoteData.createdAt || remoteFile.modifiedTime,
+                localUpdatedAt: localBackup.localUpdatedAt || localStorage.getItem(LOCAL_DATA_UPDATED_AT_KEY) || "",
                 localHash: localBackup.sourceHash,
                 remoteHash,
             });
@@ -474,7 +476,8 @@ export function DriveSyncProvider({ children }) {
                                 This device and Google Drive have different backup data. Auto-backup is paused until you choose which copy to keep.
                             </Dialog.Description>
                             <div className="rounded-lg border border-surface-200-800 bg-surface-50-950 p-3 text-xs text-surface-600-400 space-y-1">
-                                <div>Drive modified: {formatDateTime(conflict?.remoteModifiedTime) || "Unknown"}</div>
+                                <div>Local last update: {formatDateTime(conflict?.localUpdatedAt) || "Unknown"}</div>
+                                <div>Google Drive last update: {formatDateTime(conflict?.remoteUpdatedAt || conflict?.remoteModifiedTime) || "Unknown"}</div>
                                 <div>Local hash: {conflict?.localHash?.slice(0, 12)}...</div>
                                 <div>Drive hash: {conflict?.remoteHash?.slice(0, 12)}...</div>
                             </div>

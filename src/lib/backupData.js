@@ -1,4 +1,5 @@
 import { exportAllData, importAllData } from "@/lib/tournamentStore";
+import { LOCAL_DATA_UPDATED_AT_KEY } from "@/lib/dataChangeSignal";
 
 export const BACKUP_VERSION = 1;
 
@@ -77,6 +78,7 @@ export async function createBackupEnvelope() {
             LOCAL_STORAGE_KEYS.map(key => [key, localStorage.getItem(key)])
         ),
         indexedDB: indexedDBData,
+        localUpdatedAt: localStorage.getItem(LOCAL_DATA_UPDATED_AT_KEY) || "",
         createdAt: new Date().toISOString(),
     };
 
