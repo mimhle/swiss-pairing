@@ -58,6 +58,7 @@ const WATERMARK_ANCHORS = [
 const DEFAULT_SETTINGS = {
     outputType: 'image/png',
     quality: 0.9,
+    autoCrop: false,
     resizeMode: 'original',
     targetWidth: 1200,
     targetHeight: 1200,
@@ -84,6 +85,8 @@ const DEFAULT_WATERMARK = {
 };
 
 const MAX_CANVAS_PIXELS = 80_000_000;
+const AUTO_CROP_ALPHA_THRESHOLD = 8;
+const AUTO_CROP_COLOR_TOLERANCE = 12;
 
 function createId() {
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -134,6 +137,100 @@ function getFiniteValue(value, fallback) {
 
 function clampValue(value, min, max) {
     return Math.min(Math.max(value, min), max);
+}
+
+function pixelIndex(width, x, y) {
+    return ((y * width) + x) * 4;
+}
+
+function getPixelColor(data, index) {
+    return [data[index], data[index + 1], data[index + 2], data[index + 3]];
+}
+
+function colorsMatch(data, index, color) {
+    return Math.abs(data[index] - color[0]) <= AUTO_CROP_COLOR_TOLERANCE
+        && Math.abs(data[index + 1] - color[1]) <= AUTO_CROP_COLOR_TOLERANCE
+        && Math.abs(data[index + 2] - color[2]) <= AUTO_CROP_COLOR_TOLERANCE
+        && Math.abs(data[index + 3] - color[3]) <= AUTO_CROP_COLOR_TOLERANCE;
+}
+
+function isEdgeTransparent(data, width, height) {
+    for (let x = 0; x < width; x += 1) {
+        if (data[pixelIndex(width, x, 0) + 3] <= AUTO_CROP_ALPHA_THRESHOLD) return true;
+        if (data[pixelIndex(width, x, height - 1) + 3] <= AUTO_CROP_ALPHA_THRESHOLD) return true;
+    }
+
+    for (let y = 0; y < height; y += 1) {
+        if (data[pixelIndex(width, 0, y) + 3] <= AUTO_CROP_ALPHA_THRESHOLD) return true;
+        if (data[pixelIndex(width, width - 1, y) + 3] <= AUTO_CROP_ALPHA_THRESHOLD) return true;
+    }
+
+    return false;
+}
+
+function getAutoCropBounds(image) {
+    const width = image.naturalWidth;
+    const height = image.naturalHeight;
+
+    if (!width || !height) {
+        return { x: 0, y: 0, width, height };
+    }
+
+    if (width * height > MAX_CANVAS_PIXELS) {
+        throw new Error('Image is too large for auto crop.');
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    if (!ctx) {
+        throw new Error('Canvas rendering is unavailable in this browser.');
+    }
+
+    ctx.drawImage(image, 0, 0);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const { data } = imageData;
+    const cropByAlpha = isEdgeTransparent(data, width, height);
+    const backgroundColors = cropByAlpha ? [] : [
+        getPixelColor(data, pixelIndex(width, 0, 0)),
+        getPixelColor(data, pixelIndex(width, width - 1, 0)),
+        getPixelColor(data, pixelIndex(width, 0, height - 1)),
+        getPixelColor(data, pixelIndex(width, width - 1, height - 1)),
+    ];
+
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+            const index = pixelIndex(width, x, y);
+            const isContent = cropByAlpha
+                ? data[index + 3] > AUTO_CROP_ALPHA_THRESHOLD
+                : !backgroundColors.some(color => colorsMatch(data, index, color));
+
+            if (isContent) {
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+            }
+        }
+    }
+
+    if (maxX < minX || maxY < minY) {
+        return { x: 0, y: 0, width, height };
+    }
+
+    return {
+        x: minX,
+        y: minY,
+        width: maxX - minX + 1,
+        height: maxY - minY + 1,
+    };
 }
 
 function parseRatioValue(value) {
@@ -405,6 +502,7 @@ export default function ImageConverter() {
     const [activeId, setActiveId] = useState(null);
     const [settings, setSettings] = useState(DEFAULT_SETTINGS);
     const [watermark, setWatermark] = useState(DEFAULT_WATERMARK);
+    const [previewMode, setPreviewMode] = useState('converted');
     const [isDragging, setIsDragging] = useState(false);
     const [isConvertingAll, setIsConvertingAll] = useState(false);
     const [avifSupported, setAvifSupported] = useState(false);
@@ -638,7 +736,10 @@ export default function ImageConverter() {
 
         try {
             const prepared = await prepareItemSource(item);
-            const canvasPlan = getCanvasPlan(prepared.width, prepared.height, settings);
+            const sourceCrop = settings.autoCrop
+                ? getAutoCropBounds(prepared.image)
+                : { x: 0, y: 0, width: prepared.width, height: prepared.height };
+            const canvasPlan = getCanvasPlan(sourceCrop.width, sourceCrop.height, settings);
 
             if (canvasPlan.canvasWidth * canvasPlan.canvasHeight > MAX_CANVAS_PIXELS) {
                 throw new Error('Output is too large for browser canvas export.');
@@ -660,8 +761,8 @@ export default function ImageConverter() {
 
             ctx.drawImage(
                 prepared.image,
-                canvasPlan.sourceX,
-                canvasPlan.sourceY,
+                sourceCrop.x + canvasPlan.sourceX,
+                sourceCrop.y + canvasPlan.sourceY,
                 canvasPlan.sourceWidth,
                 canvasPlan.sourceHeight,
                 canvasPlan.drawX,
@@ -805,6 +906,15 @@ export default function ImageConverter() {
 
     const selectedFormat = getFormatMeta(settings.outputType);
     const hasWatermark = Boolean(watermark.sourceUrl);
+    const previewIsConverted = previewMode === 'converted' && Boolean(activeItem?.resultUrl);
+    const previewUrl = activeItem
+        ? previewIsConverted
+            ? activeItem.resultUrl
+            : activeItem.sourceUrl
+        : null;
+    const previewFileName = previewIsConverted
+        ? activeItem?.resultName || makeOutputName(activeItem?.name, settings.outputType)
+        : activeItem?.name;
 
     return (
         <div className="space-y-6">
@@ -988,6 +1098,16 @@ export default function ImageConverter() {
                                 </div>
                             </div>
                         )}
+
+                        <label className="flex items-center gap-2 text-xs font-bold text-surface-700-300 min-h-[58px]">
+                            <input
+                                type="checkbox"
+                                checked={settings.autoCrop}
+                                onChange={(event) => setSettings(prev => ({ ...prev, autoCrop: event.target.checked }))}
+                                className="w-4 h-4 accent-primary-500"
+                            />
+                            Auto Crop
+                        </label>
 
                         <div className="flex flex-col gap-1.5">
                             <span className="text-[10px] text-surface-500-400 font-bold uppercase tracking-wider">Background</span>
@@ -1308,14 +1428,34 @@ export default function ImageConverter() {
                 </div>
 
                 <div className="lg:sticky lg:top-4 border border-surface-200-800 rounded-2xl bg-surface-100-900 min-h-[440px] p-5 flex flex-col shadow-inner">
-                    <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center justify-between gap-3">
                         <span className="text-[10px] font-bold uppercase tracking-widest text-surface-600-300 flex items-center gap-2">
                             <ImageIcon size={12} className="text-primary-500" />
                             Preview
                         </span>
                         <span className="text-[9px] font-mono text-primary-500 font-bold px-2 py-1 rounded bg-primary-500/10 border border-primary-500/20">
-                            {selectedFormat.label}
+                            {previewIsConverted ? selectedFormat.label : 'Original'}
                         </span>
+                    </div>
+                    <div className="mt-3 mb-4">
+                        <div className="inline-grid grid-cols-2 rounded-lg border border-surface-200-800 bg-surface-50-950 p-0.5">
+                            <button
+                                type="button"
+                                onClick={() => setPreviewMode('original')}
+                                disabled={!activeItem}
+                                className={`px-2.5 py-1 rounded-md text-[9px] font-bold uppercase tracking-widest transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${activeItem && !previewIsConverted ? 'bg-primary-500 text-white' : 'text-surface-500 hover:text-surface-900-100'}`}
+                            >
+                                Original
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setPreviewMode('converted')}
+                                disabled={!activeItem?.resultUrl}
+                                className={`px-2.5 py-1 rounded-md text-[9px] font-bold uppercase tracking-widest transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${previewIsConverted ? 'bg-primary-500 text-white' : 'text-surface-500 hover:text-surface-900-100'}`}
+                            >
+                                Converted
+                            </button>
+                        </div>
                     </div>
 
                     {!activeItem ? (
@@ -1328,10 +1468,10 @@ export default function ImageConverter() {
                     ) : (
                         <>
                             <div className="flex-1 flex items-center justify-center rounded-xl min-h-[260px] p-4">
-                                {activeItem.resultUrl || activeItem.sourceUrl ? (
+                                {previewUrl ? (
                                     <div className="inline-flex max-w-full overflow-hidden rounded-lg border border-surface-200-800 bg-surface-50-950 shadow-sm">
                                         <img
-                                            src={activeItem.resultUrl || activeItem.sourceUrl}
+                                            src={previewUrl}
                                             alt={activeItem.name}
                                             className="block h-auto w-auto max-w-full max-h-[320px]"
                                         />
@@ -1345,7 +1485,7 @@ export default function ImageConverter() {
                                 <div>
                                     <h3 className="font-bold text-sm text-surface-900-100 truncate">{activeItem.name}</h3>
                                     <p className="text-[10px] text-surface-500 mt-1">
-                                        {activeItem.resultName || makeOutputName(activeItem.name, settings.outputType)}
+                                        {previewFileName}
                                     </p>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-[10px]">
