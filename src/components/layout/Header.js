@@ -13,6 +13,10 @@ const links = [
 export default function Header() {
     const pathname = usePathname();
 
+    if (pathname.startsWith('/arbiter')) {
+        return null;
+    }
+
     return (
         <header className="sticky top-0 z-10 bg-surface-100-900 border-b border-surface-200-800">
             <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-8">

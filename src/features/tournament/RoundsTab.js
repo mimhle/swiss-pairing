@@ -3,9 +3,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
+import QRCode from 'qrcode';
 import { useTournament } from '@/context/TournamentContext';
-import { Swords, Play, Settings, ChevronRight, ChevronLeft, ChevronDown, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download, UserX, RotateCcw, X } from 'lucide-react';
-import { Dialog, Tooltip, Portal } from '@skeletonlabs/skeleton-react';
+import { Swords, Play, Settings, ChevronRight, ChevronLeft, ChevronDown, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download, UserX, RotateCcw, X, Wifi, Loader2, QrCode } from 'lucide-react';
+import { Dialog, Tooltip, Portal, Menu } from '@skeletonlabs/skeleton-react';
 import TournamentConfigModal from '@/components/modals/TournamentConfigModal';
 import RoundSetupModal from '@/components/modals/RoundSetupModal';
 import ConfirmationModal from '@/components/modals/ConfirmationModal';
@@ -813,6 +814,14 @@ export default function RoundsTab() {
     const [pendingReturnPlayerIds, setPendingReturnPlayerIds] = useState([]);
     const scoreFileInputRef = useRef(null);
     const roundSelectorRef = useRef(null);
+    
+    // Remote session state
+    const [remoteSessionId, setRemoteSessionId] = useState(null);
+    const [remoteSessionUrl, setRemoteSessionUrl] = useState('');
+    const [showRemoteSessionModal, setShowRemoteSessionModal] = useState(false);
+    const [isGeneratingSession, setIsGeneratingSession] = useState(false);
+    const [remoteQrCodeDataUrl, setRemoteQrCodeDataUrl] = useState('');
+    const lastDirectorUpdateRef = useRef(0);
 
     // Load players for lookup
     useEffect(() => {
@@ -832,6 +841,104 @@ export default function RoundsTab() {
 
     const currentRound = rounds[currentRoundIdx];
     const isLatestRound = currentRoundIdx === rounds.length - 1 || rounds.length === 0;
+
+    useEffect(() => {
+        if (!remoteSessionId || !currentRound) return;
+        
+        const pollSession = async () => {
+            try {
+                const res = await fetch(`/api/arbiter/session/${remoteSessionId}`);
+                if (!res.ok) {
+                    if (res.status === 404) {
+                        setRemoteSessionId(null);
+                    }
+                    return;
+                }
+                const sessionData = await res.json();
+                
+                // If director updated within the last 3 seconds, skip applying remote changes 
+                // to prevent overwriting director's local updates before they reach Redis.
+                if (Date.now() - lastDirectorUpdateRef.current < 3000) return;
+                
+                let hasChanges = false;
+                const newPairings = currentRound.pairings.map((p, idx) => {
+                    const arbiterPairing = sessionData.pairings[idx];
+                    if (arbiterPairing && arbiterPairing.result !== p.result) {
+                        hasChanges = true;
+                        return { ...p, result: arbiterPairing.result };
+                    }
+                    return p;
+                });
+                
+                if (hasChanges) {
+                    const newRounds = [...rounds];
+                    newRounds[currentRoundIdx] = { ...currentRound, pairings: newPairings };
+                    updateRounds(newRounds);
+                }
+            } catch (err) {
+                console.error("Polling error:", err);
+            }
+        };
+
+        const intervalId = setInterval(pollSession, 3000);
+        return () => clearInterval(intervalId);
+    }, [remoteSessionId, currentRound, rounds, currentRoundIdx, updateRounds]);
+
+    useEffect(() => {
+        if (remoteSessionUrl) {
+            QRCode.toDataURL(remoteSessionUrl, { margin: 1, width: 256 })
+                .then(url => setRemoteQrCodeDataUrl(url))
+                .catch(err => console.error(err));
+        }
+    }, [remoteSessionUrl]);
+
+    const startRemoteSession = async () => {
+        if (!currentRound) return;
+        setIsGeneratingSession(true);
+        try {
+            const enrichedPairings = currentRound.pairings.map(p => {
+                const whitePlayer = players.find(player => String(player.id) === String(p.whiteId));
+                const blackPlayer = players.find(player => String(player.id) === String(p.blackId));
+                return { ...p, whitePlayer, blackPlayer };
+            });
+
+            const res = await fetch('/api/arbiter/session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tournamentId: activeTournamentId,
+                    roundNumber: currentRound.roundNumber,
+                    pairings: enrichedPairings
+                })
+            });
+            const data = await res.json();
+            
+            if (data.sessionId) {
+                setRemoteSessionId(data.sessionId);
+                const url = `${window.location.origin}/arbiter/${data.sessionId}`;
+                setRemoteSessionUrl(url);
+                setShowRemoteSessionModal(true);
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Failed to start remote session.");
+        } finally {
+            setIsGeneratingSession(false);
+        }
+    };
+    
+    const closeRemoteSession = async () => {
+        if (!remoteSessionId) return;
+        try {
+            await fetch(`/api/arbiter/session/${remoteSessionId}`, { method: 'DELETE' });
+            setRemoteSessionId(null);
+            setShowRemoteSessionModal(false);
+            setRemoteSessionUrl('');
+            setRemoteQrCodeDataUrl('');
+        } catch (err) {
+            console.error(err);
+        }
+    };
 
     const isRoundComplete = useMemo(() => {
         if (!currentRound) return true;
@@ -1472,18 +1579,35 @@ export default function RoundsTab() {
     };
 
     const updateResult = (pairingId, result) => {
+        let newPairingsForCurrentRound = null;
         const updatedRounds = rounds.map((r, rIdx) => {
             if (rIdx === currentRoundIdx) {
+                newPairingsForCurrentRound = r.pairings.map(p =>
+                    p.id === pairingId && !p.isTournamentForfeit ? { ...p, result } : p
+                );
                 return {
                     ...r,
-                    pairings: r.pairings.map(p =>
-                        p.id === pairingId && !p.isTournamentForfeit ? { ...p, result } : p
-                    )
+                    pairings: newPairingsForCurrentRound
                 };
             }
             return r;
         });
         updateRounds(updatedRounds);
+        
+        // Push update to remote session if active, ensuring Director overrides Arbiter
+        if (remoteSessionId && newPairingsForCurrentRound) {
+            lastDirectorUpdateRef.current = Date.now();
+            const enrichedPairings = newPairingsForCurrentRound.map(p => {
+                const whitePlayer = players.find(player => String(player.id) === String(p.whiteId));
+                const blackPlayer = players.find(player => String(player.id) === String(p.blackId));
+                return { ...p, whitePlayer, blackPlayer };
+            });
+            fetch(`/api/arbiter/session/${remoteSessionId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pairings: enrichedPairings })
+            }).catch(err => console.error("Failed to sync Director update to Arbiter", err));
+        }
     };
 
     const advanceToScoreMapping = (data) => {
@@ -2430,6 +2554,18 @@ export default function RoundsTab() {
                 </div>
                 <div className="flex gap-2">
                     {currentRound && (
+                        <>
+                        <button 
+                            onClick={() => {
+                                if (remoteSessionId) setShowRemoteSessionModal(true);
+                                else startRemoteSession();
+                            }}
+                            disabled={isGeneratingSession}
+                            className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${remoteSessionId ? 'border-2 border-success-500 text-success-500 hover:bg-success-500/10 font-bold' : 'preset-tonal'}`}
+                        >
+                            {isGeneratingSession ? <Loader2 size={14} className="animate-spin" /> : (remoteSessionId ? <Wifi size={14} className="animate-pulse" /> : <Wifi size={14} />)}
+                            {remoteSessionId ? 'Active Remote' : 'Remote Input'}
+                        </button>
                         <Dialog
                             open={scoreImportOpen}
                             onOpenChange={({ open }) => {
@@ -2437,10 +2573,6 @@ export default function RoundsTab() {
                                 if (!open) resetScoreImportState();
                             }}
                         >
-                            <Dialog.Trigger className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer">
-                                <Upload size={14} />
-                                Import Scores
-                            </Dialog.Trigger>
                             <Portal>
                                 <Dialog.Backdrop className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" />
                                 <Dialog.Positioner className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -2719,15 +2851,36 @@ export default function RoundsTab() {
                                 </Dialog.Positioner>
                             </Portal>
                         </Dialog>
+                        </>
                     )}
-                    <button
-                        onClick={handleExportTrf}
-                        className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer"
-                        title="Export TRF"
-                    >
-                        <Download size={14} />
-                        Export TRF
-                    </button>
+                    <Menu onSelect={({ value }) => {
+                        if (value === 'import') setScoreImportOpen(true);
+                        if (value === 'export') handleExportTrf();
+                    }}>
+                        <Menu.Trigger className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
+                            <Upload size={14} />
+                            Data
+                            <ChevronDown size={14} />
+                        </Menu.Trigger>
+                        <Menu.Positioner>
+                            <Menu.Content className="card p-1 preset-filled-surface-100-900 shadow-lg min-w-40 z-[70]">
+                                {currentRound && (
+                                    <Menu.Item value="import" className="px-3 py-1.5 rounded text-sm cursor-pointer hover:preset-tonal-primary">
+                                        <Menu.ItemText className="flex items-center gap-2">
+                                            <Upload size={14} />
+                                            Import Scores
+                                        </Menu.ItemText>
+                                    </Menu.Item>
+                                )}
+                                <Menu.Item value="export" className="px-3 py-1.5 rounded text-sm cursor-pointer hover:preset-tonal-primary">
+                                    <Menu.ItemText className="flex items-center gap-2">
+                                        <Download size={14} />
+                                        Export TRF
+                                    </Menu.ItemText>
+                                </Menu.Item>
+                            </Menu.Content>
+                        </Menu.Positioner>
+                    </Menu>
                     <button
                         onClick={() => setShowConfigModal(true)}
                         className="p-2 hover:bg-surface-200-800 rounded-lg transition-colors text-surface-500 hover:text-primary-500"
@@ -3115,6 +3268,67 @@ export default function RoundsTab() {
                 players={players}
                 onClose={() => setSelectedPlayer(null)}
             />
+
+            <Dialog open={showRemoteSessionModal} onOpenChange={({ open }) => setShowRemoteSessionModal(open)}>
+                <Portal>
+                    <Dialog.Backdrop className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" />
+                    <Dialog.Positioner className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <Dialog.Content className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-sm shadow-xl space-y-4">
+                            <div className="flex justify-between items-center">
+                                <Dialog.Title className="text-lg font-bold flex items-center gap-2">
+                                    <QrCode className="text-primary-500" size={20} />
+                                    Remote Session
+                                </Dialog.Title>
+                                <Dialog.CloseTrigger className="p-1.5 hover:bg-surface-200-800 rounded text-surface-500 hover:text-surface-900 dark:hover:text-surface-50 transition-colors cursor-pointer">
+                                    <X size={18} />
+                                </Dialog.CloseTrigger>
+                            </div>
+                            <div className="text-sm text-surface-600-400">
+                                Scan the QR code or share this link with the arbiter. The session is active in the background.
+                            </div>
+                            {remoteQrCodeDataUrl ? (
+                                <div className="flex justify-center bg-white p-2 rounded-lg">
+                                    <img src={remoteQrCodeDataUrl} alt="Session QR Code" className="w-48 h-48" />
+                                </div>
+                            ) : (
+                                <div className="flex justify-center items-center h-48">
+                                    <Loader2 className="w-8 h-8 animate-spin text-surface-500" />
+                                </div>
+                            )}
+                            <div className="flex items-center gap-2">
+                                <input 
+                                    type="text" 
+                                    readOnly 
+                                    value={remoteSessionUrl} 
+                                    className="flex-1 bg-surface-200-800 border-surface-300-700 text-xs px-2 py-1.5 rounded outline-none text-surface-900 dark:text-surface-50"
+                                />
+                                <button 
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(remoteSessionUrl);
+                                    }}
+                                    className="btn preset-tonal text-xs px-3 py-1.5"
+                                >
+                                    Copy
+                                </button>
+                            </div>
+                            <div className="pt-2 flex justify-end gap-2">
+                                <button 
+                                    onClick={() => setShowRemoteSessionModal(false)}
+                                    className="btn preset-tonal"
+                                >
+                                    Hide
+                                </button>
+                                <button 
+                                    onClick={closeRemoteSession}
+                                    className="btn bg-red-600 text-white hover:bg-red-700 font-semibold shadow-sm"
+                                >
+                                    Close Session
+                                </button>
+                            </div>
+                        </Dialog.Content>
+                    </Dialog.Positioner>
+                </Portal>
+            </Dialog>
 
             {confirmationModal}
         </div>
