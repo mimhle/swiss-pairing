@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 
+export const dynamic = 'force-dynamic';
+
 let redis;
 try {
   redis = new Redis({
@@ -26,7 +28,9 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: 'Session not found or expired' }, { status: 404 });
     }
 
-    return NextResponse.json(sessionData, { status: 200 });
+    const response = NextResponse.json(sessionData, { status: 200 });
+    response.headers.set('Cache-Control', 'no-store, max-age=0');
+    return response;
   } catch (error) {
     console.error('Error fetching arbiter session:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -42,7 +46,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { pairings, status } = body; // status could be used to close session
+    const { rounds, status } = body; // status could be used to close session
 
     const sessionKey = `arbiter:session:${id}`;
     let sessionData = await redis.get(sessionKey);
@@ -57,9 +61,9 @@ export async function PUT(request, { params }) {
         } catch(e) {}
     }
 
-    // Update pairings or status
-    if (pairings) {
-      sessionData.pairings = pairings;
+    // Update rounds or status
+    if (rounds) {
+      sessionData.rounds = rounds;
     }
     
     if (status) {

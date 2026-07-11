@@ -842,8 +842,24 @@ export default function RoundsTab() {
     const currentRound = rounds[currentRoundIdx];
     const isLatestRound = currentRoundIdx === rounds.length - 1 || rounds.length === 0;
 
+    // Load active remote session from localStorage when round changes
     useEffect(() => {
-        if (!remoteSessionId || !currentRound) return;
+        if (!activeTournamentId) return;
+        const storageKey = `remoteSessionId_${activeTournamentId}`;
+        const savedSessionId = localStorage.getItem(storageKey);
+        
+        if (savedSessionId) {
+            setRemoteSessionId(savedSessionId);
+            setRemoteSessionUrl(`${window.location.origin}/arbiter/${savedSessionId}`);
+        } else {
+            setRemoteSessionId(null);
+            setRemoteSessionUrl('');
+            setShowRemoteSessionModal(false);
+        }
+    }, [activeTournamentId]);
+
+    useEffect(() => {
+        if (!remoteSessionId) return;
         
         const pollSession = async () => {
             try {
@@ -851,6 +867,9 @@ export default function RoundsTab() {
                 if (!res.ok) {
                     if (res.status === 404) {
                         setRemoteSessionId(null);
+                        if (activeTournamentId) {
+                            localStorage.removeItem(`remoteSessionId_${activeTournamentId}`);
+                        }
                     }
                     return;
                 }
@@ -860,20 +879,29 @@ export default function RoundsTab() {
                 // to prevent overwriting director's local updates before they reach Redis.
                 if (Date.now() - lastDirectorUpdateRef.current < 3000) return;
                 
-                let hasChanges = false;
-                const newPairings = currentRound.pairings.map((p, idx) => {
-                    const arbiterPairing = sessionData.pairings[idx];
-                    if (arbiterPairing && arbiterPairing.result !== p.result) {
-                        hasChanges = true;
-                        return { ...p, result: arbiterPairing.result };
-                    }
-                    return p;
-                });
+                if (!sessionData.rounds || rounds.length === 0) return;
                 
-                if (hasChanges) {
-                    const newRounds = [...rounds];
-                    newRounds[currentRoundIdx] = { ...currentRound, pairings: newPairings };
-                    updateRounds(newRounds);
+                let hasChanges = false;
+                const newRounds = [...rounds];
+                const latestIndex = rounds.length - 1;
+
+                if (latestIndex >= 0 && sessionData.rounds.length === rounds.length) {
+                    const latestRound = rounds[latestIndex];
+                    const arbiterLatestRound = sessionData.rounds[latestIndex];
+                    
+                    const newPairings = latestRound.pairings.map((p, idx) => {
+                        const arbiterPairing = arbiterLatestRound?.pairings?.[idx];
+                        if (arbiterPairing && arbiterPairing.result !== p.result) {
+                            hasChanges = true;
+                            return { ...p, result: arbiterPairing.result };
+                        }
+                        return p;
+                    });
+                    
+                    if (hasChanges) {
+                        newRounds[latestIndex] = { ...latestRound, pairings: newPairings };
+                        updateRounds(newRounds);
+                    }
                 }
             } catch (err) {
                 console.error("Polling error:", err);
@@ -882,7 +910,7 @@ export default function RoundsTab() {
 
         const intervalId = setInterval(pollSession, 3000);
         return () => clearInterval(intervalId);
-    }, [remoteSessionId, currentRound, rounds, currentRoundIdx, updateRounds]);
+    }, [remoteSessionId, rounds, updateRounds, activeTournamentId]);
 
     useEffect(() => {
         if (remoteSessionUrl) {
@@ -893,22 +921,23 @@ export default function RoundsTab() {
     }, [remoteSessionUrl]);
 
     const startRemoteSession = async () => {
-        if (!currentRound) return;
         setIsGeneratingSession(true);
         try {
-            const enrichedPairings = currentRound.pairings.map(p => {
-                const whitePlayer = players.find(player => String(player.id) === String(p.whiteId));
-                const blackPlayer = players.find(player => String(player.id) === String(p.blackId));
-                return { ...p, whitePlayer, blackPlayer };
-            });
+            const enrichedRounds = rounds.map(round => ({
+                ...round,
+                pairings: round.pairings.map(p => {
+                    const whitePlayer = players.find(player => String(player.playerUniqueId) === String(p.whiteId));
+                    const blackPlayer = players.find(player => String(player.playerUniqueId) === String(p.blackId));
+                    return { ...p, whitePlayer, blackPlayer };
+                })
+            }));
 
             const res = await fetch('/api/arbiter/session', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     tournamentId: activeTournamentId,
-                    roundNumber: currentRound.roundNumber,
-                    pairings: enrichedPairings
+                    rounds: enrichedRounds
                 })
             });
             const data = await res.json();
@@ -918,6 +947,7 @@ export default function RoundsTab() {
                 const url = `${window.location.origin}/arbiter/${data.sessionId}`;
                 setRemoteSessionUrl(url);
                 setShowRemoteSessionModal(true);
+                localStorage.setItem(`remoteSessionId_${activeTournamentId}`, data.sessionId);
             }
         } catch (err) {
             console.error(err);
@@ -935,6 +965,9 @@ export default function RoundsTab() {
             setShowRemoteSessionModal(false);
             setRemoteSessionUrl('');
             setRemoteQrCodeDataUrl('');
+            if (activeTournamentId) {
+                localStorage.removeItem(`remoteSessionId_${activeTournamentId}`);
+            }
         } catch (err) {
             console.error(err);
         }
@@ -1334,7 +1367,9 @@ export default function RoundsTab() {
                 options
             };
 
-            updateRounds([...roundsWithPlayerSkips, newRound]);
+            const newRounds = [...roundsWithPlayerSkips, newRound];
+            updateRounds(newRounds);
+            syncAllRoundsToRemote(newRounds);
             clearPreRoundForfeitAssignments();
         } catch {
             showAlert('Pairing Failed', 'Could not generate pairings for this round.');
@@ -1553,6 +1588,7 @@ export default function RoundsTab() {
                     ...rounds.slice(currentRoundIdx + 1),
                 ];
                 updateRounds(updatedRounds);
+                syncAllRoundsToRemote(updatedRounds);
             } else {
                 const newRound = {
                     roundNumber,
@@ -1561,7 +1597,9 @@ export default function RoundsTab() {
                     returnedForfeitPlayerIds: [...requestedReturnIds],
                     options: { ...options, manualPairing: true }
                 };
-                updateRounds([...roundsWithPlayerSkips, newRound]);
+                const newRounds = [...roundsWithPlayerSkips, newRound];
+                updateRounds(newRounds);
+                syncAllRoundsToRemote(newRounds);
             }
 
             setShowManualPairingModal(false);
@@ -1578,11 +1616,28 @@ export default function RoundsTab() {
         }
     };
 
+    const syncAllRoundsToRemote = (roundsToSync) => {
+        if (!remoteSessionId || !roundsToSync) return;
+        lastDirectorUpdateRef.current = Date.now();
+        const enrichedRounds = roundsToSync.map(round => ({
+            ...round,
+            pairings: round.pairings.map(p => {
+                const whitePlayer = players.find(player => String(player.playerUniqueId) === String(p.whiteId) || String(player.id) === String(p.whiteId));
+                const blackPlayer = players.find(player => String(player.playerUniqueId) === String(p.blackId) || String(player.id) === String(p.blackId));
+                return { ...p, whitePlayer, blackPlayer };
+            })
+        }));
+        fetch(`/api/arbiter/session/${remoteSessionId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rounds: enrichedRounds })
+        }).catch(err => console.error("Failed to sync Director update to Arbiter", err));
+    };
+
     const updateResult = (pairingId, result) => {
-        let newPairingsForCurrentRound = null;
         const updatedRounds = rounds.map((r, rIdx) => {
             if (rIdx === currentRoundIdx) {
-                newPairingsForCurrentRound = r.pairings.map(p =>
+                const newPairingsForCurrentRound = r.pairings.map(p =>
                     p.id === pairingId && !p.isTournamentForfeit ? { ...p, result } : p
                 );
                 return {
@@ -1593,21 +1648,7 @@ export default function RoundsTab() {
             return r;
         });
         updateRounds(updatedRounds);
-        
-        // Push update to remote session if active, ensuring Director overrides Arbiter
-        if (remoteSessionId && newPairingsForCurrentRound) {
-            lastDirectorUpdateRef.current = Date.now();
-            const enrichedPairings = newPairingsForCurrentRound.map(p => {
-                const whitePlayer = players.find(player => String(player.id) === String(p.whiteId));
-                const blackPlayer = players.find(player => String(player.id) === String(p.blackId));
-                return { ...p, whitePlayer, blackPlayer };
-            });
-            fetch(`/api/arbiter/session/${remoteSessionId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pairings: enrichedPairings })
-            }).catch(err => console.error("Failed to sync Director update to Arbiter", err));
-        }
+        syncAllRoundsToRemote(updatedRounds);
     };
 
     const advanceToScoreMapping = (data) => {
@@ -1859,7 +1900,7 @@ export default function RoundsTab() {
     };
 
     const applyScoreImport = ({ importAllRounds = false, overwritePrevious = false, selectedRoundNumbers = [], roundLimitAction = 'cap' } = {}) => {
-        if (!currentRound || !scoreRawData) {
+        if (!scoreRawData) {
             resetScoreImportState();
             return;
         }
@@ -1954,7 +1995,7 @@ export default function RoundsTab() {
 
             updatedRounds.sort((a, b) => a.roundNumber - b.roundNumber);
         } else {
-            const currentRoundNumber = currentRound.roundNumber || currentRoundIdx + 1;
+            const currentRoundNumber = currentRound?.roundNumber || currentRoundIdx + 1;
             const rowsForCurrentRound = effectiveRows.some(row => row.roundNumber)
                 ? effectiveRows.filter(row => row.roundNumber === currentRoundNumber)
                 : effectiveRows;
@@ -1966,18 +2007,31 @@ export default function RoundsTab() {
                 }
             });
 
-            updatedRounds = rounds.map((round, roundIdx) => {
-                if (roundIdx !== currentRoundIdx) return round;
+            if (rounds.length === 0) {
+                const created = createRoundFromRows(currentRoundNumber, rowsForCurrentRound);
+                imported += created.imported;
+                skipped += created.skipped;
+                skippedRows.push(...created.skippedRows);
+                if (created.imported > 0) {
+                    importedRounds.add(currentRoundNumber);
+                    updatedRounds = [created.round];
+                } else {
+                    updatedRounds = [];
+                }
+            } else {
+                updatedRounds = rounds.map((round, roundIdx) => {
+                    if (roundIdx !== currentRoundIdx) return round;
 
-                const applied = round.pairings?.length
-                    ? applyRowsToPairings(round.pairings, rowsForCurrentRound, currentRoundNumber)
-                    : createPairingsFromRows(currentRoundNumber, rowsForCurrentRound, { markMissingPlayersAsSkips: true });
-                imported += applied.imported;
-                skipped += applied.skipped;
-                skippedRows.push(...applied.skippedRows);
-                if (applied.imported > 0) importedRounds.add(currentRoundNumber);
-                return { ...round, pairings: applied.pairings };
-            });
+                    const applied = round.pairings?.length
+                        ? applyRowsToPairings(round.pairings, rowsForCurrentRound, currentRoundNumber)
+                        : createPairingsFromRows(currentRoundNumber, rowsForCurrentRound, { markMissingPlayersAsSkips: true });
+                    imported += applied.imported;
+                    skipped += applied.skipped;
+                    skippedRows.push(...applied.skippedRows);
+                    if (applied.imported > 0) importedRounds.add(currentRoundNumber);
+                    return { ...round, pairings: applied.pairings };
+                });
+            }
         }
 
         if (shouldIncreaseRounds) {
@@ -1987,6 +2041,7 @@ export default function RoundsTab() {
             });
         }
         updateRounds(updatedRounds);
+        syncAllRoundsToRemote(updatedRounds);
         setScoreImportOpen(false);
         resetScoreImportState();
         const importedRoundLabel = importedRounds.size
@@ -2137,6 +2192,7 @@ export default function RoundsTab() {
                     const keptRounds = rounds.slice(0, nextRoundCount);
                     updateTournamentConfig(normalizedConfig);
                     updateRounds(keptRounds);
+                    syncAllRoundsToRemote(keptRounds);
                     setCurrentRoundIdx(keptRounds.length ? keptRounds.length - 1 : 0);
                     setShowConfigModal(false);
                 },
@@ -2290,6 +2346,7 @@ export default function RoundsTab() {
                         }));
 
                     updateRounds(remainingRounds);
+                    syncAllRoundsToRemote(remainingRounds);
                     setCurrentRoundIdx(remainingRounds.length ? remainingRounds.length - 1 : 0);
                     setShowSetupModal(false);
                 } catch (error) {
@@ -2553,21 +2610,19 @@ export default function RoundsTab() {
                     )}
                 </div>
                 <div className="flex gap-2">
-                    {currentRound && (
-                        <>
-                        <button 
-                            onClick={() => {
-                                if (remoteSessionId) setShowRemoteSessionModal(true);
-                                else startRemoteSession();
-                            }}
-                            disabled={isGeneratingSession}
-                            className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${remoteSessionId ? 'border-2 border-success-500 text-success-500 hover:bg-success-500/10 font-bold' : 'preset-tonal'}`}
-                        >
-                            {isGeneratingSession ? <Loader2 size={14} className="animate-spin" /> : (remoteSessionId ? <Wifi size={14} className="animate-pulse" /> : <Wifi size={14} />)}
-                            {remoteSessionId ? 'Active Remote' : 'Remote Input'}
-                        </button>
-                        <Dialog
-                            open={scoreImportOpen}
+                    <button 
+                        onClick={() => {
+                            if (remoteSessionId) setShowRemoteSessionModal(true);
+                            else startRemoteSession();
+                        }}
+                        disabled={isGeneratingSession}
+                        className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${remoteSessionId ? 'border-2 border-success-500 text-success-500 hover:bg-success-500/10 font-bold' : 'preset-tonal'}`}
+                    >
+                        {isGeneratingSession ? <Loader2 size={14} className="animate-spin" /> : (remoteSessionId ? <Wifi size={14} className="animate-pulse" /> : <Wifi size={14} />)}
+                        {remoteSessionId ? 'Active Remote' : 'Remote Input'}
+                    </button>
+                    <Dialog
+                        open={scoreImportOpen}
                             onOpenChange={({ open }) => {
                                 setScoreImportOpen(open);
                                 if (!open) resetScoreImportState();
@@ -2579,7 +2634,7 @@ export default function RoundsTab() {
                                     <Dialog.Content className={`bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full min-w-0 max-h-[90vh] overflow-y-auto overflow-x-hidden space-y-4 shadow-xl transition-all ${scoreImportPhase === 'mapping' ? 'max-w-2xl' : 'max-w-lg'}`}>
                                         {scoreImportPhase === 'input' ? (
                                             <>
-                                                <Dialog.Title className="text-base font-semibold">Import Scores</Dialog.Title>
+                                                <Dialog.Title className="text-base font-semibold">Import Score/Pairing</Dialog.Title>
                                                 <Dialog.Description className="text-sm text-surface-600-400">
                                                     Supports Excel (.xlsx, .xls), CSV, and semicolon-delimited files.
                                                     You will map columns on the next step.
@@ -2731,7 +2786,7 @@ export default function RoundsTab() {
                                                                     onClick={() => setScoreRoundOptions(prev => ({
                                                                         ...prev,
                                                                         importAllRounds: true,
-                                                                        selectedRoundNumbers: [currentRound.roundNumber || currentRoundIdx + 1]
+                                                                        selectedRoundNumbers: [currentRound?.roundNumber || currentRoundIdx + 1]
                                                                     }))}
                                                                 >
                                                                     Current round
@@ -2851,8 +2906,6 @@ export default function RoundsTab() {
                                 </Dialog.Positioner>
                             </Portal>
                         </Dialog>
-                        </>
-                    )}
                     <Menu onSelect={({ value }) => {
                         if (value === 'import') setScoreImportOpen(true);
                         if (value === 'export') handleExportTrf();
@@ -2864,14 +2917,12 @@ export default function RoundsTab() {
                         </Menu.Trigger>
                         <Menu.Positioner>
                             <Menu.Content className="card p-1 preset-filled-surface-100-900 shadow-lg min-w-40 z-[70]">
-                                {currentRound && (
-                                    <Menu.Item value="import" className="px-3 py-1.5 rounded text-sm cursor-pointer hover:preset-tonal-primary">
-                                        <Menu.ItemText className="flex items-center gap-2">
-                                            <Upload size={14} />
-                                            Import Scores
-                                        </Menu.ItemText>
-                                    </Menu.Item>
-                                )}
+                                <Menu.Item value="import" className="px-3 py-1.5 rounded text-sm cursor-pointer hover:preset-tonal-primary">
+                                    <Menu.ItemText className="flex items-center gap-2">
+                                        <Upload size={14} />
+                                        Import Score/Pairing
+                                    </Menu.ItemText>
+                                </Menu.Item>
                                 <Menu.Item value="export" className="px-3 py-1.5 rounded text-sm cursor-pointer hover:preset-tonal-primary">
                                     <Menu.ItemText className="flex items-center gap-2">
                                         <Download size={14} />

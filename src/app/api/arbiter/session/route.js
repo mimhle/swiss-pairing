@@ -18,9 +18,9 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { tournamentId, roundNumber, pairings } = body;
+    const { tournamentId, rounds } = body;
 
-    if (!tournamentId || !roundNumber || !pairings) {
+    if (!tournamentId || !rounds) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -32,8 +32,7 @@ export async function POST(request) {
 
     const sessionData = {
       tournamentId,
-      roundNumber,
-      pairings,
+      rounds,
       createdAt: Date.now(),
       status: 'active'
     };
