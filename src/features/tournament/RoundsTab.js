@@ -12,6 +12,7 @@ import RoundSetupModal from '@/components/modals/RoundSetupModal';
 import ConfirmationModal from '@/components/modals/ConfirmationModal';
 import ManualPairingModal from '@/components/modals/ManualPairingModal';
 import PlayerRoundHistoryModal from '@/components/modals/PlayerRoundHistoryModal';
+import SwissManagerExportModal from '@/components/modals/SwissManagerExportModal';
 import { exportTournamentTrf, generatePairings } from '@/lib/pairingEngine';
 import { loadPlayers } from '@/lib/tournamentStore';
 import { SCORE_HEADER_FIELD_MAP, SCORE_TARGET_OPTIONS } from '@/lib/knownFields';
@@ -790,6 +791,7 @@ export default function RoundsTab() {
     const [showSetupModal, setShowSetupModal] = useState(false);
     const [showManualPairingModal, setShowManualPairingModal] = useState(false);
     const [showForfeitModal, setShowForfeitModal] = useState(false);
+    const [showSwissManagerExportModal, setShowSwissManagerExportModal] = useState(false);
     const [manualPairingMode, setManualPairingMode] = useState('create');
     const [pendingManualBoards, setPendingManualBoards] = useState(null);
     const [roundModalMode, setRoundModalMode] = useState('setup');
@@ -2948,6 +2950,7 @@ export default function RoundsTab() {
                     <Menu onSelect={({ value }) => {
                         if (value === 'import') setScoreImportOpen(true);
                         if (value === 'export') handleExportTrf();
+                        if (value === 'export-swiss-manager') setShowSwissManagerExportModal(true);
                     }}>
                         <Menu.Trigger className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded preset-tonal cursor-pointer hover:preset-tonal-primary transition-colors">
                             <Upload size={14} />
@@ -2960,6 +2963,12 @@ export default function RoundsTab() {
                                     <Menu.ItemText className="flex items-center gap-2">
                                         <Upload size={14} />
                                         Import Score/Pairing
+                                    </Menu.ItemText>
+                                </Menu.Item>
+                                <Menu.Item value="export-swiss-manager" className="px-3 py-1.5 rounded text-sm cursor-pointer hover:preset-tonal-primary">
+                                    <Menu.ItemText className="flex items-center gap-2">
+                                        <Download size={14} />
+                                        Export Swiss-Manager
                                     </Menu.ItemText>
                                 </Menu.Item>
                                 <Menu.Item value="export" className="px-3 py-1.5 rounded text-sm cursor-pointer hover:preset-tonal-primary">
@@ -3368,6 +3377,16 @@ export default function RoundsTab() {
                 rounds={rounds}
                 players={players}
                 onClose={() => setSelectedPlayer(null)}
+            />
+
+            <SwissManagerExportModal
+                open={showSwissManagerExportModal}
+                onClose={() => setShowSwissManagerExportModal(false)}
+                rounds={rounds}
+                players={players}
+                currentRoundIndex={currentRoundIdx}
+                tournamentConfig={tournamentConfig}
+                showAlert={showAlert}
             />
 
             <Dialog open={showRemoteSessionModal} onOpenChange={({ open }) => setShowRemoteSessionModal(open)}>
