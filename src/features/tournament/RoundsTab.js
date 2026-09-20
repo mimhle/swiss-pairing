@@ -978,6 +978,15 @@ export default function RoundsTab() {
         return currentRound.pairings.every(p => getPairingResult(p) !== '');
     }, [currentRound]);
 
+    const hasScoresToReset = useMemo(() => {
+        if (!currentRound?.pairings) return false;
+        return currentRound.pairings.some(p => {
+            if (p.isTournamentForfeit) return false;
+            if (p.isBye) return Boolean(p.result) && p.result !== getDefaultPairingResult(p);
+            return Boolean(p.result);
+        });
+    }, [currentRound]);
+
     const pairingBusy = isPairing || isManualPairing;
 
     const manualTargetRoundNumber = manualPairingMode === 'edit' && currentRound
@@ -1651,6 +1660,36 @@ export default function RoundsTab() {
         syncAllRoundsToRemote(updatedRounds);
     };
 
+    const resetCurrentRoundScores = () => {
+        if (!currentRound) return;
+        const roundNumber = currentRound.roundNumber || currentRoundIdx + 1;
+        showConfirm(
+            `Reset Scores for Round ${roundNumber}?`,
+            `This will clear all game results in Round ${roundNumber} and set them back to Pending. Pairings will remain unchanged.`,
+            () => {
+                const updatedRounds = rounds.map((r, rIdx) => {
+                    if (rIdx === currentRoundIdx) {
+                        return {
+                            ...r,
+                            pairings: (r.pairings || []).map(p => {
+                                if (p.isTournamentForfeit) return p;
+                                return {
+                                    ...p,
+                                    result: p.isBye ? getDefaultPairingResult(p) : ''
+                                };
+                            })
+                        };
+                    }
+                    return r;
+                });
+                updateRounds(updatedRounds);
+                syncAllRoundsToRemote(updatedRounds);
+            },
+            'error',
+            'Reset Scores'
+        );
+    };
+
     const advanceToScoreMapping = (data) => {
         setScoreRawData(data);
         setScoreColumnMap(suggestScoreMapping(data.headers));
@@ -2243,7 +2282,7 @@ export default function RoundsTab() {
                             {...attrs}
                             type="button"
                             onClick={() => setSelectedPlayer(player)}
-                            className={`flex max-w-full items-center gap-1.5 cursor-pointer min-w-0 text-left ${side === 'black' ? 'flex-row-reverse text-right' : ''}`}
+                            className="flex max-w-full items-center gap-1.5 cursor-pointer min-w-0 text-left"
                         >
                             <div className="flex flex-col min-w-0 overflow-hidden">
                                 <span className="font-bold text-surface-900-100 text-xs truncate leading-tight">{player.name || 'Unknown'}</span>
@@ -2449,7 +2488,7 @@ export default function RoundsTab() {
                 <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-20">Result</th>
                 <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Pts</th>
                 <th className="px-2 py-1.5 text-center font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-9">Fed</th>
-                <th className="px-2 py-1.5 text-right font-semibold uppercase tracking-wider text-[9px] text-surface-500">Black Name</th>
+                <th className="px-2 py-1.5 text-left font-semibold uppercase tracking-wider text-[9px] text-surface-500">Black Name</th>
                 <th className="px-2 py-1.5 text-right font-semibold uppercase tracking-wider text-[9px] text-surface-500 w-10">ID</th>
             </tr>
         </thead>
@@ -2513,9 +2552,9 @@ export default function RoundsTab() {
                 <td className="px-2 py-1.5 text-center">
                     <span className="text-[9px] font-bold text-surface-400 uppercase">{pairing.isBye ? '-' : (blackPlayer?.federation || '-')}</span>
                 </td>
-                <td className="px-2 py-1.5 text-right">
+                <td className="px-2 py-1.5">
                     {pairing.isBye ? (
-                        <div className="flex flex-col items-end pr-1">
+                        <div className="flex flex-col">
                             <span className={`font-bold uppercase tracking-widest italic text-[11px] ${pairing.isTournamentForfeit ? 'text-error-500' : pairing.isSkip ? 'text-warning-500' : 'text-primary-500'}`}>
                                 {pairing.isTournamentForfeit ? 'FORFEIT' : pairing.isSkip ? 'SKIP' : 'BYE'}
                             </span>
@@ -3025,34 +3064,45 @@ export default function RoundsTab() {
                         <div className="text-surface-600-400">
                             {currentRound.pairings.length} boards paired
                         </div>
-                        {isLatestRound && (
-                            <div className="flex items-center gap-2">
-                                {rounds.length < tournamentConfig.numRounds && (
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={resetCurrentRoundScores}
+                                disabled={pairingBusy || !hasScoresToReset}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold hover:text-error-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                                title="Reset all scores in this round to Pending"
+                            >
+                                <RotateCcw size={14} />
+                                Reset Scores
+                            </button>
+                            {isLatestRound && (
+                                <>
+                                    {rounds.length < tournamentConfig.numRounds && (
+                                        <button
+                                            onClick={openForfeitModal}
+                                            disabled={pairingBusy}
+                                            className="relative flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Pre-assign forfeits and returns"
+                                        >
+                                            <UserX size={14} />
+                                            Forfeits
+                                            {pendingForfeitChangeCount > 0 && (
+                                                <span className="ml-0.5 rounded bg-error-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                                                    {pendingForfeitChangeCount}
+                                                </span>
+                                            )}
+                                        </button>
+                                    )}
                                     <button
-                                        onClick={openForfeitModal}
+                                        onClick={() => openManualPairing('edit')}
                                         disabled={pairingBusy}
-                                        className="relative flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title="Pre-assign forfeits and returns"
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold disabled:opacity-50"
                                     >
-                                        <UserX size={14} />
-                                        Forfeits
-                                        {pendingForfeitChangeCount > 0 && (
-                                            <span className="ml-0.5 rounded bg-error-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
-                                                {pendingForfeitChangeCount}
-                                            </span>
-                                        )}
+                                        <Swords size={14} />
+                                        Change Pairing
                                     </button>
-                                )}
-                                <button
-                                    onClick={() => openManualPairing('edit')}
-                                    disabled={pairingBusy}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded preset-tonal text-xs font-bold disabled:opacity-50"
-                                >
-                                    <Swords size={14} />
-                                    Change Pairing
-                                </button>
-                            </div>
-                        )}
+                                </>
+                            )}
+                        </div>
                     </div>
 
                     {groupPairingMode ? (
