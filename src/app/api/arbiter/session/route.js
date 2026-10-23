@@ -18,7 +18,7 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { tournamentId, rounds } = body;
+    const { tournamentId, rounds, tournamentName, numRounds } = body;
 
     if (!tournamentId || !rounds) {
       return NextResponse.json(
@@ -29,6 +29,8 @@ export async function POST(request) {
 
     const sessionId = crypto.randomUUID();
     const sessionKey = `arbiter:session:${sessionId}`;
+    const normalizedName = typeof tournamentName === 'string' ? tournamentName.trim().slice(0, 160) : '';
+    const normalizedRounds = Number(numRounds);
 
     const sessionData = {
       tournamentId,
@@ -36,6 +38,14 @@ export async function POST(request) {
       createdAt: Date.now(),
       status: 'active'
     };
+
+    if (normalizedName) {
+      sessionData.tournamentName = normalizedName;
+    }
+
+    if (Number.isFinite(normalizedRounds) && normalizedRounds > 0) {
+      sessionData.numRounds = normalizedRounds;
+    }
 
     // Store session in Redis, expire after 24 hours (86400 seconds)
     await redis.set(sessionKey, JSON.stringify(sessionData), { ex: 86400 });

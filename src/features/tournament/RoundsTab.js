@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import QRCode from 'qrcode';
 import { useTournament } from '@/context/TournamentContext';
-import { Swords, Play, Settings, ChevronRight, ChevronLeft, ChevronDown, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download, UserX, RotateCcw, X, Wifi, Loader2, QrCode } from 'lucide-react';
+import { Swords, Play, Settings, ChevronRight, ChevronLeft, ChevronDown, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download, UserX, RotateCcw, X, Wifi, Loader2, QrCode, Monitor, ExternalLink } from 'lucide-react';
 import { Dialog, Tooltip, Portal, Menu } from '@skeletonlabs/skeleton-react';
 import TournamentConfigModal from '@/components/modals/TournamentConfigModal';
 import RoundSetupModal from '@/components/modals/RoundSetupModal';
@@ -778,6 +778,7 @@ async function generateManualRemainderPairingsByGroup(playersNeedingPairing, opt
 export default function RoundsTab() {
     const {
         activeTournamentId,
+        tournaments,
         tournamentConfig,
         updateTournamentConfig,
         rounds,
@@ -823,7 +824,16 @@ export default function RoundsTab() {
     const [showRemoteSessionModal, setShowRemoteSessionModal] = useState(false);
     const [isGeneratingSession, setIsGeneratingSession] = useState(false);
     const [remoteQrCodeDataUrl, setRemoteQrCodeDataUrl] = useState('');
+    const [scoreboardCopied, setScoreboardCopied] = useState(false);
     const lastDirectorUpdateRef = useRef(0);
+
+    const getRemoteSessionMeta = () => {
+        const activeTournament = tournaments.find(tournament => tournament.id === activeTournamentId);
+        return {
+            tournamentName: activeTournament?.name || tournamentConfig?.name || 'Tournament',
+            numRounds: Number(tournamentConfig?.numRounds) || null,
+        };
+    };
 
     // Load players for lookup
     useEffect(() => {
@@ -843,6 +853,9 @@ export default function RoundsTab() {
 
     const currentRound = rounds[currentRoundIdx];
     const isLatestRound = currentRoundIdx === rounds.length - 1 || rounds.length === 0;
+    const scoreboardUrl = remoteSessionUrl
+        ? remoteSessionUrl.replace(/\/arbiter\//, '/scoreboard/')
+        : '';
 
     // Load active remote session from localStorage when round changes
     useEffect(() => {
@@ -939,7 +952,8 @@ export default function RoundsTab() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     tournamentId: activeTournamentId,
-                    rounds: enrichedRounds
+                    rounds: enrichedRounds,
+                    ...getRemoteSessionMeta()
                 })
             });
             const data = await res.json();
@@ -1641,7 +1655,10 @@ export default function RoundsTab() {
         fetch(`/api/arbiter/session/${remoteSessionId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rounds: enrichedRounds })
+            body: JSON.stringify({
+                rounds: enrichedRounds,
+                ...getRemoteSessionMeta()
+            })
         }).catch(err => console.error("Failed to sync Director update to Arbiter", err));
     };
 
@@ -3431,6 +3448,55 @@ export default function RoundsTab() {
                                     Copy
                                 </button>
                             </div>
+
+                            {scoreboardUrl && (
+                                <div className="border-t border-surface-200-800 pt-3 space-y-2">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-semibold flex items-center gap-2">
+                                                <Monitor size={16} className="text-primary-500" />
+                                                Live Scoreboard
+                                            </p>
+                                            <p className="text-xs text-surface-600-400">
+                                                Unlisted, read-only display for a second monitor.
+                                            </p>
+                                        </div>
+                                        <a
+                                            href={scoreboardUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="btn preset-tonal-primary text-xs px-3 py-1.5 flex items-center gap-1.5 shrink-0"
+                                        >
+                                            Open
+                                            <ExternalLink size={12} />
+                                        </a>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="text"
+                                            readOnly
+                                            value={scoreboardUrl}
+                                            className="flex-1 min-w-0 bg-surface-200-800 border-surface-300-700 text-xs px-2 py-1.5 rounded outline-none text-surface-900 dark:text-surface-50"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                try {
+                                                    await navigator.clipboard.writeText(scoreboardUrl);
+                                                    setScoreboardCopied(true);
+                                                    window.setTimeout(() => setScoreboardCopied(false), 1600);
+                                                } catch (error) {
+                                                    console.error('Failed to copy scoreboard link:', error);
+                                                }
+                                            }}
+                                            className="btn preset-tonal text-xs px-3 py-1.5 shrink-0"
+                                        >
+                                            {scoreboardCopied ? 'Copied' : 'Copy'}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="pt-2 flex justify-end gap-2">
                                 <button 
                                     onClick={() => setShowRemoteSessionModal(false)}
