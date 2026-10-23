@@ -1,0 +1,1680 @@
+.stage {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100dvh;
+    overflow: hidden;
+    isolation: isolate;
+    background:
+        radial-gradient(ellipse 80% 60% at 12% -8%, var(--sb-glow-strong), transparent 62%),
+        radial-gradient(ellipse 60% 50% at 92% 2%, color-mix(in oklab, var(--color-success-500) 9%, transparent), transparent 66%),
+        var(--color-surface-50-950);
+    color: var(--color-surface-950-50);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --sb-layout-gap: clamp(8px, 1.15vh, 16px);
+    --sb-pad: clamp(10px, 1.35vw, 26px);
+    --sb-radius: clamp(8px, 0.8vw, 16px);
+    --sb-border: var(--color-surface-200-800);
+    --sb-panel: color-mix(in oklab, var(--color-surface-50-950) 96%, var(--color-primary-500) 4%);
+    --sb-muted: var(--color-surface-600-400);
+    --sb-glow: color-mix(in oklab, var(--color-primary-500) 10%, transparent);
+    --sb-glow-strong: color-mix(in oklab, var(--color-primary-500) 20%, transparent);
+    --sb-shadow: 0 10px 26px color-mix(in oklab, var(--color-surface-950) 9%, transparent);
+    --sb-grid: color-mix(in oklab, var(--color-surface-950) 5%, transparent);
+    --sb-orb-opacity: 0.16;
+}
+
+.stage::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+        linear-gradient(var(--sb-grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--sb-grid) 1px, transparent 1px);
+    background-size: clamp(42px, 5vw, 84px) clamp(42px, 5vw, 84px);
+    opacity: 0.65;
+    mask-image: radial-gradient(ellipse at center, black 10%, transparent 76%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 10%, transparent 76%);
+}
+
+.stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 54%, color-mix(in oklab, var(--color-surface-950) 17%, transparent) 100%);
+}
+
+:global([data-mode="dark"]) .stage {
+    --sb-border: color-mix(in oklab, var(--color-surface-600) 42%, transparent);
+    --sb-panel: color-mix(in oklab, var(--color-surface-900) 94%, var(--color-primary-500) 6%);
+    --sb-glow: color-mix(in oklab, var(--color-primary-500) 20%, transparent);
+    --sb-glow-strong: color-mix(in oklab, var(--color-primary-500) 34%, transparent);
+    --sb-shadow: 0 14px 34px rgba(0, 0, 0, 0.36);
+    --sb-grid: color-mix(in oklab, var(--color-surface-50) 6%, transparent);
+    --sb-orb-opacity: 0.32;
+}
+
+.ambient {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.topAccent {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, var(--color-primary-500), var(--color-success-500), var(--color-tertiary-500), transparent);
+    background-size: 200% 100%;
+    animation: accent 7s linear infinite;
+    opacity: 0.9;
+}
+
+.orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(50px);
+    opacity: var(--sb-orb-opacity);
+    animation: floatOrb 18s ease-in-out infinite alternate;
+}
+
+.orbPrimary {
+    width: 34vw;
+    height: 34vw;
+    left: -12vw;
+    top: -12vw;
+    background: var(--color-primary-500);
+}
+
+.orbSuccess {
+    width: 26vw;
+    height: 26vw;
+    right: -8vw;
+    top: 8%;
+    background: var(--color-success-500);
+    animation-delay: -6s;
+}
+
+.orbTertiary {
+    width: 20vw;
+    height: 20vw;
+    left: 35%;
+    bottom: -12vw;
+    background: var(--color-tertiary-500);
+    animation-delay: -11s;
+    opacity: calc(var(--sb-orb-opacity) * 0.55);
+}
+
+.sweep {
+    position: absolute;
+    top: -30%;
+    left: -40%;
+    width: 40%;
+    height: 160%;
+    background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--color-primary-500) 7%, transparent), transparent);
+    transform: rotate(14deg);
+    animation: sweep 16s linear infinite;
+}
+
+.layout {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: var(--sb-pad);
+    gap: var(--sb-layout-gap);
+}
+
+.header {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(5px, 0.75vh, 10px);
+    min-width: 0;
+}
+
+.headerRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: clamp(8px, 1.3vw, 24px);
+    min-width: 0;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: clamp(7px, 0.9vw, 14px);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.brandIcon {
+    flex: 0 0 auto;
+    width: clamp(32px, 4.4vh, 54px);
+    height: clamp(32px, 4.4vh, 54px);
+    border-radius: calc(var(--sb-radius) * 0.9);
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-700));
+    color: #fff;
+    box-shadow: 0 0 0 1px color-mix(in oklab, white 15%, transparent), 0 0 26px var(--sb-glow-strong);
+}
+
+.brandIcon svg {
+    width: 54%;
+    height: 54%;
+}
+
+.brandText {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    overflow: hidden;
+}
+
+.brandKicker {
+    font-size: clamp(6px, 0.85vh, 10px);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    font-weight: 800;
+    color: var(--sb-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tournamentName {
+    font-size: clamp(0.95rem, 2.1vh, 1.9rem);
+    line-height: 1.03;
+    font-weight: 900;
+    letter-spacing: -0.03em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.roundBlock {
+    display: flex;
+    align-items: center;
+    gap: clamp(7px, 0.8vw, 14px);
+    padding: clamp(5px, 0.8vh, 10px) clamp(12px, 1.5vw, 24px);
+    border: 1px solid var(--sb-border);
+    border-radius: 999px;
+    background: var(--sb-panel);
+    box-shadow: var(--sb-shadow);
+    white-space: nowrap;
+}
+
+.roundText {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+}
+
+.roundLabel {
+    font-size: clamp(6px, 0.8vh, 9px);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 800;
+}
+
+.roundValue {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+}
+
+.roundNumber {
+    font-size: clamp(1.25rem, 3vh, 2.6rem);
+    font-weight: 900;
+    line-height: 0.92;
+    letter-spacing: -0.04em;
+    font-variant-numeric: tabular-nums;
+}
+
+.roundTotal {
+    font-size: clamp(0.7rem, 1.35vh, 1.05rem);
+    font-weight: 800;
+    color: var(--sb-muted);
+}
+
+.roundFinalIcon {
+    width: clamp(16px, 2.4vh, 28px);
+    height: clamp(16px, 2.4vh, 28px);
+    color: var(--color-warning-500);
+}
+
+.headerRight {
+    justify-self: end;
+    display: flex;
+    align-items: center;
+    gap: clamp(7px, 0.9vw, 14px);
+    min-width: 0;
+}
+
+.clockBlock {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+}
+
+.clockLabel {
+    font-size: clamp(6px, 0.8vh, 9px);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 800;
+}
+
+.clock {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: clamp(0.9rem, 1.9vh, 1.6rem);
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.clockFinal {
+    font-size: clamp(0.7rem, 1.3vh, 1rem);
+    letter-spacing: 0.12em;
+    color: var(--color-success-700-300);
+}
+
+.headerMeta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+}
+
+.liveBadge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: clamp(6px, 0.85vh, 10px);
+    font-weight: 900;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-success-700-300);
+    white-space: nowrap;
+}
+
+.liveBadgeWarn {
+    color: var(--color-warning-700-300);
+}
+
+.liveDot {
+    width: clamp(5px, 0.75vh, 8px);
+    height: clamp(5px, 0.75vh, 8px);
+    border-radius: 999px;
+    background: var(--color-success-500);
+    flex: 0 0 auto;
+    animation: livePulse 1.8s ease-out infinite;
+}
+
+.liveDotWarn {
+    background: var(--color-warning-500);
+    animation: blink 1.2s ease-in-out infinite;
+}
+
+.syncAge {
+    font-size: clamp(5px, 0.85vh, 9px);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.iconButton {
+    flex: 0 0 auto;
+    width: clamp(26px, 3.4vh, 38px);
+    height: clamp(26px, 3.4vh, 38px);
+    border-radius: 999px;
+    border: 1px solid var(--sb-border);
+    background: var(--sb-panel);
+    color: var(--sb-muted);
+    display: grid;
+    place-items: center;
+    transition: color 0.2s, border-color 0.2s, transform 0.2s;
+}
+
+.iconButton:hover {
+    color: var(--color-primary-600-400);
+    border-color: var(--color-primary-500);
+    transform: translateY(-1px);
+}
+
+.iconButton svg {
+    width: 45%;
+    height: 45%;
+}
+
+.progressWrap {
+    display: flex;
+    align-items: center;
+    gap: clamp(7px, 0.9vw, 14px);
+    min-width: 0;
+}
+
+.progressTrack {
+    flex: 1 1 0;
+    height: clamp(4px, 0.6vh, 7px);
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-surface-200-800) 80%, transparent);
+    overflow: hidden;
+}
+
+.progressFill {
+    position: relative;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--color-primary-500), var(--color-success-500));
+    transition: width 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+    overflow: hidden;
+}
+
+.progressFill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, color-mix(in oklab, white 55%, transparent), transparent);
+    transform: translateX(-100%);
+    animation: shimmer 2.6s linear infinite;
+}
+
+.progressComplete {
+    background: linear-gradient(90deg, var(--color-success-500), var(--color-primary-500));
+}
+
+.progressLabel {
+    flex: 0 0 auto;
+    font-size: clamp(6px, 0.85vh, 10px);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 800;
+    color: var(--sb-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.main {
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+    display: flex;
+}
+
+.boardPane {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+}
+
+.boardGrid {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+    grid-template-rows: repeat(var(--rows, 2), minmax(0, 1fr));
+    gap: var(--board-gap, 10px);
+    height: 100%;
+    min-height: 0;
+}
+
+.boardCard {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--sb-border);
+    border-radius: var(--sb-radius);
+    background:
+        linear-gradient(180deg, color-mix(in oklab, var(--color-primary-500) 4%, transparent), transparent 44%),
+        var(--sb-panel);
+    box-shadow: var(--sb-shadow);
+    transition: border-color 0.2s, box-shadow 0.2s;
+    animation: cardIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--i, 0) * 22ms);
+}
+
+.boardCard::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 10%, transparent);
+    pointer-events: none;
+}
+
+.boardCardRoomy .cardBody {
+    padding-block: clamp(3px, 0.6vh, 9px);
+}
+
+.boardCardRoomy .playerName {
+    font-size: clamp(0.8rem, 2.4vh, 1.8rem);
+}
+
+.boardCardRoomy .scoreBox {
+    min-width: clamp(52px, 5vw, 100px);
+}
+
+.boardCardRoomy .score {
+    font-size: clamp(1.1rem, 4.2vh, 3.4rem);
+}
+
+.boardCardRoomy .playerMeta {
+    font-size: clamp(6px, 1.05vh, 11px);
+}
+
+.boardCardCompact .cardBody {
+    padding-block: clamp(2px, 0.4vh, 5px);
+}
+
+.boardCardCompact .playerName {
+    font-size: clamp(0.65rem, 1.7vh, 1.2rem);
+}
+
+.boardCardCompact .titleBadge {
+    display: none;
+}
+
+.boardCardCompact .scoreBox {
+    min-width: clamp(38px, 3.6vw, 66px);
+}
+
+.boardCardCompact .score {
+    font-size: clamp(0.9rem, 2.8vh, 2rem);
+}
+
+.boardCardCompact .playerMeta {
+    font-size: clamp(5px, 0.8vh, 9px);
+}
+
+.boardCardDense {
+    border-radius: calc(var(--sb-radius) * 0.72);
+}
+
+.boardCardBye {
+    border-style: dashed;
+}
+
+.boardCardFlashing {
+    border-color: color-mix(in oklab, var(--color-primary-500) 65%, var(--sb-border));
+    box-shadow: 0 0 0 1px var(--color-primary-500), 0 0 26px var(--sb-glow-strong), var(--sb-shadow);
+}
+
+.boardCardFlashing .score {
+    animation: scorePop 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cardTop {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 5px;
+    padding: clamp(3px, 0.6vh, 8px) clamp(6px, 0.75vw, 12px) 0;
+    min-width: 0;
+}
+
+.cardTopLeft {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.boardNo {
+    font-size: clamp(5px, 0.9vh, 10px);
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.groupChip {
+    font-size: clamp(5px, 0.85vh, 9px);
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-primary-600-400);
+    background: color-mix(in oklab, var(--color-primary-500) 10%, transparent);
+    border: 1px solid color-mix(in oklab, var(--color-primary-500) 22%, transparent);
+    border-radius: 999px;
+    padding: 1px 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 7ch;
+}
+
+.statusPill {
+    flex: 0 0 auto;
+    font-size: clamp(5px, 0.85vh, 9px);
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: 1px 5px;
+    white-space: nowrap;
+}
+
+.statusLive {
+    color: var(--color-primary-600-400);
+    background: color-mix(in oklab, var(--color-primary-500) 10%, transparent);
+    border-color: color-mix(in oklab, var(--color-primary-500) 25%, transparent);
+}
+
+.statusFinal {
+    color: var(--color-success-700-300);
+    background: color-mix(in oklab, var(--color-success-500) 10%, transparent);
+    border-color: color-mix(in oklab, var(--color-success-500) 25%, transparent);
+}
+
+.statusBye {
+    color: var(--color-warning-700-300);
+    background: color-mix(in oklab, var(--color-warning-500) 10%, transparent);
+    border-color: color-mix(in oklab, var(--color-warning-500) 25%, transparent);
+}
+
+.statusForfeit {
+    color: var(--color-error-700-300);
+    background: color-mix(in oklab, var(--color-error-500) 10%, transparent);
+    border-color: color-mix(in oklab, var(--color-error-500) 25%, transparent);
+}
+
+.statusPending {
+    color: var(--sb-muted);
+    background: color-mix(in oklab, var(--color-surface-500) 8%, transparent);
+    border-color: color-mix(in oklab, var(--color-surface-500) 18%, transparent);
+}
+
+.cardBody {
+    flex: 1 1 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: clamp(2px, 0.4vw, 8px);
+    padding: clamp(2px, 0.45vh, 7px) clamp(6px, 0.75vw, 12px);
+}
+
+.player {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    overflow: hidden;
+}
+
+.playerWhite {
+    align-items: flex-end;
+    text-align: right;
+}
+
+.playerBlack {
+    align-items: flex-start;
+    text-align: left;
+}
+
+.playerNameRow {
+    display: flex;
+    align-items: center;
+    gap: clamp(2px, 0.3vw, 6px);
+    min-width: 0;
+    max-width: 100%;
+}
+
+.playerWhite .playerNameRow {
+    justify-content: flex-end;
+}
+
+.playerBlack .playerNameRow {
+    justify-content: flex-start;
+}
+
+.playerName {
+    min-width: 0;
+    font-size: clamp(0.65rem, 2vh, 1.55rem);
+    font-weight: 900;
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.titleBadge {
+    flex: 0 0 auto;
+    font-size: clamp(5px, 0.9vh, 10px);
+    font-weight: 900;
+    letter-spacing: 0.03em;
+    padding: 0 3px;
+    border-radius: 3px;
+    background: var(--color-surface-200-800);
+    color: var(--sb-muted);
+}
+
+.playerMeta {
+    max-width: 100%;
+    font-size: clamp(5px, 0.9vh, 10px);
+    color: var(--sb-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.winner .playerName {
+    color: var(--color-primary-600-400);
+    text-shadow: 0 0 16px var(--sb-glow-strong);
+}
+
+.winner .playerMeta {
+    color: var(--color-primary-600-400);
+    opacity: 0.8;
+}
+
+.loser {
+    opacity: 0.48;
+}
+
+.piece {
+    flex: 0 0 auto;
+    width: clamp(7px, 1vh, 12px);
+    height: clamp(7px, 1vh, 12px);
+    border-radius: 2px;
+    border: 1px solid var(--color-surface-500);
+    box-shadow: 0 1px 2px color-mix(in oklab, var(--color-surface-950) 20%, transparent);
+}
+
+.pieceWhite {
+    background: #fff;
+    border-color: color-mix(in oklab, var(--color-surface-950) 30%, transparent);
+}
+
+.pieceBlack {
+    background: #111;
+    border-color: color-mix(in oklab, var(--color-surface-50) 30%, transparent);
+}
+
+.scoreBox {
+    position: relative;
+    align-self: stretch;
+    min-width: clamp(40px, 4vw, 76px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.score {
+    position: relative;
+    z-index: 1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: clamp(0.9rem, 3.4vh, 2.8rem);
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -0.06em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.scorePending {
+    color: var(--sb-muted);
+    font-size: clamp(0.65rem, 1.5vh, 1.1rem);
+    letter-spacing: 0.1em;
+}
+
+.scoreFinal {
+    color: var(--color-surface-950-50);
+}
+
+.scoreWin {
+    color: var(--color-primary-600-400);
+    text-shadow: 0 0 20px var(--sb-glow-strong);
+}
+
+.scoreDraw {
+    color: var(--color-warning-700-300);
+}
+
+.scoreSpecial {
+    color: var(--color-warning-700-300);
+    font-size: clamp(0.55rem, 1.15vh, 0.9rem);
+    letter-spacing: 0.06em;
+}
+
+.pendingDots {
+    display: flex;
+    gap: 2px;
+    margin-top: 2px;
+}
+
+.pendingDots i {
+    width: 3px;
+    height: 3px;
+    border-radius: 999px;
+    background: var(--sb-muted);
+    animation: blink 1.2s ease-in-out infinite;
+}
+
+.pendingDots i:nth-child(2) {
+    animation-delay: 0.18s;
+}
+
+.pendingDots i:nth-child(3) {
+    animation-delay: 0.36s;
+}
+
+.scoreFlash {
+    position: absolute;
+    inset: -2px -6px;
+    border-radius: 8px;
+    background: var(--sb-glow);
+    animation: scoreFlash 0.9s ease-out both;
+}
+
+.flashRing {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    border-radius: inherit;
+    border: 2px solid var(--color-primary-500);
+    pointer-events: none;
+    animation: flashRing 1.1s ease-out both;
+}
+
+.byeBody {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: clamp(2px, 0.5vh, 8px) clamp(6px, 0.75vw, 12px);
+}
+
+.byePlayer {
+    flex: 1 1 0;
+    align-items: flex-start;
+    text-align: left;
+}
+
+.byePlayer .playerNameRow {
+    justify-content: flex-start;
+}
+
+.byeScore {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+}
+
+.byeLabel {
+    font-size: clamp(0.6rem, 1.6vh, 1.3rem);
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    color: var(--color-warning-700-300);
+}
+
+.byePoints {
+    font-size: clamp(5px, 0.85vh, 9px);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 700;
+}
+
+.cardAccent {
+    flex: 0 0 auto;
+    height: 3px;
+    display: flex;
+    margin-top: auto;
+    opacity: 0.7;
+}
+
+.accentWhite,
+.accentBlack {
+    flex: 1;
+}
+
+.accentWhite {
+    background: var(--color-surface-300-700);
+}
+
+.accentBlack {
+    background: var(--color-surface-700-300);
+}
+
+.accentWinWhite .accentWhite,
+.accentWinBlack .accentBlack {
+    background: var(--color-primary-500);
+    opacity: 1;
+    box-shadow: 0 0 12px var(--sb-glow-strong);
+}
+
+.accentDraw .accentWhite,
+.accentDraw .accentBlack {
+    background: var(--color-warning-500);
+    opacity: 1;
+}
+
+.boardCardBye .cardAccent {
+    opacity: 0.35;
+}
+
+.denseRow {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    gap: clamp(3px, 0.5vw, 8px);
+    padding: 0 clamp(5px, 0.65vw, 10px);
+}
+
+.denseStatus {
+    flex: 0 0 auto;
+    width: clamp(4px, 0.55vh, 7px);
+    height: clamp(4px, 0.55vh, 7px);
+    border-radius: 999px;
+    background: var(--sb-muted);
+}
+
+.denseStatusLive {
+    background: var(--color-primary-500);
+    box-shadow: 0 0 8px var(--color-primary-500);
+}
+
+.denseStatusFinal {
+    background: var(--color-success-500);
+}
+
+.denseStatusBye {
+    background: var(--color-warning-500);
+}
+
+.denseStatusForfeit {
+    background: var(--color-error-500);
+}
+
+.denseStatusPending {
+    background: var(--sb-muted);
+}
+
+.denseBoard {
+    flex: 0 0 auto;
+    min-width: clamp(20px, 2.2vw, 34px);
+    font-size: clamp(5px, 0.9vh, 10px);
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    color: var(--sb-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.denseName {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: clamp(0.55rem, 1.3vh, 0.95rem);
+    font-weight: 800;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.denseNameSingle {
+    text-align: left;
+}
+
+.denseNameWhite {
+    text-align: right;
+}
+
+.denseNameBlack {
+    text-align: left;
+}
+
+.denseScore {
+    flex: 0 0 auto;
+    min-width: clamp(34px, 3.6vw, 60px);
+    text-align: center;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: clamp(0.6rem, 1.5vh, 1.05rem);
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.denseScoreWin {
+    color: var(--color-primary-600-400);
+}
+
+.denseScoreSpecial {
+    color: var(--color-warning-700-300);
+    font-size: clamp(0.5rem, 1vh, 0.8rem);
+    letter-spacing: 0.04em;
+}
+
+.densePending {
+    color: var(--sb-muted);
+    font-size: clamp(0.5rem, 1vh, 0.8rem);
+    letter-spacing: 0.06em;
+    animation: blink 1.6s ease-in-out infinite;
+}
+
+.denseBye {
+    flex: 0 0 auto;
+    font-size: clamp(5px, 0.9vh, 10px);
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    color: var(--color-warning-700-300);
+    white-space: nowrap;
+}
+
+.winnerText {
+    color: var(--color-primary-600-400);
+}
+
+.loserText {
+    opacity: 0.5;
+}
+
+.ticker {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: stretch;
+    min-width: 0;
+    height: clamp(30px, 4.4vh, 50px);
+    border: 1px solid var(--sb-border);
+    border-radius: var(--sb-radius);
+    background: var(--sb-panel);
+    box-shadow: var(--sb-shadow);
+    overflow: hidden;
+}
+
+.tickerLabel {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: clamp(4px, 0.5vw, 8px);
+    padding: 0 clamp(8px, 1vw, 14px);
+    border-right: 1px solid var(--sb-border);
+    background: color-mix(in oklab, var(--color-primary-500) 8%, transparent);
+    font-size: clamp(6px, 0.95vh, 10px);
+    font-weight: 900;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.tickerRound {
+    color: var(--color-primary-600-400);
+}
+
+.tickerCount {
+    color: var(--sb-muted);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.06em;
+}
+
+.tickerViewport {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    mask-image: linear-gradient(90deg, transparent, black 1.5%, black 98.5%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, black 1.5%, black 98.5%, transparent);
+}
+
+.tickerTrack {
+    display: flex;
+    width: max-content;
+    animation: ticker var(--ticker-duration, 40s) linear infinite;
+}
+
+.tickerGroup {
+    display: flex;
+    align-items: center;
+    gap: clamp(12px, 1.5vw, 26px);
+    padding-right: clamp(12px, 1.5vw, 26px);
+}
+
+.tickerItem {
+    display: flex;
+    align-items: center;
+    gap: clamp(3px, 0.4vw, 7px);
+    font-size: clamp(0.6rem, 1.2vh, 0.9rem);
+    color: var(--sb-muted);
+    white-space: nowrap;
+}
+
+.tickerBoard {
+    font-weight: 900;
+    color: var(--color-surface-950-50);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.03em;
+}
+
+.tickerScore {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-weight: 900;
+    color: var(--color-surface-950-50);
+}
+
+.tickerWinner {
+    color: var(--color-primary-600-400);
+    font-weight: 800;
+}
+
+.tickerDivider {
+    flex: 0 0 auto;
+    width: 4px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--sb-muted);
+    opacity: 0.4;
+}
+
+.tickerEmpty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 1rem;
+    font-size: clamp(6px, 0.95vh, 10px);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 700;
+}
+
+.tickerBlink {
+    animation: blink 1.4s ease-in-out infinite;
+}
+
+.statusScreen {
+    position: relative;
+    z-index: 3;
+    flex: 1 1 0;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+    padding: var(--sb-pad);
+}
+
+.statusCard {
+    width: min(560px, 90vw);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(7px, 1.1vh, 13px);
+    text-align: center;
+    padding: clamp(22px, 3.6vh, 44px);
+    border: 1px solid var(--sb-border);
+    border-radius: calc(var(--sb-radius) * 1.4);
+    background: var(--sb-panel);
+    box-shadow: var(--sb-shadow);
+    animation: statusIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.statusKicker {
+    font-size: clamp(6px, 0.85vh, 10px);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 800;
+}
+
+.statusIcon {
+    position: relative;
+    width: clamp(52px, 7.4vh, 80px);
+    height: clamp(52px, 7.4vh, 80px);
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-700));
+    color: #fff;
+    box-shadow: 0 0 38px var(--sb-glow-strong);
+}
+
+.statusIcon svg {
+    width: 44%;
+    height: 44%;
+}
+
+.statusIcon::after {
+    content: "";
+    position: absolute;
+    inset: -8px;
+    border-radius: 50%;
+    border: 1px solid color-mix(in oklab, var(--color-primary-500) 35%, transparent);
+    animation: statusRing 2.4s ease-out infinite;
+}
+
+.spin {
+    animation: spin 1.3s linear infinite;
+}
+
+.statusTitle {
+    font-size: clamp(1.15rem, 3vh, 2.1rem);
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+    line-height: 1;
+}
+
+.statusTournament {
+    font-size: clamp(0.85rem, 1.7vh, 1.25rem);
+    font-weight: 800;
+    color: var(--color-primary-600-400);
+}
+
+.statusRound {
+    font-size: clamp(6px, 0.9vh, 10px);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 800;
+}
+
+.statusText {
+    max-width: 42ch;
+    font-size: clamp(0.7rem, 1.35vh, 0.95rem);
+    line-height: 1.5;
+    color: var(--sb-muted);
+}
+
+.statusBar {
+    position: relative;
+    width: min(260px, 70%);
+    height: 4px;
+    border-radius: 999px;
+    background: var(--color-surface-200-800);
+    overflow: hidden;
+}
+
+.statusBar span {
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--color-primary-500), var(--color-success-500));
+    animation: indeterminate 1.6s ease-in-out infinite;
+}
+
+.statusHint {
+    font-size: clamp(6px, 0.95vh, 10px);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 700;
+}
+
+.takeover {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    background: color-mix(in oklab, var(--color-surface-50-950) 82%, transparent);
+    backdrop-filter: blur(10px);
+    animation: takeoverOut 0.55s ease-in 2.1s forwards;
+    pointer-events: none;
+}
+
+.takeoverGlow {
+    position: absolute;
+    width: 70vw;
+    height: 70vw;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--sb-glow-strong), transparent 65%);
+    animation: takeoverGlow 2.6s ease-out both;
+}
+
+.takeoverContent {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(5px, 0.9vh, 12px);
+    text-align: center;
+    animation: takeoverIn 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.takeoverInitial .takeoverRound {
+    font-size: clamp(3rem, 14vh, 10rem);
+}
+
+.takeoverKicker {
+    font-size: clamp(8px, 1.25vh, 13px);
+    letter-spacing: 0.4em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 800;
+    animation: fadeUp 0.5s 0.1s both;
+}
+
+.takeoverRound {
+    font-size: clamp(3.2rem, 15vh, 11rem);
+    font-weight: 900;
+    letter-spacing: -0.07em;
+    line-height: 0.82;
+    white-space: nowrap;
+    background: linear-gradient(180deg, var(--color-surface-950-50), var(--color-primary-600-400));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: roundSlam 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.takeoverLine {
+    width: clamp(110px, 20vw, 320px);
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--color-primary-500), var(--color-success-500), transparent);
+    animation: lineGrow 0.7s 0.15s both;
+}
+
+.takeoverSub {
+    font-size: clamp(7px, 1.1vh, 11px);
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 800;
+    animation: fadeUp 0.5s 0.25s both;
+}
+
+.completeBanner {
+    position: absolute;
+    z-index: 30;
+    top: clamp(72px, 10vh, 130px);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: clamp(7px, 0.9vw, 13px);
+    padding: clamp(9px, 1.4vh, 15px) clamp(14px, 1.8vw, 26px);
+    border: 1px solid color-mix(in oklab, var(--color-success-500) 38%, var(--sb-border));
+    border-radius: 999px;
+    background: var(--sb-panel);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-success-500) 18%, transparent), 0 16px 40px color-mix(in oklab, var(--color-surface-950) 18%, transparent);
+    animation: bannerIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both, bannerOut 0.5s ease-in 3.5s forwards;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.completeIcon {
+    width: clamp(28px, 3.8vh, 42px);
+    height: clamp(28px, 3.8vh, 42px);
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, var(--color-warning-500), var(--color-tertiary-500));
+    color: #fff;
+}
+
+.completeIcon svg {
+    width: 52%;
+    height: 52%;
+}
+
+.completeTitle {
+    font-size: clamp(0.75rem, 1.55vh, 1.1rem);
+    font-weight: 900;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.completeSub {
+    font-size: clamp(5px, 0.9vh, 10px);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sb-muted);
+    font-weight: 700;
+}
+
+.celebration {
+    position: absolute;
+    inset: 0;
+    z-index: 45;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.confettiPiece {
+    position: absolute;
+    top: -12vh;
+    width: var(--confetti-size, 8px);
+    height: calc(var(--confetti-size, 8px) * 1.7);
+    border-radius: 2px;
+    background: var(--confetti-color, var(--color-primary-500));
+    opacity: 0;
+    transform: rotate(var(--confetti-rotate, 0deg));
+    animation: confettiFall var(--confetti-duration, 1.5s) cubic-bezier(0.2, 0.65, 0.35, 1) var(--confetti-delay, 0s) forwards;
+}
+
+@keyframes cardIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.97);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes livePulse {
+    0% {
+        box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-success-500) 50%, transparent);
+    }
+    70% {
+        box-shadow: 0 0 0 8px transparent;
+    }
+    100% {
+        box-shadow: 0 0 0 0 transparent;
+    }
+}
+
+@keyframes shimmer {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+@keyframes blink {
+    0%, 100% {
+        opacity: 0.25;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+@keyframes scorePop {
+    0% {
+        opacity: 0.3;
+        transform: scale(0.7);
+    }
+    55% {
+        transform: scale(1.12);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes scoreFlash {
+    0% {
+        opacity: 0.85;
+        transform: scale(0.8);
+    }
+    100% {
+        opacity: 0;
+        transform: scale(1.4);
+    }
+}
+
+@keyframes flashRing {
+    0% {
+        opacity: 0.9;
+        transform: scale(0.985);
+    }
+    100% {
+        opacity: 0;
+        transform: scale(1.035);
+    }
+}
+
+@keyframes ticker {
+    from {
+        transform: translateX(0);
+    }
+    to {
+        transform: translateX(-50%);
+    }
+}
+
+@keyframes statusIn {
+    from {
+        opacity: 0;
+        transform: translateY(14px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes statusRing {
+    0% {
+        opacity: 0.7;
+        transform: scale(0.9);
+    }
+    100% {
+        opacity: 0;
+        transform: scale(1.35);
+    }
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes indeterminate {
+    0% {
+        transform: translateX(-110%);
+    }
+    100% {
+        transform: translateX(360%);
+    }
+}
+
+@keyframes takeoverIn {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+        filter: blur(6px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+        filter: blur(0);
+    }
+}
+
+@keyframes takeoverOut {
+    to {
+        opacity: 0;
+        transform: scale(1.06);
+        filter: blur(8px);
+    }
+}
+
+@keyframes takeoverGlow {
+    from {
+        opacity: 0;
+        transform: scale(0.7);
+    }
+    40% {
+        opacity: 1;
+    }
+    to {
+        opacity: 0.5;
+        transform: scale(1.15);
+    }
+}
+
+@keyframes roundSlam {
+    0% {
+        opacity: 0;
+        transform: translateY(30px) scale(1.25);
+        letter-spacing: 0.05em;
+    }
+    60% {
+        opacity: 1;
+        transform: translateY(0) scale(0.98);
+        letter-spacing: -0.07em;
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+@keyframes lineGrow {
+    from {
+        opacity: 0;
+        transform: scaleX(0);
+    }
+    to {
+        opacity: 1;
+        transform: scaleX(1);
+    }
+}
+
+@keyframes fadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes bannerIn {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -14px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, 0) scale(1);
+    }
+}
+
+@keyframes bannerOut {
+    to {
+        opacity: 0;
+        transform: translate(-50%, -12px) scale(0.98);
+    }
+}
+
+@keyframes confettiFall {
+    0% {
+        opacity: 0;
+        transform: translate3d(0, -12vh, 0) rotate(0deg);
+    }
+    8% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0;
+        transform: translate3d(var(--confetti-drift, 0px), 112vh, 0) rotate(720deg);
+    }
+}
+
+@keyframes floatOrb {
+    0% {
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+    100% {
+        transform: translate3d(3vw, 4vh, 0) scale(1.12);
+    }
+}
+
+@keyframes sweep {
+    0% {
+        opacity: 0;
+        transform: translateX(-20%) rotate(14deg);
+    }
+    20% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0;
+        transform: translateX(140%) rotate(14deg);
+    }
+}
+
+@keyframes accent {
+    0% {
+        background-position: 0% 50%;
+    }
+    100% {
+        background-position: 200% 50%;
+    }
+}
+
+@media (max-width: 1100px) {
+    .brandKicker {
+        display: none;
+    }
+
+    .headerRow {
+        gap: 10px;
+    }
+}
+
+@media (max-height: 800px) {
+    .brandKicker {
+        display: none;
+    }
+
+    .clockLabel {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stage *,
+    .stage *::before,
+    .stage *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+
+    .celebration,
+    .orb,
+    .sweep {
+        display: none;
+    }
+}

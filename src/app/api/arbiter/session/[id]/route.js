@@ -28,7 +28,29 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: 'Session not found or expired' }, { status: 404 });
     }
 
-    const response = NextResponse.json(sessionData, { status: 200 });
+    // The scoreboard only needs the latest round. This keeps its polling payload
+    // small while the arbiter and director continue to receive every round.
+    const { searchParams } = new URL(request.url);
+    let payload = sessionData;
+
+    if (searchParams.get('latest') === '1') {
+      try {
+        const data = typeof sessionData === 'string' ? JSON.parse(sessionData) : sessionData;
+        const rounds = Array.isArray(data.rounds) ? data.rounds : [];
+        const latest = rounds.length ? rounds[rounds.length - 1] : null;
+        const latestRound = latest && typeof latest === 'object'
+          ? { ...latest, roundNumber: latest.roundNumber || rounds.length }
+          : null;
+        payload = {
+          ...data,
+          rounds: latestRound ? [latestRound] : [],
+        };
+      } catch (e) {
+        payload = sessionData;
+      }
+    }
+
+    const response = NextResponse.json(payload, { status: 200 });
     response.headers.set('Cache-Control', 'no-store, max-age=0');
     return response;
   } catch (error) {
@@ -46,7 +68,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { rounds, status } = body; // status could be used to close session
+    const { rounds, status, tournamentName, numRounds } = body; // status could be used to close session
 
     const sessionKey = `arbiter:session:${id}`;
     let sessionData = await redis.get(sessionKey);
@@ -68,6 +90,15 @@ export async function PUT(request, { params }) {
     
     if (status) {
       sessionData.status = status;
+    }
+
+    if (typeof tournamentName === 'string' && tournamentName.trim()) {
+      sessionData.tournamentName = tournamentName.trim().slice(0, 160);
+    }
+
+    const normalizedRounds = Number(numRounds);
+    if (Number.isFinite(normalizedRounds) && normalizedRounds > 0) {
+      sessionData.numRounds = normalizedRounds;
     }
     
     sessionData.updatedAt = Date.now();
