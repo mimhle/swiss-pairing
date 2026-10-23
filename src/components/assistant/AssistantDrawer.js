@@ -97,6 +97,7 @@ const SUGGESTIONS = [
     "Show the latest round pairings.",
     "Explain the tiebreaks being used.",
     "Add a player named Nguyen Van A, rating 1800.",
+    "Import players from a Google Sheet link.",
 ];
 
 const TOOL_STATUS_LABELS = {
@@ -106,6 +107,9 @@ const TOOL_STATUS_LABELS = {
     get_rounds: "Reading rounds and results...",
     get_player_history: "Reading player history...",
     get_pairings_preview: "Generating a pairing preview...",
+    read_google_sheet: "Reading the Google Sheet...",
+    read_google_sheet_rows: "Reading more sheet rows...",
+    apply_sheet_import: "Importing players from the sheet...",
     add_players: "Adding players...",
     update_player: "Updating player...",
     delete_player: "Removing player...",
@@ -120,6 +124,9 @@ const TOOL_ACTIVITY_LABELS = {
     get_rounds: "Read rounds",
     get_player_history: "Read player history",
     get_pairings_preview: "Generated pairing preview",
+    read_google_sheet: "Read Google Sheet",
+    read_google_sheet_rows: "Read more sheet rows",
+    apply_sheet_import: "Imported from Google Sheet",
     add_players: "Added players",
     update_player: "Updated player",
     delete_player: "Removed player",
@@ -144,6 +151,12 @@ function summarizeToolResult(name, result) {
             return result.player?.name || "Player history";
         case "get_pairings_preview":
             return `${result.pairings?.length || 0} boards`;
+        case "read_google_sheet":
+            return `${result.tabs?.length || 0} tab(s), ${result.formattingComplete ? "full formatting" : "values only"}`;
+        case "read_google_sheet_rows":
+            return `${result.rows?.length || 0} rows (${result.tab || "sheet"})`;
+        case "apply_sheet_import":
+            return `${result.importedCount || 0} imported, ${result.updatedCount || 0} updated${result.crossedOutSkipped ? `, ${result.crossedOutSkipped} crossed out` : ""}${result.duplicateCount ? `, ${result.duplicateCount} duplicates` : ""}${result.dryRun ? " (preview)" : ""}`;
         case "add_players":
             return `${result.addedCount} added; total ${result.totalPlayers}${result.skipped?.length ? `, ${result.skipped.length} skipped` : ""}`;
         case "update_player":
@@ -1086,7 +1099,7 @@ export default function AssistantDrawer() {
                                     {isConfigured && visibleMessages.length === 0 && (
                                         <div className="space-y-3">
                                             <p className="text-sm text-surface-600-400">
-                                                Ask about the active tournament. I can read players, rounds, results, and standings. I can also import a player list from a photo or screenshot. I can add players, update player fields, remove unpaired players, and enter results. I cannot generate pairings or change settings.
+                                                Ask about the active tournament. I can read players, rounds, results, and standings. I can import a player list from a photo, a screenshot, or a Google Sheets link: for a sheet I read every tab, the rows, and the formatting, then ask about the mapping, duplicates, and append or replace before writing. I can add players, update player fields, remove unpaired players, and enter results. I cannot generate pairings or change settings.
                                             </p>
                                             <div className="flex flex-wrap gap-2">
                                                 {SUGGESTIONS.map(suggestion => (
@@ -1101,7 +1114,7 @@ export default function AssistantDrawer() {
                                                 ))}
                                             </div>
                                             <p className="text-xs text-surface-500-400">
-                                                Tip: use the image button, paste a screenshot, or drag an image into this panel to import data. Image import needs a vision-capable model.
+                                                Tip: paste a Google Sheets link to import players. Use the image button, paste a screenshot, or drag an image for a photo list; image import needs a vision-capable model.
                                             </p>
                                         </div>
                                     )}

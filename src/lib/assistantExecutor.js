@@ -15,6 +15,12 @@ import { loadPlayers, savePlayers, loadRounds, saveRounds } from "@/lib/tourname
 import { calculateStandings } from "@/lib/standingsLogic";
 import { generatePairings } from "@/lib/pairingEngine";
 import { PLAYER_EDITABLE_KEYS } from "@/lib/knownFields";
+import {
+    buildSheetImportPlayers,
+    getSheetImportEntry,
+    readGoogleSheetForAssistant,
+    readSheetRowsForAssistant,
+} from "@/lib/googleSheetImport";
 
 const VALID_TIEBREAKS = new Set([
     "bh",
@@ -507,6 +513,187 @@ export async function executeAssistantTool({ name, arguments: args = {}, context
                         tiebreakers: standings[rankIndex].tiebreakers,
                     } : null,
                     history,
+                };
+            }
+
+            case "read_google_sheet": {
+                const url = String(args.url ?? "").trim();
+                if (!url) return { error: "A Google Sheets link is required." };
+
+                return await readGoogleSheetForAssistant({
+                    url,
+                    tabs: Array.isArray(args.tabs) ? args.tabs : undefined,
+                    previewRows: args.previewRows,
+                    tournamentId: context.activeTournamentId,
+                });
+            }
+
+            case "read_google_sheet_rows": {
+                return readSheetRowsForAssistant({
+                    importId: args.importId,
+                    tab: args.tab,
+                    startRow: args.startRow,
+                    endRow: args.endRow,
+                    startColumn: args.startColumn,
+                    endColumn: args.endColumn,
+                });
+            }
+
+            case "apply_sheet_import": {
+                if (args.confirmed !== true) {
+                    return {
+                        error: "Do not import yet. Ask the user to confirm the field mapping, how to handle the listed data problems, and whether to append or replace. Then call apply_sheet_import again with confirmed true.",
+                    };
+                }
+
+                const entry = getSheetImportEntry(args.importId);
+                if (!entry) {
+                    return {
+                        error: "The cached Google Sheet expired or was not found. Call read_google_sheet again, then apply the import.",
+                    };
+                }
+
+                if (String(entry.tournamentId) !== String(context.activeTournamentId)) {
+                    return {
+                        error: "This Google Sheet was read for a different tournament. Call read_google_sheet again in the active tournament.",
+                    };
+                }
+
+                const plans = Array.isArray(args.plans) ? args.plans : [];
+                if (plans.length === 0) {
+                    return { error: "At least one import plan is required." };
+                }
+
+                const mode = args.mode === "replace" ? "replace" : "append";
+                const existing = await loadPlayers(context.activeTournamentId).catch(() => []);
+                const rounds = context.rounds || [];
+                const listLocked = rounds.some(round => (round.pairings || []).length > 0);
+
+                if (mode === "replace" && listLocked) {
+                    return {
+                        error: "Cannot replace the player list after rounds have been created. Use append mode, or clear the rounds in the Rounds tab first.",
+                    };
+                }
+
+                let built;
+                try {
+                    built = buildSheetImportPlayers({
+                        entry,
+                        plans,
+                        mode,
+                        duplicatePolicy: args.duplicatePolicy,
+                        existingPlayers: existing,
+                    });
+                } catch (error) {
+                    return { error: error?.message || "The import plan is invalid." };
+                }
+
+                if (mode === "replace" && built.additions.length === 0) {
+                    return {
+                        error: "The plan produced no valid players, so the player list was not replaced.",
+                        skipped: built.skipped.slice(0, 20),
+                    };
+                }
+
+                const base = mode === "replace" ? [] : [...existing];
+                const usedIds = new Set(
+                    base.map(player => Number(player.playerUniqueId)).filter(Number.isFinite)
+                );
+                let nextId = Math.max(0, ...usedIds) + 1;
+
+                const allocateId = preferred => {
+                    const number = Number(preferred);
+                    if (Number.isInteger(number) && number > 0 && !usedIds.has(number)) {
+                        usedIds.add(number);
+                        return number;
+                    }
+                    while (usedIds.has(nextId)) nextId += 1;
+                    const id = nextId;
+                    usedIds.add(id);
+                    nextId += 1;
+                    return id;
+                };
+
+                const updatedPlayers = [];
+                if (mode === "append" && built.updates.length > 0) {
+                    const updateByPlayer = new Map(
+                        built.updates.map(update => [String(update.playerId), update])
+                    );
+                    for (let index = 0; index < base.length; index += 1) {
+                        const update = updateByPlayer.get(String(base[index].playerUniqueId));
+                        if (!update) continue;
+
+                        const merged = { ...base[index] };
+                        for (const [field, value] of Object.entries(update.fields)) {
+                            if (field === "playerUniqueId") continue;
+                            if (String(value ?? "").trim() === "") continue;
+                            merged[field] = value;
+                        }
+                        base[index] = merged;
+                        updatedPlayers.push(merged);
+                    }
+                }
+
+                const added = [];
+                for (const candidate of built.additions) {
+                    const { playerUniqueId: preferredId, ...fields } = candidate.fields;
+                    const playerUniqueId = allocateId(preferredId);
+                    const player = { playerUniqueId, ...fields };
+                    base.push(player);
+                    added.push(player);
+                }
+
+                const duplicateCount = built.skipped.filter(item => (
+                    /Already in the tournament|Duplicate within this import/i.test(item.reason)
+                )).length;
+
+                const summary = {
+                    importId: entry.importId,
+                    mode,
+                    duplicatePolicy: built.duplicatePolicy,
+                    tabs: built.tabs,
+                    rowsRead: built.rowsRead,
+                    importedCount: added.length,
+                    updatedCount: updatedPlayers.length,
+                    duplicateCount,
+                    skippedCount: built.skipped.length,
+                    emptyRowsSkipped: built.emptyRowsSkipped,
+                    hiddenRowsSkipped: built.hiddenRowsSkipped,
+                    crossedOutSkipped: built.crossedOutSkipped,
+                    totalPlayers: base.length,
+                    imported: added.slice(0, 20).map(compactPlayer),
+                    updated: updatedPlayers.slice(0, 10).map(compactPlayer),
+                    skipped: built.skipped.slice(0, 20),
+                    warnings: built.warnings.slice(0, 20),
+                    sheetWarnings: (entry.warnings || []).slice(0, 10),
+                };
+
+                if (added.length === 0 && updatedPlayers.length === 0) {
+                    return {
+                        ...summary,
+                        dryRun: Boolean(args.dryRun),
+                        note: "No players were imported. There were no new or changed valid rows.",
+                    };
+                }
+
+                if (args.dryRun) {
+                    return {
+                        ...summary,
+                        dryRun: true,
+                        note: "Preview only. Nothing was saved. Call apply_sheet_import again with dryRun false to import these players.",
+                    };
+                }
+
+                await savePlayers(base, context.activeTournamentId);
+                context.invalidatePlayers();
+                await context.onDataChanged?.();
+
+                return {
+                    ...summary,
+                    dryRun: false,
+                    note: added.length > 20
+                        ? `Showing the first 20 of ${added.length} imported players.`
+                        : undefined,
                 };
             }
 

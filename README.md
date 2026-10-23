@@ -89,6 +89,14 @@ Provider presets in the settings panel fill in the base URL and model for OpenAI
 
 Answers stream as they are generated. While the assistant works, the drawer shows the current step, the active action, elapsed time, and a short activity log. For example, after a write it can show "Added players — 2 added; total 12".
 
+### Importing from a Google Sheet
+
+Paste a Google Sheets link into the assistant and ask it to import the players. The assistant reads every visible tab, including the rows and formatting metadata, and then talks you through the import: which tab is the player list, how each source column maps to a player field, which columns to ignore, duplicate/missing/invalid rows, hidden or merged rows, and whether to append or replace. It only writes after you confirm.
+
+The full grid stays in the app. The assistant receives the rows (or a capped range it can page through with `read_google_sheet_rows`), then returns an import plan that the app applies deterministically to every row. Large sheets are therefore not retyped by the model.
+
+The sheet must be shared as **Anyone with the link (Viewer)** or published to the web. For the most reliable formatting (merged cells, hidden rows, notes, and exact number formats), set `GOOGLE_SHEETS_API_KEY` (enable the Google Sheets API in Google Cloud Console and create an API key). Without a key, the importer reads Google's HTML view, which still covers every tab, values, strikethrough, bold, italic, underline, and fill colors. The CSV export is used only if the HTML view is unavailable.
+
 ### Importing from photos and screenshots
 
 Use the image button in the message box, paste a screenshot, or drag an image into the assistant panel. You can attach up to four images per message. Photos are converted to JPEG, downscaled, and re-encoded in the browser before they are sent, which strips metadata such as GPS location and keeps requests small. HEIC/HEIF photos from iPhones are supported.
