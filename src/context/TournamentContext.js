@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { duplicateTournamentData, deleteTournamentData, loadTournamentConfig, saveTournamentConfig, loadRounds, saveRounds } from "@/lib/tournamentStore";
 import { notifyDataChanged } from "@/lib/dataChangeSignal";
 
@@ -28,6 +28,7 @@ export function TournamentProvider({ children }) {
     const [tournamentConfig, setTournamentConfig] = useState(null);
     const [rounds, setRounds] = useState([]);
     const [isLoadingConfig, setIsLoadingConfig] = useState(true);
+    const [dataRevision, setDataRevision] = useState(0);
 
     useEffect(() => {
         const handleHashChange = () => {
@@ -108,6 +109,24 @@ export function TournamentProvider({ children }) {
         saveRounds(newRounds, activeTournamentId);
     };
 
+    const reloadFromStore = useCallback(async () => {
+        if (!activeTournamentId) return;
+        const [config, roundsData] = await Promise.all([
+            loadTournamentConfig(activeTournamentId),
+            loadRounds(activeTournamentId),
+        ]);
+        setTournamentConfig(config);
+        setRounds(roundsData);
+    }, [activeTournamentId]);
+
+    // Called after the assistant (or another external writer) changes stored
+    // data. Bumps dataRevision so local views reload, and refreshes rounds and
+    // config from IndexedDB so the UI reflects the change.
+    const notifyExternalDataChange = useCallback(async () => {
+        setDataRevision(prev => prev + 1);
+        await reloadFromStore();
+    }, [reloadFromStore]);
+
     const addTournament = (name) => {
         const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
         const newTournament = { id, name, createdAt: Date.now() };
@@ -163,7 +182,10 @@ export function TournamentProvider({ children }) {
             updateTournamentConfig,
             rounds,
             updateRounds,
-            isLoadingConfig
+            isLoadingConfig,
+            dataRevision,
+            reloadFromStore,
+            notifyExternalDataChange
         }}>
             {children}
         </TournamentContext.Provider>

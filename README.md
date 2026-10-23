@@ -24,6 +24,7 @@ Live site: [https://swiss-pairing.vercel.app/](https://swiss-pairing.vercel.app/
 - Complete local data backup, restore, and clear actions.
 - Optional Google Drive backup/restore sync through a public OAuth Client ID and the Drive app data folder.
 - QR code generator utility with color, logo, dot style, margin, and error-correction controls.
+- Optional in-app AI assistant for tournament questions, standings explanations, player histories, and pairing previews, with browser-saved API keys (BYOK).
 - Light and dark mode.
 
 ## Tech Stack
@@ -69,6 +70,72 @@ npm run lint
 
 `npm run dev` starts the local development server. `npm run build` creates a production build, and `npm run start` serves that build. `npm run lint` runs ESLint.
 
+## AI Assistant
+
+The app includes an optional in-app tournament assistant. Open it from the sparkle button in the bottom-right corner. It can answer questions about the active tournament, explain standings and tiebreaks, look up player histories, and preview the next round's pairings. It can also add players, update player fields, remove unpaired players, apply a template to a whole column (the same templates available from the Players header right-click menu), and enter or update round results. It cannot generate pairings or change tournament settings; use the Rounds and Settings tabs for those actions.
+
+### Bring your own key
+
+Open the assistant and click the settings gear. Enter:
+
+- API base URL, such as `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`, or a local Ollama endpoint.
+- Your API key.
+- A model name. Use a tool-capable model so the assistant can read tournament data.
+- A reasoning level: Auto, Low, or Off. Low is the default and reduces thinking time. Off disables reasoning where the provider supports it.
+
+The key, base URL, model, and reasoning setting are saved in this browser's `localStorage`. They are sent with each assistant request and forwarded by the app's server to your provider. The server does not store the key. The assistant header shows "Your key" when your key is active, or "Server key" when the deployment's fallback key is used.
+
+Provider presets in the settings panel fill in the base URL and model for OpenAI, OpenRouter, and local Ollama. For OpenRouter, `deepseek/deepseek-v4.1-flash-1017` supports tools. For local Ollama, run the app on the same machine as Ollama and pull a tool-capable model first.
+
+Answers stream as they are generated. While the assistant works, the drawer shows the current step, the active action, elapsed time, and a short activity log. For example, after a write it can show "Added players — 2 added; total 12".
+
+### Server fallback (optional)
+
+You can also configure a deployment-wide key with environment variables. This is useful for a self-hosted instance where visitors should not need to bring a key. Copy `.env.example` to `.env.local` and set:
+
+```bash
+AI_API_KEY=sk-...
+AI_BASE_URL=https://api.openai.com/v1
+AI_MODEL=gpt-4o-mini
+AI_REASONING=low
+```
+
+Set `AI_REASONING` to `auto`, `low`, or `off` for the server fallback. The browser setting takes precedence when a browser key is used.
+
+Other provider examples:
+
+```bash
+# OpenRouter
+AI_API_KEY=sk-or-v1-...
+AI_BASE_URL=https://openrouter.ai/api/v1
+AI_MODEL=deepseek/deepseek-v4.1-flash-1017
+
+# Local Ollama (keeps tournament data on your machine)
+AI_API_KEY=ollama
+AI_BASE_URL=http://localhost:11434/v1
+AI_MODEL=llama3.1
+```
+
+Restart `npm run dev` after changing environment variables. The assistant shows "Not configured" until either a browser key or a server key is present. Set `NEXT_PUBLIC_AI_ASSISTANT_ENABLED=false` to hide the assistant UI entirely.
+
+### How it works
+
+- The chat drawer sends the conversation to `POST /api/assistant`.
+- If the browser has a saved key, it sends the key in the `x-ai-api-key` header and the base URL, model, and reasoning level in the request body.
+- The route calls the configured AI provider with tool definitions. A browser-supplied key is used only with the browser-supplied base URL, so the server fallback key is never sent to a user-supplied endpoint.
+- If the model asks for tournament data or asks to change it, the browser executes the tool against IndexedDB and sends the result back to the route. Writes use the same store functions as the UI, and the app reloads visible views after a write.
+- The route streams the answer back as server-sent events. The drawer renders tokens as they arrive and shows the current step and tool activity. Tool calls still round-trip through the browser because tournament data lives in IndexedDB.
+
+### Security notes
+
+- With BYOK, the key is stored in the browser's `localStorage`. Anyone with access to that browser profile can read it. Use a limited key and avoid shared computers.
+- The key is sent through the app's server to the provider. The server forwards it and does not store it. If you do not want keys to transit the server, host the app yourself or call the provider directly from a trusted client.
+- A public deployment should restrict `POST /api/assistant`. The endpoint is rate-limited per IP on a best-effort basis, but it is still an open proxy for visitors' keys. Consider adding authentication or limiting access to trusted users.
+- The route accepts a browser-supplied base URL when the browser also supplies its own key. On a public deployment, set `AI_ALLOWED_BASE_URLS` to an allowlist of provider base URLs to reduce SSRF risk. Leave it unset for local development.
+- Tournament data, including player names and results, is sent to the configured AI provider. Use a local model or a provider you trust if that is a concern.
+- The assistant can read and, when asked, modify the active tournament. It cannot generate pairings or change tournament settings. Pairing previews are not saved.
+- OpenRouter requests send `X-OpenRouter-App-Visibility: hidden`, so the app is not listed in public rankings. This applies only when OpenRouter first creates the app entry.
+
 ## Basic Workflow
 
 1. Create or select a tournament from the tournament selector.
@@ -113,6 +180,7 @@ public
 - More card templates and reusable tournament branding presets.
 - Import presets saved per organizer for recurring spreadsheet formats.
 - Optional role-based access for assistants, arbiters, and scorekeepers.
+- Expose tournament operations to an external MCP server so AI agents can manage tournaments directly.
 
 ## Notes
 

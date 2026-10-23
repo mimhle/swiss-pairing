@@ -1,6 +1,7 @@
 import "./globals.css";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
+import AssistantDrawer from "@/components/assistant/AssistantDrawer";
 import { TournamentProvider } from "@/context/TournamentContext";
 import { DriveSyncProvider } from "@/context/DriveSyncContext";
 
@@ -24,6 +25,7 @@ export default function RootLayout({ children }) {
                     <Header />
                     <main className="flex-1">{children}</main>
                     <Footer />
+                    <AssistantDrawer />
                 </DriveSyncProvider>
             </TournamentProvider>
         </body>

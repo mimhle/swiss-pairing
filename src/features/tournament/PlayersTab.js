@@ -676,7 +676,7 @@ GhostPlayerRow.displayName = 'GhostPlayerRow';
 const MAX_HISTORY = 100;
 
 export default function PlayersTab() {
-    const { activeTournamentId, isLoaded: isTournamentLoaded, setActiveTab, tournamentConfig, rounds } = useTournament();
+    const { activeTournamentId, isLoaded: isTournamentLoaded, setActiveTab, tournamentConfig, rounds, dataRevision } = useTournament();
 
     const [players, setPlayers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -1397,6 +1397,13 @@ export default function PlayersTab() {
         hasLoadedRef.current = false;
         setIsLoading(true);
 
+        // Drop any pending debounced save so it cannot overwrite an external
+        // write (for example, an edit made by the AI assistant).
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        if (saveIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveIdleRef.current);
+        saveTimeoutRef.current = null;
+        saveIdleRef.current = null;
+
         loadPlayers(activeTournamentId).then(saved => {
             if (!isActive) return;
             const normalized = normalizePlayers(saved, isPlayerListLocked);
@@ -1406,7 +1413,7 @@ export default function PlayersTab() {
             setIsLoading(false);
         });
         return () => { isActive = false; };
-    }, [activeTournamentId, clearHistory, isTournamentLoaded, isPlayerListLocked]);
+    }, [activeTournamentId, clearHistory, isTournamentLoaded, isPlayerListLocked, dataRevision]);
 
     useEffect(() => {
         if (isWholeTableLocked) clearHistory();
