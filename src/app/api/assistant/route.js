@@ -32,6 +32,11 @@ const ALLOWED_BASE_URLS = (process.env.AI_ALLOWED_BASE_URLS || "")
 
 const MAX_MESSAGES = 120;
 const MAX_CONTENT_CHARS = 200000;
+const MAX_IMAGES_PER_MESSAGE = 4;
+const MAX_IMAGES_TOTAL = 8;
+const MAX_IMAGE_DATA_URL_CHARS = 900000;
+const MAX_TOTAL_IMAGE_DATA_CHARS = 3600000;
+const IMAGE_DATA_URL_PATTERN = /^data:image\/(?:jpeg|jpg|png|webp|gif);base64,[a-z0-9+/=\s]+$/i;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX = 120;
 const rateLimitStore = new Map();
@@ -81,6 +86,127 @@ function safeParseArguments(raw) {
     }
 }
 
+function normalizeImageDataUrl(value) {
+    const url = typeof value === "string"
+        ? value.trim().replace(/\s+/g, "")
+        : "";
+
+    if (!url || url.length > MAX_IMAGE_DATA_URL_CHARS) return null;
+    if (!IMAGE_DATA_URL_PATTERN.test(url)) return null;
+    return url;
+}
+
+function getRawImageUrls(message) {
+    const urls = [];
+
+    if (Array.isArray(message?.content)) {
+        for (const part of message.content) {
+            if (part?.type !== "image_url") continue;
+            urls.push(
+                typeof part.image_url === "string"
+                    ? part.image_url
+                    : part.image_url?.url
+            );
+        }
+    }
+
+    if (Array.isArray(message?.images)) {
+        for (const image of message.images) {
+            urls.push(typeof image === "string" ? image : image?.dataUrl);
+        }
+    }
+
+    return urls.filter(url => typeof url === "string" && url.length > 0);
+}
+
+function getMessageTextLength(message) {
+    if (typeof message?.content === "string") return message.content.length;
+    if (!Array.isArray(message?.content)) return 0;
+
+    return message.content.reduce(
+        (sum, part) => sum + (part?.type === "text" ? String(part.text ?? "").length : 0),
+        0
+    );
+}
+
+function validateImages(messages) {
+    let totalImages = 0;
+    let totalChars = 0;
+
+    for (const message of messages) {
+        const urls = getRawImageUrls(message);
+        if (urls.length > MAX_IMAGES_PER_MESSAGE) {
+            return {
+                status: 400,
+                message: `You can attach up to ${MAX_IMAGES_PER_MESSAGE} images per message.`,
+            };
+        }
+
+        for (const raw of urls) {
+            const url = normalizeImageDataUrl(raw);
+            if (!url) {
+                return {
+                    status: 400,
+                    message: "Attached images must be base64 JPEG, PNG, WebP, or GIF data URLs under 650 KB each.",
+                };
+            }
+            totalImages += 1;
+            totalChars += url.length;
+        }
+    }
+
+    if (totalImages > MAX_IMAGES_TOTAL) {
+        return {
+            status: 413,
+            message: "Too many images in this conversation. Clear the chat and try again.",
+        };
+    }
+
+    if (totalChars > MAX_TOTAL_IMAGE_DATA_CHARS) {
+        return {
+            status: 413,
+            message: "The attached images are too large for one request. Remove an image or clear the chat.",
+        };
+    }
+
+    return null;
+}
+
+function normalizeUserMessage(message) {
+    const textParts = [];
+
+    if (typeof message?.content === "string") {
+        textParts.push(message.content);
+    } else if (Array.isArray(message?.content)) {
+        for (const part of message.content) {
+            if (part?.type === "text" && typeof part.text === "string") {
+                textParts.push(part.text);
+            }
+        }
+    }
+
+    const images = [];
+    for (const raw of getRawImageUrls(message)) {
+        const url = normalizeImageDataUrl(raw);
+        if (url) images.push(url);
+        if (images.length >= MAX_IMAGES_PER_MESSAGE) break;
+    }
+
+    const text = textParts.filter(Boolean).join("\n");
+
+    if (images.length === 0) {
+        return { role: "user", content: text };
+    }
+
+    const content = [];
+    if (text) content.push({ type: "text", text });
+    for (const url of images) {
+        content.push({ type: "image_url", image_url: { url } });
+    }
+
+    return { role: "user", content };
+}
+
 function normalizeMessage(message) {
     const role = message?.role;
 
@@ -119,7 +245,11 @@ function normalizeMessage(message) {
         };
     }
 
-    if (role === "user" || role === "assistant") {
+    if (role === "user") {
+        return normalizeUserMessage(message);
+    }
+
+    if (role === "assistant") {
         return { role, content: String(message.content ?? "") };
     }
 
@@ -166,7 +296,11 @@ function buildReasoningPayload({ baseUrl, model, reasoning }) {
     return {};
 }
 
-function providerStatusMessage(status, keyHint) {
+function providerStatusMessage(status, keyHint, hasImages = false) {
+    if (hasImages && (status === 400 || status === 422)) {
+        return `The AI provider rejected the image request. The selected model may not support images. Use a vision-capable model; if this deployment uses a server key, add your own key in the assistant settings. ${keyHint}`;
+    }
+
     const messages = {
         401: `The AI provider rejected the API key. ${keyHint}`,
         403: `The AI provider denied access. ${keyHint}`,
@@ -176,7 +310,7 @@ function providerStatusMessage(status, keyHint) {
     return messages[status] || `The AI provider returned ${status}. ${keyHint}`;
 }
 
-function streamAssistantResponse({ request, url, headers, body, keyHint, requestKey }) {
+function streamAssistantResponse({ request, url, headers, body, keyHint, requestKey, hasImages }) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
         async start(controller) {
@@ -208,7 +342,7 @@ function streamAssistantResponse({ request, url, headers, body, keyHint, request
                     );
                     send({
                         type: "error",
-                        error: providerStatusMessage(response.status, keyHint),
+                        error: providerStatusMessage(response.status, keyHint, hasImages),
                     });
                     return;
                 }
@@ -365,13 +499,19 @@ export async function POST(request) {
     }
 
     const contentChars = messages.reduce(
-        (sum, message) => sum + String(message?.content ?? "").length,
+        (sum, message) => sum + getMessageTextLength(message),
         0
     );
     if (contentChars > MAX_CONTENT_CHARS) {
         return errorResponse("Conversation is too large. Clear the chat and try again.", 413);
     }
 
+    const imageError = validateImages(messages);
+    if (imageError) {
+        return errorResponse(imageError.message, imageError.status);
+    }
+
+    const hasImages = messages.some(message => getRawImageUrls(message).length > 0);
     const normalized = messages.map(normalizeMessage).filter(Boolean);
     if (normalized.length === 0) {
         return errorResponse("No valid messages were provided.", 400);
@@ -471,6 +611,7 @@ export async function POST(request) {
             body: providerBody,
             keyHint,
             requestKey,
+            hasImages,
         });
     }
 
@@ -491,7 +632,7 @@ export async function POST(request) {
                 response.status,
                 safeErrorText.slice(0, 1000)
             );
-            return errorResponse(providerStatusMessage(response.status, keyHint), 502);
+            return errorResponse(providerStatusMessage(response.status, keyHint, hasImages), 502);
         }
 
         const data = await response.json();

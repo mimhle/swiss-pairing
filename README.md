@@ -72,7 +72,7 @@ npm run lint
 
 ## AI Assistant
 
-The app includes an optional in-app tournament assistant. Open it from the sparkle button in the bottom-right corner. It can answer questions about the active tournament, explain standings and tiebreaks, look up player histories, and preview the next round's pairings. It can also add players, update player fields, remove unpaired players, apply a template to a whole column (the same templates available from the Players header right-click menu), and enter or update round results. It cannot generate pairings or change tournament settings; use the Rounds and Settings tabs for those actions.
+The app includes an optional in-app tournament assistant. Open it from the sparkle button in the bottom-right corner. It can answer questions about the active tournament, explain standings and tiebreaks, look up player histories, and preview the next round's pairings. It can also add players, update player fields, remove unpaired players, apply a template to a whole column (the same templates available from the Players header right-click menu), and enter or update round results. You can attach photos or screenshots to import player lists and enter data. It cannot generate pairings or change tournament settings; use the Rounds and Settings tabs for those actions.
 
 ### Bring your own key
 
@@ -80,7 +80,7 @@ Open the assistant and click the settings gear. Enter:
 
 - API base URL, such as `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`, or a local Ollama endpoint.
 - Your API key.
-- A model name. Use a tool-capable model so the assistant can read tournament data.
+- A model name. Use a tool-capable model so the assistant can read tournament data. For image import, choose a vision-capable model such as `gpt-4o-mini`.
 - A reasoning level: Auto, Low, or Off. Low is the default and reduces thinking time. Off disables reasoning where the provider supports it.
 
 The key, base URL, model, and reasoning setting are saved in this browser's `localStorage`. They are sent with each assistant request and forwarded by the app's server to your provider. The server does not store the key. The assistant header shows "Your key" when your key is active, or "Server key" when the deployment's fallback key is used.
@@ -88,6 +88,12 @@ The key, base URL, model, and reasoning setting are saved in this browser's `loc
 Provider presets in the settings panel fill in the base URL and model for OpenAI, OpenRouter, and local Ollama. For OpenRouter, `deepseek/deepseek-v4.1-flash-1017` supports tools. For local Ollama, run the app on the same machine as Ollama and pull a tool-capable model first.
 
 Answers stream as they are generated. While the assistant works, the drawer shows the current step, the active action, elapsed time, and a short activity log. For example, after a write it can show "Added players — 2 added; total 12".
+
+### Importing from photos and screenshots
+
+Use the image button in the message box, paste a screenshot, or drag an image into the assistant panel. You can attach up to four images per message. Photos are converted to JPEG, downscaled, and re-encoded in the browser before they are sent, which strips metadata such as GPS location and keeps requests small. HEIC/HEIF photos from iPhones are supported.
+
+For a clear player list, the assistant maps the visible columns to player fields and imports the rows. If a name, rating, or column is blurry, cropped, or ambiguous, it reports the problem rows and asks before importing instead of guessing. Image import requires a vision-capable model; if the configured model is text-only, the assistant returns an error asking you to choose a vision-capable model.
 
 ### Server fallback (optional)
 
@@ -121,6 +127,7 @@ Restart `npm run dev` after changing environment variables. The assistant shows 
 ### How it works
 
 - The chat drawer sends the conversation to `POST /api/assistant`.
+- Attached images are sent as base64 JPEG data URLs in OpenAI-style `image_url` content parts. The route accepts JPEG, PNG, WebP, and GIF data URLs only, caps each image and the total request, and rejects other image sources. On follow-up requests, only the newest image-bearing message is sent to keep the payload small.
 - If the browser has a saved key, it sends the key in the `x-ai-api-key` header and the base URL, model, and reasoning level in the request body.
 - The route calls the configured AI provider with tool definitions. A browser-supplied key is used only with the browser-supplied base URL, so the server fallback key is never sent to a user-supplied endpoint.
 - If the model asks for tournament data or asks to change it, the browser executes the tool against IndexedDB and sends the result back to the route. Writes use the same store functions as the UI, and the app reloads visible views after a write.
@@ -132,7 +139,7 @@ Restart `npm run dev` after changing environment variables. The assistant shows 
 - The key is sent through the app's server to the provider. The server forwards it and does not store it. If you do not want keys to transit the server, host the app yourself or call the provider directly from a trusted client.
 - A public deployment should restrict `POST /api/assistant`. The endpoint is rate-limited per IP on a best-effort basis, but it is still an open proxy for visitors' keys. Consider adding authentication or limiting access to trusted users.
 - The route accepts a browser-supplied base URL when the browser also supplies its own key. On a public deployment, set `AI_ALLOWED_BASE_URLS` to an allowlist of provider base URLs to reduce SSRF risk. Leave it unset for local development.
-- Tournament data, including player names and results, is sent to the configured AI provider. Use a local model or a provider you trust if that is a concern.
+- Tournament data, including player names and results, is sent to the configured AI provider. Attached images are sent to the same provider. Use a local model or a provider you trust if that is a concern, and avoid attaching images that contain sensitive information you do not want to send.
 - The assistant can read and, when asked, modify the active tournament. It cannot generate pairings or change tournament settings. Pairing previews are not saved.
 - OpenRouter requests send `X-OpenRouter-App-Visibility: hidden`, so the app is not listed in public rankings. This applies only when OpenRouter first creates the app entry.
 

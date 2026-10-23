@@ -25,7 +25,7 @@ const PROVIDER_PRESETS = [
         label: "OpenRouter",
         baseUrl: "https://openrouter.ai/api/v1",
         model: "deepseek/deepseek-v4.1-flash-1017",
-        hint: "OpenRouter API",
+        hint: "OpenRouter API. Choose a vision-capable model to import data from images.",
     },
     {
         id: "ollama",
@@ -221,7 +221,9 @@ export default function AssistantSettings({
                         spellCheck={false}
                     />
                     <p className="mt-1 text-[11px] text-surface-500-400">
-                        Use a tool-capable model so the assistant can read tournament data.
+                        Use a tool-capable model so the assistant can read tournament data. To import
+                        players from photos or screenshots, choose a vision-capable model such as
+                        gpt-4o-mini.
                     </p>
                 </div>
 
