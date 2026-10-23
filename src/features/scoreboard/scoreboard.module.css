@@ -638,7 +638,7 @@
 }
 
 .matchRow .playerName {
-    flex: 1 1 0;
+    flex: 0 1 auto;
 }
 
 .matchRow .playerMeta {
@@ -651,7 +651,7 @@
 
 .playerName {
     min-width: 0;
-    font-size: min(5.5cqw, 12cqh, 24px);
+    font-size: min(5cqw, 16cqh, 24px);
     font-weight: 900;
     line-height: 1.02;
     letter-spacing: -0.02em;

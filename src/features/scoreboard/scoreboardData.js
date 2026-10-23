@@ -241,12 +241,9 @@ export function buildRecentResults(rounds, limit = 20) {
     return items.slice(-limit).reverse();
 }
 
-export function computeFit(count, width, height, gap = 10) {
+export function computeFit(count, width, height, gap = 10, maxNameLength = 15) {
     const total = Math.max(0, Math.floor(Number(count) || 0));
-    const minCardWidth = 300;
-    const minCardHeight = 48;
-    const baseCardWidth = 360;
-    const baseCardHeight = 180;
+    const nameLength = Math.max(15, Math.floor(Number(maxNameLength) || 15));
 
     if (total <= 0) {
         return { columns: 1, rows: 1 };
@@ -263,37 +260,18 @@ export function computeFit(count, width, height, gap = 10) {
     const maxColumns = Math.min(total, 10);
     let best = null;
 
-    // Prefer layouts where the card is wide enough for names and tall enough
-    // for two player rows. Among those, pick the largest proportional card.
     for (let columns = 1; columns <= maxColumns; columns += 1) {
         const rows = Math.ceil(total / columns);
         const cellWidth = (width - gap * (columns - 1)) / columns;
         const cellHeight = (height - gap * (rows - 1)) / rows;
 
-        if (cellWidth < minCardWidth || cellHeight < minCardHeight) continue;
+        if (cellWidth <= 0 || cellHeight <= 0) continue;
 
-        const score = Math.min(cellWidth / baseCardWidth, cellHeight / baseCardHeight);
-        if (
-            !best
-            || score > best.score + 0.0001
-            || (Math.abs(score - best.score) <= 0.0001 && columns > best.columns)
-        ) {
-            best = { columns, rows, score };
-        }
-    }
-
-    if (best) {
-        return { columns: best.columns, rows: best.rows };
-    }
-
-    // If no layout can keep both minimums, keep every board visible and choose
-    // the layout with the largest proportional card.
-    best = null;
-    for (let columns = 1; columns <= maxColumns; columns += 1) {
-        const rows = Math.ceil(total / columns);
-        const cellWidth = (width - gap * (columns - 1)) / columns;
-        const cellHeight = (height - gap * (rows - 1)) / rows;
-        const score = Math.min(cellWidth / minCardWidth, cellHeight / minCardHeight);
+        const font = Math.min(cellWidth * 0.05, cellHeight * 0.16, 24);
+        const nameArea = cellWidth * 0.56;
+        const required = nameLength * font * 0.52;
+        const fill = nameArea > 0 ? Math.min(1, required / nameArea) : 1;
+        const score = font * fill;
 
         if (
             !best

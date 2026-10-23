@@ -118,9 +118,17 @@ export default function ScoreboardClient({ sessionId }) {
         const pairings = Array.isArray(currentRound?.pairings) ? currentRound.pairings : [];
         return pairings.map((pairing, index) => normalizeBoard(pairing, index));
     }, [currentRound]);
+    const maxNameLength = useMemo(() => {
+        let max = 0;
+        boards.forEach(board => {
+            max = Math.max(max, board.white.name.length);
+            if (!board.isBye) max = Math.max(max, board.black.name.length);
+        });
+        return Math.max(15, max);
+    }, [boards]);
     const fit = useMemo(
-        () => computeFit(boards.length, paneSize.width, paneSize.height, BOARD_GAP),
-        [boards.length, paneSize.width, paneSize.height],
+        () => computeFit(boards.length, paneSize.width, paneSize.height, BOARD_GAP, maxNameLength),
+        [boards.length, paneSize.width, paneSize.height, maxNameLength],
     );
     const isFinal = Boolean(numRounds && roundNumber >= numRounds);
     const roundStartedAt = Number(currentRound?.timestamp) || Number(session?.createdAt) || 0;
