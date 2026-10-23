@@ -138,7 +138,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
         type: "function",
         function: {
             name: "add_players",
-            description: "Add players to the active tournament. Use this to import a player list. Pass structured player objects. By default players are appended. Use mode replace only when the tournament has no rounds; it replaces the entire player list. New players are appended at the bottom and are unpaired.",
+            description: "Add players to the active tournament. Use this to import a player list. Pass structured player objects. By default players are appended. Use mode replace only when the tournament has no rounds; it replaces the entire player list. New players are appended at the bottom and are unpaired. Check the existing players first and do not re-add names that already exist.",
             parameters: {
                 type: "object",
                 properties: {
@@ -167,7 +167,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
         type: "function",
         function: {
             name: "update_player",
-            description: "Update fields on a single existing player. Identify the player by playerId or exact name. Only provided fields are changed. Players can be edited even after pairings exist. Use this only for a genuine single-row edit. For any bulk change, use apply_column_template instead; do not edit rows one by one.",
+            description: "Update fields on a single existing player. Identify the player by playerId or exact name. Only provided fields are changed. Players can be edited even after pairings exist. Read the player's current values first and skip the call when the requested fields already match. Use this only for a genuine single-row edit. For any bulk change, use apply_column_template instead; do not edit rows one by one.",
             parameters: {
                 type: "object",
                 properties: {
@@ -195,7 +195,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
         type: "function",
         function: {
             name: "delete_player",
-            description: "Remove a player from the active tournament. Refuses if the player appears in any round pairing, because paired players are locked. Unpaired players can be removed.",
+            description: "Remove a player from the active tournament. Refuses if the player appears in any round pairing, because paired players are locked. Unpaired players can be removed. Verify that the player exists and is still unpaired before calling.",
             parameters: {
                 type: "object",
                 properties: {
@@ -216,7 +216,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
         type: "function",
         function: {
             name: "apply_column_template",
-            description: "VERY POWERFUL. PREFER THIS over update_player for any change that affects more than one player in one column. Applies one JavaScript template expression to every player in the column in a single call, instead of editing rows one by one. The template is a JavaScript template literal evaluated per player, so ${...} can contain any safe JavaScript expression, not only field names. It supports string methods (toUpperCase, toLowerCase, trim, replace, split, slice, padStart), comparisons, ternaries, arithmetic, and combinations of fields. Examples: ${name.toUpperCase()}, ${lastname}, ${firstname}, ${group}${federation}, ${club.replace(/ /g, '-')}, ${Number(rating) >= 2000 ? 'A' : group}. Use a conditional to change only some rows while preserving the rest, for example ${federation === 'VIE' ? club + ' (VIE)' : club}. Expressions cannot contain backticks or braces. An empty template clears the column. Column keys: name, gender, group, rating, title, federation, fideId, club, teamUniqueId, type. Aliases: fed = federation, fide = fideId, team = teamUniqueId. Template aliases: lastname, firstname. This overwrites the column for every player in the active tournament.",
+            description: "VERY POWERFUL. PREFER THIS over update_player for any change that affects more than one player in one column. Applies one JavaScript template expression to every player in the column in a single call, instead of editing rows one by one. The template is a JavaScript template literal evaluated per player, so ${...} can contain any safe JavaScript expression, not only field names. It supports string methods (toUpperCase, toLowerCase, trim, replace, split, slice, padStart), comparisons, ternaries, arithmetic, and combinations of fields. Examples: ${name.toUpperCase()}, ${lastname}, ${firstname}, ${group}${federation}, ${club.replace(/ /g, '-')}, ${Number(rating) >= 2000 ? 'A' : group}. Use a conditional to change only some rows while preserving the rest, for example ${federation === 'VIE' ? club + ' (VIE)' : club}. Expressions cannot contain backticks or braces. An empty template clears the column. Column keys: name, gender, group, rating, title, federation, fideId, club, teamUniqueId, type. Aliases: fed = federation, fide = fideId, team = teamUniqueId. Template aliases: lastname, firstname. This overwrites the column for every player in the active tournament. Read the current column values first and skip the call when the template would leave every row unchanged.",
             parameters: {
                 type: "object",
                 properties: {
@@ -239,7 +239,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
         type: "function",
         function: {
             name: "enter_results",
-            description: "Enter or update results for a round. Identify each pairing by board number or by both player names. Results are validated against the app's allowed values. This does not create rounds; the round must already exist.",
+            description: "Enter or update results for a round. Identify each pairing by board number or by both player names. Results are validated against the app's allowed values. This does not create rounds; the round must already exist. Read the round first and skip pairings whose result already matches.",
             parameters: {
                 type: "object",
                 properties: {
@@ -314,7 +314,10 @@ Your job:
 - You cannot generate or save new pairings, change tournament settings, delete rounds, or change the round structure. Tell the user to use the Rounds and Settings tabs for those actions.
 - Call tools before answering any question that depends on tournament data. Never invent player names, results, standings, pairings, or tiebreak values.
 - Use get_tournament_summary for an overview. Use get_players to find or list players. Use get_standings to tally scores. Use get_rounds for pairings and results. Use get_player_history for questions about one player. Use get_pairings_preview only when the user asks for a pairing suggestion or preview.
-- Before adding players, check the existing list when duplicates are possible. Before updating or deleting a player without a known ID, use get_players to find the exact player first.
+- Before any write, verify the current state of the data you are about to change. Read the target players, column, or round first and compare it with the requested change. If it already matches, do not call the write tool; tell the user it is already in that state.
+- This applies to every write: check existing players before add_players, compare current fields before update_player, inspect the current column before apply_column_template, and read the current results before enter_results. Do not re-add existing players, rewrite identical values, or repeat a call that returned no changes.
+- Never repeat an identical write call. If a write returns zero changes or an unchanged result, stop and report the current state instead of trying a different approach unless the user explicitly asks you to force it.
+- Before updating or deleting a player without a known ID, use get_players to find the exact player first.
 - Before removing a player or replacing the entire player list, confirm with the user unless they already gave explicit instructions. Players who already appear in a round cannot be removed.
 - The template engine is one of your most powerful tools. apply_column_template evaluates a real JavaScript template expression for every player, so it can perform almost any bulk transformation in one call: prefix, suffix, fill, clear, uppercase/lowercase, trim, replace, split, slice, pad, format values, extract first/last names, combine fields, or choose values conditionally. Treat it as the default for any change that affects more than one player in a column, and minimize row-by-row edits. Do not call update_player repeatedly when one template can do the same work.
 - Use a conditional expression to change only part of a column while preserving the rest, for example '\${federation === "VIE" ? club + " (VIE)" : club}'. The else branch must keep the existing value when only some rows should change, because the template overwrites every row.
