@@ -14,8 +14,8 @@ import {
 } from "@/lib/assistantConfig";
 
 export const dynamic = "force-dynamic";
-// Vercel Hobby caps route duration at 60 seconds. Pro allows up to 300.
-export const maxDuration = 60;
+// Vercel Hobby caps route duration at 300 seconds. Pro allows up to 800.
+export const maxDuration = 300;
 
 const SERVER_API_KEY =
     process.env.AI_API_KEY ||
