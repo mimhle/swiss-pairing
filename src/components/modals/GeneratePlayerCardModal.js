@@ -249,8 +249,9 @@ function renderCardContent(ctx, W, H, outW, player, config, fontFamily) {
     const cy = H / 2;
 
     const anchorToCanvas = (anchor) => {
-        const h = (anchor || 'mm')[0];
-        const v = (anchor || 'mm')[1];
+        // Anchor codes are vertical-then-horizontal: 'tl' = top left, 'bm' = bottom middle.
+        const v = (anchor || 'mm')[0];
+        const h = (anchor || 'mm')[1];
         return {
             textAlign: { l: 'left', m: 'center', r: 'right' }[h] ?? 'center',
             textBaseline: {
