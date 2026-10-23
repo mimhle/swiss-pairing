@@ -33,7 +33,7 @@ import {
 import { readAssistantStream } from "@/lib/assistantStream";
 import AssistantSettings from "./AssistantSettings";
 
-const MAX_TOOL_TURNS = 12;
+const MAX_TOOL_TURNS = 40;
 const PANEL_SIZE_STORAGE_KEY = "swiss_ai_panel_size_v1";
 // Minimum width that keeps the composer placeholder on one line at the
 // default font size, plus a small safety buffer.

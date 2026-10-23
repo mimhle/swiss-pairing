@@ -167,7 +167,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
         type: "function",
         function: {
             name: "update_player",
-            description: "Update fields on a single existing player. Identify the player by playerId or exact name. Only provided fields are changed. Players can be edited even after pairings exist. For a whole-column change, use apply_column_template instead.",
+            description: "Update fields on a single existing player. Identify the player by playerId or exact name. Only provided fields are changed. Players can be edited even after pairings exist. Use this only for a genuine single-row edit. For any bulk change, use apply_column_template instead; do not edit rows one by one.",
             parameters: {
                 type: "object",
                 properties: {
@@ -216,7 +216,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
         type: "function",
         function: {
             name: "apply_column_template",
-            description: "PREFER THIS over update_player for any whole-column change. Apply a template to every player in one column in a single call. Use this when the user asks to prefix, suffix, fill, clear, or transform an entire column. The template supports ${field} placeholders, for example ${group}${federation} or ${club}_${name}. An empty template clears the column. Column keys: name, gender, group, rating, title, federation, fideId, club, teamUniqueId, type. Aliases: fed = federation, fide = fideId, team = teamUniqueId. Template aliases: lastname, firstname. This overwrites the column for every player in the active tournament.",
+            description: "VERY POWERFUL. PREFER THIS over update_player for any change that affects more than one player in one column. Applies one JavaScript template expression to every player in the column in a single call, instead of editing rows one by one. The template is a JavaScript template literal evaluated per player, so ${...} can contain any safe JavaScript expression, not only field names. It supports string methods (toUpperCase, toLowerCase, trim, replace, split, slice, padStart), comparisons, ternaries, arithmetic, and combinations of fields. Examples: ${name.toUpperCase()}, ${lastname}, ${firstname}, ${group}${federation}, ${club.replace(/ /g, '-')}, ${Number(rating) >= 2000 ? 'A' : group}. Use a conditional to change only some rows while preserving the rest, for example ${federation === 'VIE' ? club + ' (VIE)' : club}. Expressions cannot contain backticks or braces. An empty template clears the column. Column keys: name, gender, group, rating, title, federation, fideId, club, teamUniqueId, type. Aliases: fed = federation, fide = fideId, team = teamUniqueId. Template aliases: lastname, firstname. This overwrites the column for every player in the active tournament.",
             parameters: {
                 type: "object",
                 properties: {
@@ -227,7 +227,7 @@ export const ASSISTANT_TOOL_DEFINITIONS = [
                     },
                     template: {
                         type: "string",
-                        description: "Template string. Use ${field} placeholders. Example: prefix the federation column with group -> ${group}${federation}. An empty string clears the column.",
+                        description: "JavaScript template expression. Use ${...} for any safe expression, not just plain fields. Examples: ${name.toUpperCase()}, ${lastname}, ${group}${federation}, ${federation === 'VIE' ? club + ' (VIE)' : club}. An empty string clears the column.",
                     },
                 },
                 required: ["column", "template"],
@@ -316,7 +316,10 @@ Your job:
 - Use get_tournament_summary for an overview. Use get_players to find or list players. Use get_standings to tally scores. Use get_rounds for pairings and results. Use get_player_history for questions about one player. Use get_pairings_preview only when the user asks for a pairing suggestion or preview.
 - Before adding players, check the existing list when duplicates are possible. Before updating or deleting a player without a known ID, use get_players to find the exact player first.
 - Before removing a player or replacing the entire player list, confirm with the user unless they already gave explicit instructions. Players who already appear in a round cannot be removed.
-- If the user asks to change every player in a column, you MUST use apply_column_template once. Do not call update_player per row. This includes prefix, suffix, fill, clear, and transform requests. Examples: 'add the group as a prefix to the fed column' means column 'federation' with template '\${group}\${federation}'; 'set every club to My Club' means template 'My Club'; 'clear the group column' means an empty template; 'uppercase all names' means template '\${name.toUpperCase()}'. Use a separator only if the user asks for one. The template overwrites the column, so confirm first only when the instruction is ambiguous; otherwise apply it and report the count.
+- The template engine is one of your most powerful tools. apply_column_template evaluates a real JavaScript template expression for every player, so it can perform almost any bulk transformation in one call: prefix, suffix, fill, clear, uppercase/lowercase, trim, replace, split, slice, pad, format values, extract first/last names, combine fields, or choose values conditionally. Treat it as the default for any change that affects more than one player in a column, and minimize row-by-row edits. Do not call update_player repeatedly when one template can do the same work.
+- Use a conditional expression to change only part of a column while preserving the rest, for example '\${federation === "VIE" ? club + " (VIE)" : club}'. The else branch must keep the existing value when only some rows should change, because the template overwrites every row.
+- Template examples: 'add the group as a prefix to the fed column' means column 'federation' with template '\${group}\${federation}'; 'set every club to My Club' means template 'My Club'; 'clear the group column' means an empty template; 'uppercase all names' means template '\${name.toUpperCase()}'; 'short name' means template '\${lastname} \${firstname.charAt(0)}.'; 'set group A for players rated 2000 or more and keep the others' means column 'group' with template '\${Number(rating) >= 2000 ? "A" : group}'. Use a separator only if the user asks for one.
+- Use update_player only for a genuine single-row edit that cannot be expressed as a template. If a request changes multiple columns, use one apply_column_template call per column. Confirm first only when the instruction is ambiguous; otherwise apply it and report the count.
 - Before entering results, use get_rounds to see the board numbers. Enter results by board number when possible. If you use names, provide both white and black. If the pairing is ambiguous, ask instead of guessing.
 - Valid results are 1-0 (White wins), 0-1 (Black wins), 0.5-0.5 (draw), 1-0f (White wins by forfeit), 0-1f (Black wins by forfeit), and 0-0 (double forfeit). A true bye is normally 1-0. Automatic skip and forfeit rows cannot be edited.
 - When the user pastes player data, parse it into structured player objects. Infer columns from headers. Ask about ambiguous columns before importing. Use add_players.

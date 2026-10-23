@@ -14,6 +14,7 @@ import {
 } from "@/lib/assistantConfig";
 
 export const dynamic = "force-dynamic";
+// Vercel Hobby caps route duration at 60 seconds. Pro allows up to 300.
 export const maxDuration = 60;
 
 const SERVER_API_KEY =
@@ -30,8 +31,10 @@ const ALLOWED_BASE_URLS = (process.env.AI_ALLOWED_BASE_URLS || "")
     .map(value => normalizeBaseUrl(value))
     .filter(Boolean);
 
-const MAX_MESSAGES = 120;
-const MAX_CONTENT_CHARS = 200000;
+const MAX_MESSAGES = 1000;
+// DeepSeek V4.1 Flash has a ~1M-token context. One million text characters is
+// a practical ceiling that still fits under serverless request body limits.
+const MAX_CONTENT_CHARS = 1000000;
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_IMAGES_TOTAL = 8;
 const MAX_IMAGE_DATA_URL_CHARS = 900000;
@@ -598,7 +601,10 @@ export async function POST(request) {
         tools: ASSISTANT_TOOL_DEFINITIONS,
         tool_choice: "auto",
         temperature: 0.2,
-        max_tokens: 3000,
+        // Do not cap output tokens here. Leaving max_tokens unset lets each
+        // provider use the selected model's own output limit, which is much
+        // higher than the old hardcoded 3,000-token cap for models such as
+        // DeepSeek V4.1 Flash.
         stream,
         ...buildReasoningPayload({ baseUrl, model, reasoning: reasoningSetting }),
     };
