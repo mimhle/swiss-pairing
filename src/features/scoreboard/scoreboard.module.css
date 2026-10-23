@@ -467,7 +467,7 @@
     pointer-events: none;
 }
 
-.boardCardRoomy .cardBody {
+.boardCardRoomy .matchBody {
     padding-block: clamp(3px, 0.6vh, 9px);
 }
 
@@ -475,19 +475,19 @@
     font-size: clamp(0.8rem, 2.4vh, 1.8rem);
 }
 
-.boardCardRoomy .scoreBox {
+.boardCardRoomy .matchScore {
     min-width: clamp(52px, 5vw, 100px);
 }
 
-.boardCardRoomy .score {
-    font-size: clamp(1.1rem, 4.2vh, 3.4rem);
+.boardCardRoomy .matchDigit {
+    font-size: clamp(1.2rem, 4.2vh, 3rem);
 }
 
 .boardCardRoomy .playerMeta {
     font-size: clamp(6px, 1.05vh, 11px);
 }
 
-.boardCardCompact .cardBody {
+.boardCardCompact .matchBody {
     padding-block: clamp(2px, 0.4vh, 5px);
 }
 
@@ -499,11 +499,11 @@
     display: none;
 }
 
-.boardCardCompact .scoreBox {
+.boardCardCompact .matchScore {
     min-width: clamp(38px, 3.6vw, 66px);
 }
 
-.boardCardCompact .score {
+.boardCardCompact .matchDigit {
     font-size: clamp(0.9rem, 2.8vh, 2rem);
 }
 
@@ -515,6 +515,44 @@
     border-radius: calc(var(--sb-radius) * 0.72);
 }
 
+.gridFiller {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    overflow: hidden;
+    border: 1px dashed color-mix(in oklab, var(--sb-border) 70%, transparent);
+    border-radius: var(--sb-radius);
+    background-color: color-mix(in oklab, var(--sb-panel) 55%, transparent);
+    background-image:
+        linear-gradient(var(--sb-grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--sb-grid) 1px, transparent 1px);
+    background-size: clamp(16px, 2vw, 28px) clamp(16px, 2vw, 28px);
+    color: var(--sb-muted);
+    opacity: 0.55;
+    animation: cardIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--i, 0) * 22ms);
+}
+
+.gridFillerPiece {
+    font-size: clamp(1.4rem, 4vh, 3rem);
+    line-height: 1;
+    opacity: 0.35;
+}
+
+.gridFillerText {
+    font-size: clamp(5px, 0.8vh, 9px);
+    font-weight: 900;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    opacity: 0.6;
+    white-space: nowrap;
+}
+
 .boardCardBye {
     border-style: dashed;
 }
@@ -524,7 +562,8 @@
     box-shadow: 0 0 0 1px var(--color-primary-500), 0 0 26px var(--sb-glow-strong), var(--sb-shadow);
 }
 
-.boardCardFlashing .score {
+.boardCardFlashing .matchDigit,
+.boardCardFlashing .denseScore {
     animation: scorePop 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -614,48 +653,47 @@
     border-color: color-mix(in oklab, var(--color-surface-500) 18%, transparent);
 }
 
-.cardBody {
+.matchBody {
     flex: 1 1 0;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    align-items: center;
-    gap: clamp(2px, 0.4vw, 8px);
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: clamp(4px, 0.7vw, 12px);
     padding: clamp(2px, 0.45vh, 7px) clamp(6px, 0.75vw, 12px);
 }
 
-.player {
+.matchPlayers {
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    overflow: hidden;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    gap: clamp(2px, 0.35vh, 6px);
 }
 
-.playerWhite {
-    align-items: flex-end;
-    text-align: right;
-}
-
-.playerBlack {
-    align-items: flex-start;
-    text-align: left;
-}
-
-.playerNameRow {
+.matchRow {
+    min-width: 0;
+    min-height: 0;
     display: flex;
     align-items: center;
-    gap: clamp(2px, 0.3vw, 6px);
-    min-width: 0;
-    max-width: 100%;
+    gap: clamp(3px, 0.4vw, 7px);
+    padding: 0 clamp(2px, 0.3vw, 5px);
+    border-radius: 4px;
 }
 
-.playerWhite .playerNameRow {
-    justify-content: flex-end;
+.matchRow + .matchRow {
+    border-top: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
 }
 
-.playerBlack .playerNameRow {
-    justify-content: flex-start;
+.matchRow .playerName {
+    flex: 1 1 0;
+}
+
+.matchRow .playerMeta {
+    flex: 0 0 auto;
+}
+
+.matchRow.winner {
+    background: linear-gradient(90deg, color-mix(in oklab, var(--color-primary-500) 10%, transparent), transparent 80%);
 }
 
 .playerName {
@@ -681,7 +719,7 @@
 }
 
 .playerMeta {
-    max-width: 100%;
+    max-width: 45%;
     font-size: clamp(5px, 0.9vh, 10px);
     color: var(--sb-muted);
     font-variant-numeric: tabular-nums;
@@ -723,51 +761,62 @@
     border-color: color-mix(in oklab, var(--color-surface-50) 30%, transparent);
 }
 
-.scoreBox {
+.matchScore {
     position: relative;
-    align-self: stretch;
-    min-width: clamp(40px, 4vw, 76px);
+    min-width: clamp(46px, 5vw, 84px);
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    gap: clamp(2px, 0.35vh, 6px);
+    border-left: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
+    padding-left: clamp(4px, 0.6vw, 10px);
+}
+
+.matchScorePending {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
 }
 
-.score {
-    position: relative;
-    z-index: 1;
+.matchDigit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: clamp(0.9rem, 3.4vh, 2.8rem);
+    font-size: clamp(1rem, 3.4vh, 2.4rem);
     font-weight: 900;
     line-height: 1;
     letter-spacing: -0.06em;
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-}
-
-.scorePending {
-    color: var(--sb-muted);
-    font-size: clamp(0.65rem, 1.5vh, 1.1rem);
-    letter-spacing: 0.1em;
-}
-
-.scoreFinal {
     color: var(--color-surface-950-50);
 }
 
-.scoreWin {
+.matchDigit + .matchDigit {
+    border-top: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
+}
+
+.matchDigitWin {
     color: var(--color-primary-600-400);
     text-shadow: 0 0 20px var(--sb-glow-strong);
 }
 
-.scoreDraw {
+.matchDigitMuted {
+    color: var(--sb-muted);
+}
+
+.matchDigitDraw {
     color: var(--color-warning-700-300);
 }
 
-.scoreSpecial {
-    color: var(--color-warning-700-300);
-    font-size: clamp(0.55rem, 1.15vh, 0.9rem);
-    letter-spacing: 0.06em;
+.matchVs {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: clamp(0.65rem, 1.5vh, 1.1rem);
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    color: var(--sb-muted);
 }
 
 .pendingDots {
@@ -798,6 +847,7 @@
     border-radius: 8px;
     background: var(--sb-glow);
     animation: scoreFlash 0.9s ease-out both;
+    pointer-events: none;
 }
 
 .flashRing {
@@ -820,14 +870,10 @@
     padding: clamp(2px, 0.5vh, 8px) clamp(6px, 0.75vw, 12px);
 }
 
-.byePlayer {
+.byeBody .matchRow {
     flex: 1 1 0;
-    align-items: flex-start;
-    text-align: left;
-}
-
-.byePlayer .playerNameRow {
-    justify-content: flex-start;
+    border-top: none;
+    background: none;
 }
 
 .byeScore {
@@ -991,6 +1037,17 @@
     animation: blink 1.6s ease-in-out infinite;
 }
 
+.denseFlag {
+    flex: 0 0 auto;
+    font-size: clamp(5px, 0.8vh, 9px);
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    color: var(--color-error-700-300);
+    border: 1px solid color-mix(in oklab, var(--color-error-500) 30%, transparent);
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
 .denseBye {
     flex: 0 0 auto;
     font-size: clamp(5px, 0.9vh, 10px);
@@ -1094,6 +1151,15 @@
 .tickerWinner {
     color: var(--color-primary-600-400);
     font-weight: 800;
+}
+
+.tickerFlag {
+    font-size: clamp(5px, 0.8vh, 9px);
+    font-weight: 900;
+    color: var(--color-error-700-300);
+    border: 1px solid color-mix(in oklab, var(--color-error-500) 30%, transparent);
+    border-radius: 3px;
+    padding: 0 2px;
 }
 
 .tickerDivider {

@@ -113,6 +113,16 @@ export function getPairingMeta(pairing) {
     return { kind: 'unknown', label: result, winner: null, decided: true, points: null };
 }
 
+export function getScoreDigits(pairing) {
+    const result = String(pairing?.result || '');
+
+    if (result === '1-0' || result === '1-0f') return { white: '1', black: '0' };
+    if (result === '0-1' || result === '0-1f') return { white: '0', black: '1' };
+    if (result === '0.5-0.5') return { white: '½', black: '½' };
+    if (result === '0-0') return { white: '0', black: '0' };
+    return null;
+}
+
 export function getStatusLabel(meta, roundComplete) {
     if (!meta) return 'PENDING';
     if (meta.kind === 'pending') return roundComplete ? 'PENDING' : 'IN PLAY';

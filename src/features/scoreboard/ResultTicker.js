@@ -11,6 +11,9 @@ function TickerItem({ item }) {
             <span className={styles.tickerBoard}>Bd {formatBoardNumber(item.boardNumber)}</span>
             <span className={item.winner === 'white' ? styles.tickerWinner : ''}>{item.whiteName}</span>
             <span className={styles.tickerScore}>{item.label}</span>
+            {(item.kind === 'forfeit-win' || item.kind === 'forfeit-loss') && (
+                <span className={styles.tickerFlag} title="Forfeit">F</span>
+            )}
             {!singlePlayer && (
                 <span className={item.winner === 'black' ? styles.tickerWinner : ''}>{item.blackName}</span>
             )}

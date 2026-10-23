@@ -330,6 +330,17 @@ export default function ScoreboardClient({ sessionId }) {
                                     flashNonce={flash?.nonce || 0}
                                 />
                             ))}
+                            {Array.from({ length: Math.max(0, fit.columns * fit.rows - boards.length) }, (_, index) => (
+                                <div
+                                    key={`filler-${index}`}
+                                    className={styles.gridFiller}
+                                    style={{ '--i': String(Math.min(boards.length + index, 24)) }}
+                                    aria-hidden="true"
+                                >
+                                    <span className={styles.gridFillerPiece}>♞</span>
+                                    <span className={styles.gridFillerText}>Swiss Pairing</span>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 </div>
