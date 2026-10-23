@@ -1226,7 +1226,7 @@ export default function PlayersTab() {
                 p.federation && `Federation="${e(p.federation)}"`,
                 p.fideId && `FideId="${e(p.fideId)}"`,
                 p.club && `Club="${e(p.club)}"`,
-                p.gender && `Sex="${e(p.gender)}"`,
+                p.gender && `Gender="${e(p.gender)}"`,
                 p.group && `Group="${e(p.group)}"`,
                 p.teamUniqueId && `TeamUniqueId="${e(p.teamUniqueId)}"`,
                 p.type && `Type="${e(p.type)}"`,
