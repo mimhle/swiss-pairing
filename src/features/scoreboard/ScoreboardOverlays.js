@@ -1,16 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
 import { Trophy } from 'lucide-react';
 import styles from './scoreboard.module.css';
-
-const CONFETTI_COLORS = [
-    'var(--color-primary-500)',
-    'var(--color-success-500)',
-    'var(--color-warning-500)',
-    'var(--color-tertiary-500)',
-    'var(--color-secondary-500)',
-];
 
 export function AmbientBackground() {
     return (
@@ -56,43 +47,6 @@ export function CompleteBanner({ roundNumber, final }) {
                     {final ? 'Final results are on the board' : 'All boards have reported'}
                 </div>
             </div>
-        </div>
-    );
-}
-
-export function CelebrationLayer({ variant = 'result' }) {
-    const pieces = useMemo(() => {
-        const count = variant === 'complete' ? 40 : variant === 'round' ? 30 : 24;
-
-        return Array.from({ length: count }, (_, index) => ({
-            id: index,
-            left: Math.random() * 100,
-            delay: Math.random() * 0.35,
-            duration: 1.2 + Math.random() * 0.8,
-            drift: (Math.random() * 2 - 1) * 100,
-            rotate: Math.random() * 360,
-            size: 6 + Math.random() * 6,
-            color: CONFETTI_COLORS[index % CONFETTI_COLORS.length],
-        }));
-    }, [variant]);
-
-    return (
-        <div className={styles.celebration} aria-hidden="true">
-            {pieces.map(piece => (
-                <span
-                    key={piece.id}
-                    className={styles.confettiPiece}
-                    style={{
-                        left: `${piece.left}%`,
-                        '--confetti-delay': `${piece.delay}s`,
-                        '--confetti-duration': `${piece.duration}s`,
-                        '--confetti-drift': `${piece.drift}px`,
-                        '--confetti-rotate': `${piece.rotate}deg`,
-                        '--confetti-size': `${piece.size}px`,
-                        '--confetti-color': piece.color,
-                    }}
-                />
-            ))}
         </div>
     );
 }

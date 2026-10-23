@@ -4,7 +4,7 @@ import { formatBoardNumber, getScoreDigits, getStatusLabel, getStatusTone } from
 import styles from './scoreboard.module.css';
 
 function getMetaText(player) {
-    return [player.rating, player.federation].filter(Boolean).join(' · ');
+    return [player.federation].filter(Boolean).join(' · ');
 }
 
 function PlayerRow({ player, side, winner }) {
@@ -25,7 +25,6 @@ function PlayerRow({ player, side, winner }) {
 export default function BoardCard({
     board,
     index,
-    density,
     roundComplete,
     isFlashing,
     flashNonce,
@@ -43,13 +42,6 @@ export default function BoardCard({
         forfeit: styles.statusForfeit,
         pending: styles.statusPending,
     }[statusTone] || styles.statusPending;
-    const dotClass = {
-        live: styles.denseStatusLive,
-        final: styles.denseStatusFinal,
-        bye: styles.denseStatusBye,
-        forfeit: styles.denseStatusForfeit,
-        pending: styles.denseStatusPending,
-    }[statusTone] || styles.denseStatusPending;
     const accentClass = winner === 'white'
         ? styles.accentWinWhite
         : winner === 'black'
@@ -59,7 +51,6 @@ export default function BoardCard({
                 : '';
     const cardClass = [
         styles.boardCard,
-        density === 'roomy' ? styles.boardCardRoomy : density === 'compact' ? styles.boardCardCompact : styles.boardCardDense,
         board.isBye ? styles.boardCardBye : '',
         isFlashing ? styles.boardCardFlashing : '',
     ].filter(Boolean).join(' ');
@@ -74,46 +65,6 @@ export default function BoardCard({
                     ? styles.matchDigitDraw
                     : ''
     );
-
-    if (density === 'dense') {
-        return (
-            <article
-                className={cardClass}
-                style={{ '--i': String(Math.min(index, 24)) }}
-                aria-label={ariaLabel}
-            >
-                <div className={styles.denseRow}>
-                    <span className={`${styles.denseStatus} ${dotClass}`} aria-hidden="true" />
-                    <span className={styles.denseBoard}>{formatBoardNumber(board.boardNumber)}</span>
-                    {singlePlayer ? (
-                        <>
-                            <span className={`${styles.denseName} ${styles.denseNameSingle}`}>{board.white.name}</span>
-                            <span className={`${styles.denseScore} ${styles.denseScoreSpecial}`}>{meta.label}</span>
-                            {meta.points !== null && (
-                                <span className={styles.denseBye}>{meta.points} PT</span>
-                            )}
-                        </>
-                    ) : (
-                        <>
-                            <span className={`${styles.denseName} ${styles.denseNameWhite} ${winner === 'white' ? styles.winnerText : winner === 'black' ? styles.loserText : ''}`}>
-                                {board.white.name}
-                            </span>
-                            <span className={`${styles.denseScore} ${isPending ? styles.densePending : ''} ${winner ? styles.denseScoreWin : ''}`}>
-                                {meta.label}
-                            </span>
-                            <span className={`${styles.denseName} ${styles.denseNameBlack} ${winner === 'black' ? styles.winnerText : winner === 'white' ? styles.loserText : ''}`}>
-                                {board.black.name}
-                            </span>
-                            {(meta.kind === 'forfeit-win' || meta.kind === 'forfeit-loss') && (
-                                <span className={styles.denseFlag} title="Forfeit">F</span>
-                            )}
-                        </>
-                    )}
-                    {isFlashing && <span key={`ring-${flashNonce}`} className={styles.flashRing} />}
-                </div>
-            </article>
-        );
-    }
 
     return (
         <article

@@ -1,9 +1,3 @@
-const FIT_DENSITIES = [
-    { name: 'roomy', minWidth: 300, minHeight: 145 },
-    { name: 'compact', minWidth: 280, minHeight: 88 },
-    { name: 'dense', minWidth: 250, minHeight: 40 },
-];
-
 const RESULT_LABELS = {
     '1-0': '1 – 0',
     '0-1': '0 – 1',
@@ -249,9 +243,13 @@ export function buildRecentResults(rounds, limit = 20) {
 
 export function computeFit(count, width, height, gap = 10) {
     const total = Math.max(0, Math.floor(Number(count) || 0));
+    const minCardWidth = 300;
+    const minCardHeight = 48;
+    const baseCardWidth = 360;
+    const baseCardHeight = 180;
 
     if (total <= 0) {
-        return { columns: 1, rows: 1, density: 'roomy' };
+        return { columns: 1, rows: 1 };
     }
 
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
@@ -259,55 +257,52 @@ export function computeFit(count, width, height, gap = 10) {
         return {
             columns,
             rows: Math.ceil(total / columns),
-            density: total <= 9 ? 'roomy' : 'compact',
         };
     }
 
-    for (const density of FIT_DENSITIES) {
-        let best = null;
-        const maxColumns = Math.min(total, 12);
+    const maxColumns = Math.min(total, 10);
+    let best = null;
 
-        for (let columns = 1; columns <= maxColumns; columns += 1) {
-            const rows = Math.ceil(total / columns);
-            const cellWidth = (width - gap * (columns - 1)) / columns;
-            const cellHeight = (height - gap * (rows - 1)) / rows;
-
-            if (cellWidth < density.minWidth || cellHeight < density.minHeight) continue;
-
-            const score = Math.min(cellWidth / density.minWidth, cellHeight / density.minHeight);
-            if (
-                !best
-                || score > best.score + 0.0001
-                || (Math.abs(score - best.score) <= 0.0001 && columns > best.columns)
-            ) {
-                best = { columns, rows, score };
-            }
-        }
-
-        if (best) {
-            return { columns: best.columns, rows: best.rows, density: density.name };
-        }
-    }
-
-    let best = { columns: 1, rows: total, score: Number.NEGATIVE_INFINITY };
-    const maxColumns = Math.min(total, 16);
-
+    // Prefer layouts where the card is wide enough for names and tall enough
+    // for two player rows. Among those, pick the largest proportional card.
     for (let columns = 1; columns <= maxColumns; columns += 1) {
         const rows = Math.ceil(total / columns);
         const cellWidth = (width - gap * (columns - 1)) / columns;
         const cellHeight = (height - gap * (rows - 1)) / rows;
-        const score = Math.min(
-            cellWidth / FIT_DENSITIES[2].minWidth,
-            cellHeight / FIT_DENSITIES[2].minHeight,
-        );
 
+        if (cellWidth < minCardWidth || cellHeight < minCardHeight) continue;
+
+        const score = Math.min(cellWidth / baseCardWidth, cellHeight / baseCardHeight);
         if (
-            score > best.score + 0.0001
+            !best
+            || score > best.score + 0.0001
             || (Math.abs(score - best.score) <= 0.0001 && columns > best.columns)
         ) {
             best = { columns, rows, score };
         }
     }
 
-    return { columns: best.columns, rows: best.rows, density: 'dense' };
+    if (best) {
+        return { columns: best.columns, rows: best.rows };
+    }
+
+    // If no layout can keep both minimums, keep every board visible and choose
+    // the layout with the largest proportional card.
+    best = null;
+    for (let columns = 1; columns <= maxColumns; columns += 1) {
+        const rows = Math.ceil(total / columns);
+        const cellWidth = (width - gap * (columns - 1)) / columns;
+        const cellHeight = (height - gap * (rows - 1)) / rows;
+        const score = Math.min(cellWidth / minCardWidth, cellHeight / minCardHeight);
+
+        if (
+            !best
+            || score > best.score + 0.0001
+            || (Math.abs(score - best.score) <= 0.0001 && columns > best.columns)
+        ) {
+            best = { columns, rows, score };
+        }
+    }
+
+    return { columns: best.columns, rows: best.rows };
 }

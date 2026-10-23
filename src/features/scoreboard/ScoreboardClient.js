@@ -5,7 +5,7 @@ import BoardCard from './BoardCard';
 import ResultTicker from './ResultTicker';
 import ScoreboardHeader from './ScoreboardHeader';
 import StatusScreen from './StatusScreen';
-import { AmbientBackground, CelebrationLayer, CompleteBanner, RoundTakeover } from './ScoreboardOverlays';
+import { AmbientBackground, CompleteBanner, RoundTakeover } from './ScoreboardOverlays';
 import useElementSize from './useElementSize';
 import useSessionPolling from './useSessionPolling';
 import {
@@ -21,7 +21,6 @@ import styles from './scoreboard.module.css';
 const RESULT_FLASH_MS = 2200;
 const ROUND_TAKEOVER_MS = 2700;
 const COMPLETE_BANNER_MS = 4200;
-const CELEBRATION_MS = 2800;
 const BOARD_GAP = 10;
 
 function prefersReducedMotion() {
@@ -39,7 +38,6 @@ export default function ScoreboardClient({ sessionId }) {
     const [roundAnnouncement, setRoundAnnouncement] = useState(null);
     const [revealNonce, setRevealNonce] = useState(0);
     const [flash, setFlash] = useState(null);
-    const [celebration, setCelebration] = useState(null);
     const [completeBanner, setCompleteBanner] = useState(null);
     const [recentResults, setRecentResults] = useState([]);
     const previousRoundRef = useRef(null);
@@ -191,7 +189,6 @@ export default function ScoreboardClient({ sessionId }) {
             const nextItems = changed.map(entry => toTickerItem(entry, roundNumber));
 
             setFlash({ nonce: Date.now(), keys: changed.map(entry => entry.key) });
-            setCelebration({ nonce: Date.now(), variant: 'result' });
             setRecentResults(previousItems => (
                 [...nextItems, ...previousItems.filter(item => !changedTickerKeys.has(item.key))].slice(0, 20)
             ));
@@ -205,7 +202,6 @@ export default function ScoreboardClient({ sessionId }) {
         if (info.isComplete && !completeShownRef.current) {
             completeShownRef.current = true;
             setCompleteBanner({ nonce: Date.now(), final: isFinal });
-            setCelebration({ nonce: Date.now(), variant: 'complete' });
         } else if (!info.isComplete) {
             completeShownRef.current = false;
         }
@@ -225,12 +221,6 @@ export default function ScoreboardClient({ sessionId }) {
         const timer = setTimeout(() => setFlash(null), RESULT_FLASH_MS);
         return () => clearTimeout(timer);
     }, [flash]);
-
-    useEffect(() => {
-        if (!celebration) return undefined;
-        const timer = setTimeout(() => setCelebration(null), CELEBRATION_MS);
-        return () => clearTimeout(timer);
-    }, [celebration]);
 
     useEffect(() => {
         if (!completeBanner) return undefined;
@@ -324,7 +314,6 @@ export default function ScoreboardClient({ sessionId }) {
                                     key={board.key}
                                     board={board}
                                     index={index}
-                                    density={fit.density}
                                     roundComplete={roundInfo.isComplete}
                                     isFlashing={Boolean(flashKeys?.has(board.key))}
                                     flashNonce={flash?.nonce || 0}
@@ -358,13 +347,6 @@ export default function ScoreboardClient({ sessionId }) {
                     key={roundAnnouncement.nonce}
                     roundNumber={roundAnnouncement.roundNumber}
                     initial={roundAnnouncement.initial}
-                />
-            )}
-
-            {celebration && (
-                <CelebrationLayer
-                    key={celebration.nonce}
-                    variant={celebration.variant}
                 />
             )}
 
