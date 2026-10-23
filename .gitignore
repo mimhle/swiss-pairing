@@ -46,3 +46,8 @@ next-env.d.ts
 *.swp
 
 /temp/
+
+# project summary (generated document for team)
+docs/PROJECT_SUMMARY.md
+
+TODO.txt

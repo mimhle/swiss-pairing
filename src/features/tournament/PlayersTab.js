@@ -309,6 +309,17 @@ const EMPTY_FILTERS = Object.fromEntries(FILTER_FIELDS.map(f => [f.key, '']));
 
 // ─── Warning helpers ─────────────────────────────────────────────────────────
 
+// Capitalizes the first letter of each word and lowercases the rest, matching
+// the Title Case rule used by the capitalization warning. Whitespace-separated
+// words only, so "jean-pierre" becomes "Jean-pierre" (accepted as Title Case).
+const toTitleCase = (value) =>
+    String(value ?? '')
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+
 const VIET_DIACRITICS = /[àáảãạăắặằẳẵâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]/i;
 
 const VIET_WORDS = new Set([
@@ -1096,6 +1107,18 @@ export default function PlayersTab() {
                     return p;
                 });
             });
+        } else if (selectedAction === 'auto_capitalize' && actionField) {
+            setPlayersWithHistory(prev => {
+                // Only apply action to visible players
+                const visibleIds = new Set(visiblePlayers.map(p => p.playerUniqueId));
+                return prev.map(p => {
+                    if (!visibleIds.has(p.playerUniqueId)) return p;
+                    const current = p[actionField];
+                    if (typeof current !== 'string') return p;
+                    const next = toTitleCase(current);
+                    return next === current ? p : { ...p, [actionField]: next };
+                });
+            });
         } else if (selectedAction === 'auto_fill_rating') {
             const start = parseInt(document.getElementById('rating_start')?.value, 10) || 1000;
             const step = parseInt(document.getElementById('rating_step')?.value, 10) || 10;
@@ -1636,12 +1659,13 @@ export default function PlayersTab() {
                             >
                                 <option value="">Actions...</option>
                                 <option value="fill_down">Fill Downward</option>
+                                <option value="auto_capitalize">Capitalize by Field</option>
                                 <option value="auto_fill_rating">Auto Fill Rating</option>
                                 <option value="auto_fill_group_gender">Fill Group by Gender</option>
                                 <option value="auto_fill_club_fed_mapping">Map Club/Fed</option>
                                 <option value="reorder_rating_name">Reorder by Rating/Name</option>
                             </select>
-                            {selectedAction === 'fill_down' && (
+                            {(selectedAction === 'fill_down' || selectedAction === 'auto_capitalize') && (
                                 <select
                                     className="text-sm bg-surface-100-900 border border-surface-200-800 rounded px-2 py-1 outline-none cursor-pointer"
                                     value={actionField}
@@ -1701,7 +1725,7 @@ export default function PlayersTab() {
                                 <button
                                     className="text-sm px-2.5 py-1 rounded preset-tonal cursor-pointer disabled:opacity-40"
                                     onClick={applyAction}
-                                    disabled={selectedAction === 'fill_down' && !actionField}
+                                    disabled={(selectedAction === 'fill_down' || selectedAction === 'auto_capitalize') && !actionField}
                                 >
                                     Apply
                                 </button>
