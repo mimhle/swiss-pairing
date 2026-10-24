@@ -7,10 +7,6 @@ export function AmbientBackground() {
     return (
         <div className={styles.ambient} aria-hidden="true">
             <div className={styles.topAccent} />
-            <div className={`${styles.orb} ${styles.orbPrimary}`} />
-            <div className={`${styles.orb} ${styles.orbSuccess}`} />
-            <div className={`${styles.orb} ${styles.orbTertiary}`} />
-            <div className={styles.sweep} />
         </div>
     );
 }
@@ -18,7 +14,6 @@ export function AmbientBackground() {
 export function RoundTakeover({ roundNumber, initial }) {
     return (
         <div className={styles.takeover} aria-hidden="true">
-            <div className={styles.takeoverGlow} />
             <div className={`${styles.takeoverContent} ${initial ? styles.takeoverInitial : ''}`}>
                 <span className={styles.takeoverKicker}>
                     {initial ? 'Live scoreboard' : 'Now pairing'}

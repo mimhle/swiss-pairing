@@ -43,9 +43,7 @@ export default function ScoreboardHeader({
         <header className={styles.header}>
             <div className={styles.headerRow}>
                 <div className={styles.brand}>
-                    <div className={styles.brandIcon} aria-hidden="true">
-                        <Swords />
-                    </div>
+                    <Swords className={styles.brandIcon} aria-hidden="true" />
                     <div className={styles.brandText}>
                         <span className={styles.brandKicker}>Swiss Pairing · Live Scoreboard</span>
                         <span className={styles.tournamentName} title={tournamentName}>
@@ -96,7 +94,7 @@ export default function ScoreboardHeader({
                 <div className={styles.progressTrack}>
                     <div
                         className={`${styles.progressFill} ${roundInfo.isComplete ? styles.progressComplete : ''}`}
-                        style={{ width: `${progressPercent}%` }}
+                        style={{ '--progress': progressPercent / 100 }}
                     />
                 </div>
                 <span className={styles.progressLabel}>{progressLabel}</span>
