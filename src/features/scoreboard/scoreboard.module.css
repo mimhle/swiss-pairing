@@ -1262,8 +1262,8 @@
     animation: takeoverIn 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.takeoverInitial .takeoverRound {
-    font-size: clamp(3rem, 14vh, 10rem);
+.takeoverInitial .takeoverRoundNumber {
+    font-size: clamp(3.1rem, 14vh, 9.5rem);
 }
 
 .takeoverKicker {
@@ -1275,21 +1275,39 @@
 }
 
 .takeoverRound {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: clamp(3.2rem, 15vh, 11rem);
-    font-weight: 900;
-    letter-spacing: -0.02em;
-    line-height: 0.82;
-    white-space: nowrap;
-    color: var(--color-surface-950-50);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(4px, 0.8vh, 12px);
     animation: roundSlam 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.takeoverRoundLabel {
+    font-size: clamp(1.6rem, 6.8vh, 4.3rem);
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    text-transform: uppercase;
+    color: var(--sb-muted-strong);
+}
+
+.takeoverRoundNumber {
+    font-size: clamp(3.4rem, 15.5vh, 10.5rem);
+    font-weight: 800;
+    letter-spacing: -0.05em;
+    line-height: 0.78;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-surface-950-50);
+    animation: roundFlight 0.55s cubic-bezier(0.55, 0, 0.2, 1) 2.1s forwards;
+    will-change: transform;
 }
 
 .takeoverLine {
     width: clamp(110px, 20vw, 320px);
     height: 2px;
     background: var(--color-primary-500);
-    animation: lineGrow 0.7s 0.15s both;
+    animation: lineGrow 2.5s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
 }
 
 .takeoverSub {
@@ -1492,14 +1510,29 @@
     }
 }
 
+@keyframes roundFlight {
+    to {
+        transform: translate(var(--flight-x, 0px), var(--flight-y, 0px)) scale(var(--flight-scale, 1));
+    }
+}
+
 @keyframes lineGrow {
-    from {
+    0% {
         opacity: 0;
         transform: scaleX(0);
     }
-    to {
+    29% {
         opacity: 1;
         transform: scaleX(1);
+    }
+    78% {
+        opacity: 1;
+        transform: scaleX(1);
+        animation-timing-function: ease-in;
+    }
+    100% {
+        opacity: 0;
+        transform: scaleX(0);
     }
 }
 

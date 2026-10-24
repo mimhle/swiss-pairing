@@ -396,7 +396,7 @@ export default function ScoreboardClient({ sessionId }) {
                 <div className={styles.main}>
                     <div className={styles.boardPane} ref={paneRef}>
                         <div
-                            key={revealNonce}
+                            key={`${revealNonce}-${cardLayout}`}
                             className={styles.boardGrid}
                             data-layout={cardLayout}
                             style={{

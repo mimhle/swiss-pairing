@@ -56,7 +56,7 @@ export default function ScoreboardHeader({
                     <div className={styles.roundText}>
                         <span className={styles.roundLabel}>{isFinal ? 'Final round' : 'Round'}</span>
                         <span className={styles.roundValue}>
-                            <span className={styles.roundNumber}>{roundNumber || '—'}</span>
+                            <span className={styles.roundNumber} data-scoreboard-round-number>{roundNumber || '—'}</span>
                             {numRounds > 0 && <span className={styles.roundTotal}>/ {numRounds}</span>}
                         </span>
                     </div>
