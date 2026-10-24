@@ -2,21 +2,18 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import BoardCard from './BoardCard';
-import ResultTicker from './ResultTicker';
 import ScoreboardHeader from './ScoreboardHeader';
 import StatusScreen from './StatusScreen';
 import { AmbientBackground, CompleteBanner, RoundTakeover } from './ScoreboardOverlays';
 import useElementSize from './useElementSize';
 import useSessionPolling from './useSessionPolling';
 import {
-    buildRecentResults,
     buildResultMap,
     computeFit,
     computeStackedFit,
     getDisplayPairings,
     getRoundInfo,
     normalizeBoard,
-    toTickerItem,
 } from './scoreboardData';
 import styles from './scoreboard.module.css';
 
@@ -48,7 +45,6 @@ export default function ScoreboardClient({ sessionId }) {
     const [flash, setFlash] = useState(null);
     const [heldBoards, setHeldBoards] = useState(null);
     const [completeBanner, setCompleteBanner] = useState(null);
-    const [recentResults, setRecentResults] = useState([]);
     const previousRoundRef = useRef(null);
     const previousResultsRef = useRef(null);
     const previousBoardsRef = useRef(new Map());
@@ -212,7 +208,6 @@ export default function ScoreboardClient({ sessionId }) {
             previousRoundRef.current = roundNumber;
             previousResultsRef.current = nextResults;
             previousBoardsRef.current = new Map(boards.map(board => [board.key, board]));
-            setRecentResults(buildRecentResults([currentRound], 20));
             if (!prefersReducedMotion()) {
                 setRoundAnnouncement({ roundNumber, nonce: Date.now(), initial: true });
             }
@@ -230,7 +225,6 @@ export default function ScoreboardClient({ sessionId }) {
             previousResultsRef.current = nextResults;
             previousBoardsRef.current = new Map(boards.map(board => [board.key, board]));
             setHeldBoards(null);
-            setRecentResults(buildRecentResults([currentRound], 20));
 
             if ((roundNumber > previousRoundNumber || isReset) && !prefersReducedMotion()) {
                 setRoundAnnouncement({ roundNumber, nonce: Date.now(), initial: isReset });
@@ -243,21 +237,11 @@ export default function ScoreboardClient({ sessionId }) {
 
         const previous = previousResultsRef.current || new Map();
         const changed = [];
-        const cleared = [];
 
         nextResults.forEach((entry, key) => {
             const old = previous.get(key);
             if (entry.decided && (!old || !old.decided || old.result !== entry.result || old.kind !== entry.kind)) {
                 changed.push(entry);
-            }
-            if (!entry.decided && old?.decided) {
-                cleared.push(old);
-            }
-        });
-
-        previous.forEach((old, key) => {
-            if (!nextResults.has(key) && old.decided) {
-                cleared.push(old);
             }
         });
 
@@ -270,21 +254,10 @@ export default function ScoreboardClient({ sessionId }) {
         previousBoardsRef.current = new Map(boards.map(board => [board.key, board]));
 
         if (changed.length) {
-            const changedTickerKeys = new Set(changed.map(entry => `${roundNumber}-${entry.key}`));
-            const nextItems = changed.map(entry => toTickerItem(entry, roundNumber));
-
             setFlash({ nonce: Date.now(), keys: changed.map(entry => entry.key) });
             if (changedBoards.size && !prefersReducedMotion()) {
                 setHeldBoards(changedBoards);
             }
-            setRecentResults(previousItems => (
-                [...nextItems, ...previousItems.filter(item => !changedTickerKeys.has(item.key))].slice(0, 20)
-            ));
-        }
-
-        if (cleared.length) {
-            const clearedTickerKeys = new Set(cleared.map(entry => `${roundNumber}-${entry.key}`));
-            setRecentResults(previousItems => previousItems.filter(item => !clearedTickerKeys.has(item.key)));
         }
 
         if (info.isComplete && !completeShownRef.current) {
@@ -435,13 +408,6 @@ export default function ScoreboardClient({ sessionId }) {
                         </div>
                     </div>
                 </div>
-
-                <ResultTicker
-                    items={recentResults}
-                    roundNumber={roundNumber}
-                    roundInfo={roundInfo}
-                    status={status}
-                />
             </div>
 
             {roundAnnouncement && (

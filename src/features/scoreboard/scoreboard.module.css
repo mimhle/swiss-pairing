@@ -502,18 +502,6 @@
     border-radius: var(--sb-radius-sm);
 }
 
-.matchSide.winner {
-    background: color-mix(in oklab, var(--color-primary-500) 9%, transparent);
-}
-
-.sideWhite.winner {
-    box-shadow: inset max(2px, 0.07em) 0 0 var(--color-primary-500);
-}
-
-.sideBlack.winner {
-    box-shadow: inset calc(0px - max(2px, 0.07em)) 0 0 var(--color-primary-500);
-}
-
 .playerId {
     flex: 0 0 var(--id-col);
     padding-right: 0.25em;
@@ -866,11 +854,6 @@
     flex: 0 0 auto;
 }
 
-.layoutStacked .matchRow.winner {
-    background: color-mix(in oklab, var(--color-primary-500) 9%, transparent);
-    box-shadow: inset 3px 0 0 var(--color-primary-500);
-}
-
 .layoutStacked .playerId {
     flex: 0 0 var(--id-col);
     padding-right: min(0.8cqw, 1.6cqh);
@@ -1002,128 +985,6 @@
 
 .boardGrid[data-layout="stacked"] .gridFillerText {
     font-size: min(2.6cqw, 5.2cqh, 9px);
-}
-
-.ticker {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: stretch;
-    min-width: 0;
-    height: clamp(30px, 4.4vh, 50px);
-    border: 1px solid var(--sb-border);
-    border-radius: var(--sb-radius);
-    background: var(--sb-panel);
-    overflow: hidden;
-}
-
-.tickerLabel {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    gap: clamp(4px, 0.5vw, 8px);
-    padding: 0 clamp(8px, 1vw, 14px);
-    border-right: 1px solid var(--sb-border);
-    background: color-mix(in oklab, var(--color-primary-500) 8%, transparent);
-    font-size: clamp(6px, 0.95vh, 10px);
-    font-weight: 900;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    white-space: nowrap;
-}
-
-.tickerRound {
-    color: var(--color-primary-600-400);
-}
-
-.tickerCount {
-    color: var(--sb-muted);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.06em;
-}
-
-.tickerViewport {
-    flex: 1 1 0;
-    min-width: 0;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    mask-image: linear-gradient(90deg, transparent, black 1.5%, black 98.5%, transparent);
-    -webkit-mask-image: linear-gradient(90deg, transparent, black 1.5%, black 98.5%, transparent);
-}
-
-.tickerTrack {
-    display: flex;
-    width: max-content;
-    animation: ticker var(--ticker-duration, 40s) linear infinite;
-}
-
-.tickerGroup {
-    display: flex;
-    align-items: center;
-    gap: clamp(12px, 1.5vw, 26px);
-    padding-right: clamp(12px, 1.5vw, 26px);
-}
-
-.tickerItem {
-    display: flex;
-    align-items: center;
-    gap: clamp(3px, 0.4vw, 7px);
-    font-size: clamp(0.6rem, 1.2vh, 0.9rem);
-    color: var(--sb-muted-strong);
-    white-space: nowrap;
-}
-
-.tickerBoard {
-    font-weight: 900;
-    color: var(--color-surface-950-50);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.03em;
-}
-
-.tickerScore {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-weight: 900;
-    color: var(--color-surface-950-50);
-}
-
-.tickerWinner {
-    color: var(--color-primary-600-400);
-    font-weight: 800;
-}
-
-.tickerFlag {
-    font-size: clamp(5px, 0.8vh, 9px);
-    font-weight: 900;
-    color: var(--color-error-700-300);
-    border: 1px solid color-mix(in oklab, var(--color-error-500) 30%, transparent);
-    border-radius: var(--sb-radius-xs);
-    padding: 0 2px;
-}
-
-.tickerDivider {
-    flex: 0 0 auto;
-    width: 4px;
-    height: 4px;
-    border-radius: 999px;
-    background: var(--sb-muted);
-    opacity: 0.4;
-}
-
-.tickerEmpty {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 1rem;
-    font-size: clamp(6px, 0.95vh, 10px);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--sb-muted);
-    font-weight: 700;
-}
-
-.tickerBlink {
-    animation: blink 1.4s ease-in-out infinite;
 }
 
 .statusScreen {
@@ -1437,15 +1298,6 @@
     }
     to {
         transform: translateX(60%);
-    }
-}
-
-@keyframes ticker {
-    from {
-        transform: translateX(0);
-    }
-    to {
-        transform: translateX(-50%);
     }
 }
 

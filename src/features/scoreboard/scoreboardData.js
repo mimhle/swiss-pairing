@@ -3,8 +3,9 @@ const RESULT_LABELS = {
     '0-1': '0 – 1',
     '0.5-0.5': '½ – ½',
     '0-0': '0 – 0',
-    '1-0f': '1 – 0',
-    '0-1f': '0 – 1',
+    '1-0f': '1F – 0',
+    '0-1f': '0 – 1F',
+    '1-1f': '1F – 1F',
 };
 
 export function formatBoardNumber(value) {
@@ -25,7 +26,7 @@ export function isPairingDecided(pairing) {
 }
 
 // Tournament forfeits are not live games: the scoreboard ignores them entirely
-// (cards, board counts and ticker).
+// (cards and board counts).
 export function getDisplayPairings(round) {
     const pairings = Array.isArray(round?.pairings) ? round.pairings : [];
     return pairings.filter(pairing => !pairing?.isTournamentForfeit);
@@ -73,6 +74,10 @@ export function getPairingMeta(pairing) {
         return { kind: 'pending', label: 'VS', winner: null, decided: false, points: null };
     }
 
+    if (result === '1-1f' || result === '1f-1f') {
+        return { kind: 'double-forfeit', label: RESULT_LABELS['1-1f'], winner: null, decided: true, points: null };
+    }
+
     if (result === '1-0' || result === '1-0f') {
         return {
             kind: result.endsWith('f') ? 'forfeit-win' : 'win',
@@ -107,8 +112,11 @@ export function getPairingMeta(pairing) {
 export function getScoreDigits(pairing) {
     const result = String(pairing?.result || '');
 
-    if (result === '1-0' || result === '1-0f') return { white: '1', black: '0' };
-    if (result === '0-1' || result === '0-1f') return { white: '0', black: '1' };
+    if (result === '1-0') return { white: '1', black: '0' };
+    if (result === '0-1') return { white: '0', black: '1' };
+    if (result === '1-0f') return { white: '1F', black: '0' };
+    if (result === '0-1f') return { white: '0', black: '1F' };
+    if (result === '1-1f' || result === '1f-1f') return { white: '1F', black: '1F' };
     if (result === '0.5-0.5') return { white: '½', black: '½' };
     if (result === '0-0') return { white: '0', black: '0' };
     return null;
@@ -178,47 +186,6 @@ export function buildResultMap(round) {
     });
 
     return map;
-}
-
-export function toTickerItem(entry, roundNumber) {
-    const singlePlayer = entry.kind === 'bye' || entry.kind === 'skip' || entry.kind === 'forfeit';
-
-    return {
-        key: `${roundNumber}-${entry.key}`,
-        roundNumber,
-        boardNumber: entry.boardNumber,
-        whiteName: entry.whiteName,
-        blackName: singlePlayer ? '' : entry.blackName,
-        label: entry.label,
-        winner: entry.winner,
-        kind: entry.kind,
-    };
-}
-
-export function buildRecentResults(rounds, limit = 20) {
-    const items = [];
-
-    (Array.isArray(rounds) ? rounds : []).forEach((round, roundIndex) => {
-        const roundNumber = Number(round?.roundNumber) || roundIndex + 1;
-        const pairings = getDisplayPairings(round);
-
-        pairings.forEach((pairing, index) => {
-            const board = normalizeBoard(pairing, index);
-            if (!board.meta.decided) return;
-
-            items.push(toTickerItem({
-                key: board.key,
-                boardNumber: board.boardNumber,
-                whiteName: board.white.name,
-                blackName: board.isBye ? '' : board.black.name,
-                label: board.meta.label,
-                winner: board.meta.winner,
-                kind: board.meta.kind,
-            }, roundNumber));
-        });
-    });
-
-    return items.slice(-limit).reverse();
 }
 
 const NAME_BUDGET = 20;
