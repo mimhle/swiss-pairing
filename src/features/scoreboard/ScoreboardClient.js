@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import BoardCard from './BoardCard';
 import ResultTicker from './ResultTicker';
 import ScoreboardHeader from './ScoreboardHeader';
@@ -19,10 +19,16 @@ import {
 } from './scoreboardData';
 import styles from './scoreboard.module.css';
 
-const RESULT_FLASH_MS = 2200;
+const RESULT_FLASH_MS = 900;
+const WIPE_SWAP_MS = 230;
 const ROUND_TAKEOVER_MS = 2700;
 const COMPLETE_BANNER_MS = 4200;
 const BOARD_GAP = 10;
+
+// The result wipe and the held (old) board must mount in the same frame as the
+// new data, otherwise the updated score paints first and the wipe looks like a
+// separate after-effect.
+const useResultFlashEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 function prefersReducedMotion() {
     return typeof window !== 'undefined'
@@ -39,10 +45,12 @@ export default function ScoreboardClient({ sessionId }) {
     const [roundAnnouncement, setRoundAnnouncement] = useState(null);
     const [revealNonce, setRevealNonce] = useState(0);
     const [flash, setFlash] = useState(null);
+    const [heldBoards, setHeldBoards] = useState(null);
     const [completeBanner, setCompleteBanner] = useState(null);
     const [recentResults, setRecentResults] = useState([]);
     const previousRoundRef = useRef(null);
     const previousResultsRef = useRef(null);
+    const previousBoardsRef = useRef(new Map());
     const initializedRef = useRef(false);
     const completeShownRef = useRef(false);
 
@@ -156,8 +164,23 @@ export default function ScoreboardClient({ sessionId }) {
     const roundStartedAt = Number(currentRound?.timestamp) || Number(session?.createdAt) || 0;
     const tournamentName = String(session?.tournamentName || '').trim() || 'Tournament';
 
-    useEffect(() => {
-        if (!session || !currentRound) return;
+    useResultFlashEffect(() => {
+        if (!session) return;
+
+        // All rounds were deleted: treat the next round as a fresh start so the
+        // "Round N" intro takeover runs again instead of being suppressed by the
+        // stale round number.
+        if (!currentRound) {
+            initializedRef.current = false;
+            previousRoundRef.current = null;
+            previousResultsRef.current = null;
+            previousBoardsRef.current = new Map();
+            setHeldBoards(null);
+            setFlash(null);
+            setRoundAnnouncement(null);
+            setCompleteBanner(null);
+            return;
+        }
 
         const pairings = getDisplayPairings(currentRound);
         if (pairings.length === 0) return;
@@ -169,6 +192,7 @@ export default function ScoreboardClient({ sessionId }) {
             initializedRef.current = true;
             previousRoundRef.current = roundNumber;
             previousResultsRef.current = nextResults;
+            previousBoardsRef.current = new Map(boards.map(board => [board.key, board]));
             setRecentResults(buildRecentResults([currentRound], 20));
             if (!prefersReducedMotion()) {
                 setRoundAnnouncement({ roundNumber, nonce: Date.now(), initial: true });
@@ -179,12 +203,18 @@ export default function ScoreboardClient({ sessionId }) {
 
         if (previousRoundRef.current !== roundNumber) {
             const previousRoundNumber = previousRoundRef.current;
+            // A drop back to round 1 is a reset (delete-all then start again).
+            // It should get the full intro even if the scoreboard polled before
+            // the session was emptied and never saw the empty state.
+            const isReset = roundNumber === 1 && Number(previousRoundNumber) > 1;
             previousRoundRef.current = roundNumber;
             previousResultsRef.current = nextResults;
+            previousBoardsRef.current = new Map(boards.map(board => [board.key, board]));
+            setHeldBoards(null);
             setRecentResults(buildRecentResults([currentRound], 20));
 
-            if (roundNumber > previousRoundNumber && !prefersReducedMotion()) {
-                setRoundAnnouncement({ roundNumber, nonce: Date.now(), initial: false });
+            if ((roundNumber > previousRoundNumber || isReset) && !prefersReducedMotion()) {
+                setRoundAnnouncement({ roundNumber, nonce: Date.now(), initial: isReset });
             }
 
             setCompleteBanner(null);
@@ -213,12 +243,21 @@ export default function ScoreboardClient({ sessionId }) {
         });
 
         previousResultsRef.current = nextResults;
+        const changedBoards = new Map();
+        changed.forEach(entry => {
+            const oldBoard = previousBoardsRef.current.get(entry.key);
+            if (oldBoard) changedBoards.set(entry.key, oldBoard);
+        });
+        previousBoardsRef.current = new Map(boards.map(board => [board.key, board]));
 
         if (changed.length) {
             const changedTickerKeys = new Set(changed.map(entry => `${roundNumber}-${entry.key}`));
             const nextItems = changed.map(entry => toTickerItem(entry, roundNumber));
 
             setFlash({ nonce: Date.now(), keys: changed.map(entry => entry.key) });
+            if (changedBoards.size && !prefersReducedMotion()) {
+                setHeldBoards(changedBoards);
+            }
             setRecentResults(previousItems => (
                 [...nextItems, ...previousItems.filter(item => !changedTickerKeys.has(item.key))].slice(0, 20)
             ));
@@ -235,7 +274,7 @@ export default function ScoreboardClient({ sessionId }) {
         } else if (!info.isComplete) {
             completeShownRef.current = false;
         }
-    }, [session, currentRound, roundNumber, isFinal]);
+    }, [session, currentRound, roundNumber, isFinal, boards]);
 
     useEffect(() => {
         if (!roundAnnouncement) return undefined;
@@ -251,6 +290,14 @@ export default function ScoreboardClient({ sessionId }) {
         const timer = setTimeout(() => setFlash(null), RESULT_FLASH_MS);
         return () => clearTimeout(timer);
     }, [flash]);
+
+    // Swap to the new board while the opaque wipe fully covers the card, then
+    // reveal it as the wipe's trailing side passes.
+    useEffect(() => {
+        if (!heldBoards) return undefined;
+        const timer = setTimeout(() => setHeldBoards(null), WIPE_SWAP_MS);
+        return () => clearTimeout(timer);
+    }, [heldBoards]);
 
     useEffect(() => {
         if (!completeBanner) return undefined;
@@ -343,6 +390,7 @@ export default function ScoreboardClient({ sessionId }) {
                                     <BoardCard
                                         key={board.key}
                                         board={board}
+                                        heldBoard={heldBoards?.get(board.key)}
                                         index={index}
                                         maxPlayerIdLength={maxPlayerIdLength}
                                         isFlashing={Boolean(flashKeys?.has(board.key))}

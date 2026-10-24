@@ -25,6 +25,12 @@
     --sb-shadow: 0 10px 26px color-mix(in oklab, var(--color-surface-950) 9%, transparent);
     --sb-grid: color-mix(in oklab, var(--color-surface-950) 5%, transparent);
     --sb-orb-opacity: 0.16;
+    --sb-wipe-band: var(--color-primary-500);
+    --sb-wipe-edge: color-mix(in oklab, var(--color-primary-500) 85%, white);
+    --sb-wipe-line: color-mix(in oklab, white 92%, var(--color-primary-200));
+    --sb-wipe-face-top: var(--color-primary-400);
+    --sb-wipe-face-mid: var(--color-primary-500);
+    --sb-wipe-face-bottom: var(--color-primary-700);
 }
 
 .stage::before {
@@ -59,6 +65,12 @@
     --sb-shadow: 0 14px 34px rgba(0, 0, 0, 0.36);
     --sb-grid: color-mix(in oklab, var(--color-surface-50) 6%, transparent);
     --sb-orb-opacity: 0.32;
+    --sb-wipe-band: var(--color-primary-400);
+    --sb-wipe-edge: color-mix(in oklab, white 92%, transparent);
+    --sb-wipe-line: color-mix(in oklab, white 94%, var(--color-primary-200));
+    --sb-wipe-face-top: var(--color-primary-500);
+    --sb-wipe-face-mid: var(--color-primary-600);
+    --sb-wipe-face-bottom: var(--color-primary-800);
 }
 
 .ambient {
@@ -433,6 +445,7 @@
 
 .boardCard {
     position: relative;
+    z-index: 0;
     min-width: 0;
     min-height: 0;
     display: flex;
@@ -481,7 +494,23 @@
 }
 
 .boardCardFlashing .matchDigit {
-    animation: scorePop 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+    background-image: linear-gradient(
+        100deg,
+        currentColor 0%,
+        currentColor 38%,
+        color-mix(in oklab, currentColor 26%, white) 46%,
+        color-mix(in oklab, currentColor 34%, white) 53%,
+        currentColor 62%,
+        currentColor 100%
+    );
+    background-size: 300% 100%;
+    background-position: 0 0;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation:
+        scorePop 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.45s both,
+        scoreShine 0.34s linear 0.46s both;
 }
 
 .gridFiller {
@@ -775,7 +804,7 @@
     inset: -4px;
     border-radius: 8px;
     background: var(--sb-glow);
-    animation: scoreFlash 0.9s ease-out both;
+    animation: scoreFlash 0.34s 0.45s ease-out both;
     pointer-events: none;
 }
 
@@ -786,7 +815,63 @@
     border-radius: inherit;
     border: 2px solid var(--color-primary-500);
     pointer-events: none;
-    animation: flashRing 1.1s ease-out both;
+    animation: flashRing 0.8s ease-out both;
+}
+
+/* Result wipe: an opaque panel sweeps left to right over the card. The old
+   result stays visible until the panel reaches it, the board swaps while the
+   card is fully covered, and the new result is revealed behind the slanted
+   trailing edge with the colour trail on that revealed side. */
+.scoreWipe {
+    --wipe-slant: min(10cqh, 40px);
+    --wipe-trail: 22cqw;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 200%;
+    z-index: 3;
+    pointer-events: none;
+    transform: translateX(-100%);
+    animation: scoreWipe 0.5s linear both;
+}
+
+.scoreWipe::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(115deg, transparent 40%, color-mix(in oklab, white 14%, transparent) 50%, transparent 60%),
+        linear-gradient(168deg, var(--sb-wipe-face-top) 0%, var(--sb-wipe-face-mid) 52%, var(--sb-wipe-face-bottom) 100%);
+    clip-path: polygon(var(--wipe-slant) 0, 0 100%, calc(100% - var(--wipe-slant)) 100%, 100% 0);
+}
+
+.scoreWipe::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: calc(100% - var(--wipe-slant));
+    width: var(--wipe-trail);
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in oklab, var(--sb-wipe-band) 24%, transparent) 40%,
+        color-mix(in oklab, var(--sb-wipe-band) 60%, transparent) 82%,
+        var(--sb-wipe-edge) 100%
+    );
+    clip-path: polygon(0 0, 100% 0, calc(100% - var(--wipe-slant)) 100%, 0 100%);
+}
+
+.scoreWipeLine {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: calc(var(--wipe-slant) + 2px);
+    background: linear-gradient(180deg, transparent, var(--sb-wipe-line) 10%, var(--sb-wipe-line) 90%, transparent);
+    clip-path: polygon(var(--wipe-slant) 0, 100% 0, calc(100% - var(--wipe-slant)) 100%, 0 100%);
+    filter: drop-shadow(0 0 6px var(--sb-wipe-line)) drop-shadow(0 0 14px var(--sb-wipe-line));
 }
 
 .byeBody {
@@ -1304,6 +1389,24 @@
     100% {
         opacity: 0;
         transform: scale(1.035);
+    }
+}
+
+@keyframes scoreWipe {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(60%);
+    }
+}
+
+@keyframes scoreShine {
+    from {
+        background-position: 100% 0;
+    }
+    to {
+        background-position: 0% 0;
     }
 }
 

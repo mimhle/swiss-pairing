@@ -31,16 +31,18 @@ function PlayerRow({ player, side, winner }) {
 
 export default function BoardCard({
     board,
+    heldBoard,
     index,
     maxPlayerIdLength,
     isFlashing,
     flashNonce,
 }) {
+    const shownBoard = heldBoard || board;
     const idDigits = Math.min(4, Math.max(2, Number(maxPlayerIdLength) || 2));
-    const meta = board.meta;
+    const meta = shownBoard.meta;
     const winner = meta.winner;
     const isPending = meta.kind === 'pending';
-    const singlePlayer = board.isBye || meta.kind === 'forfeit';
+    const singlePlayer = shownBoard.isBye || meta.kind === 'forfeit';
     const accentClass = winner === 'white'
         ? styles.accentWinWhite
         : winner === 'black'
@@ -50,13 +52,13 @@ export default function BoardCard({
                 : '';
     const cardClass = [
         styles.boardCard,
-        board.isBye ? styles.boardCardBye : '',
+        shownBoard.isBye ? styles.boardCardBye : '',
         isFlashing ? styles.boardCardFlashing : '',
     ].filter(Boolean).join(' ');
     const ariaLabel = singlePlayer
-        ? `${board.white.name}. ${meta.label}.`
-        : `Board ${board.boardNumber}. ${board.white.name} versus ${board.black.name}. ${meta.label}.`;
-    const digits = getScoreDigits(board.raw);
+        ? `${board.white.name}. ${board.meta.label}.`
+        : `Board ${board.boardNumber}. ${board.white.name} versus ${board.black.name}. ${board.meta.label}.`;
+    const digits = getScoreDigits(shownBoard.raw);
     const digitClass = side => (
         winner === side
             ? styles.matchDigitWin
@@ -69,8 +71,8 @@ export default function BoardCard({
 
     const boardTag = (
         <span className={styles.boardTag} aria-hidden="true">
-            <span className={styles.boardTab}>{formatBoardNumber(board.boardNumber)}</span>
-            {board.group && <span className={styles.boardGroup}>{board.group}</span>}
+            <span className={styles.boardTab}>{formatBoardNumber(shownBoard.boardNumber)}</span>
+            {shownBoard.group && <span className={styles.boardGroup}>{shownBoard.group}</span>}
         </span>
     );
 
@@ -83,7 +85,7 @@ export default function BoardCard({
         >
             {singlePlayer ? (
                 <div className={styles.byeBody}>
-                    <PlayerRow player={board.white} side="white" winner={winner} />
+                    <PlayerRow player={shownBoard.white} side="white" winner={winner} />
                     <div className={styles.byeScore}>
                         <span className={styles.byeLabel}>{meta.label}</span>
                         {meta.points !== null && <span className={styles.byePoints}>{meta.points} PT</span>}
@@ -92,8 +94,8 @@ export default function BoardCard({
             ) : (
                 <div className={styles.matchBody}>
                     <div className={styles.matchPlayers}>
-                        <PlayerRow player={board.white} side="white" winner={winner} />
-                        <PlayerRow player={board.black} side="black" winner={winner} />
+                        <PlayerRow player={shownBoard.white} side="white" winner={winner} />
+                        <PlayerRow player={shownBoard.black} side="black" winner={winner} />
                     </div>
 
                     <div className={`${styles.matchScore} ${isPending ? styles.matchScorePending : ''}`}>
@@ -124,7 +126,14 @@ export default function BoardCard({
                 <span className={styles.accentBlack} />
             </div>
 
-            {isFlashing && <span key={`ring-${flashNonce}`} className={styles.flashRing} />}
+            {isFlashing && (
+                <>
+                    <span key={`wipe-${flashNonce}`} className={styles.scoreWipe} aria-hidden="true">
+                        <span className={styles.scoreWipeLine} />
+                    </span>
+                    <span key={`ring-${flashNonce}`} className={styles.flashRing} />
+                </>
+            )}
         </article>
     );
 }
