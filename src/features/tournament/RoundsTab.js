@@ -3,9 +3,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
-import QRCode from 'qrcode';
 import { useTournament } from '@/context/TournamentContext';
-import { Swords, Play, Settings, ChevronRight, ChevronLeft, ChevronDown, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download, UserX, RotateCcw, X, Wifi, Loader2, QrCode, Monitor, ExternalLink } from 'lucide-react';
+import { Swords, Play, Settings, ChevronRight, ChevronLeft, ChevronDown, AlertTriangle, CheckCircle2, User, Info, Building2, Globe, GraduationCap, Users, Upload, FileUp, ArrowRight, ArrowLeft, Download, UserX, RotateCcw, X, Radio, Loader2 } from 'lucide-react';
 import { Dialog, Tooltip, Portal, Menu } from '@skeletonlabs/skeleton-react';
 import TournamentConfigModal from '@/components/modals/TournamentConfigModal';
 import RoundSetupModal from '@/components/modals/RoundSetupModal';
@@ -13,6 +12,7 @@ import ConfirmationModal from '@/components/modals/ConfirmationModal';
 import ManualPairingModal from '@/components/modals/ManualPairingModal';
 import PlayerRoundHistoryModal from '@/components/modals/PlayerRoundHistoryModal';
 import SwissManagerExportModal from '@/components/modals/SwissManagerExportModal';
+import LiveSessionModal from '@/components/modals/LiveSessionModal';
 import { exportTournamentTrf, generatePairings } from '@/lib/pairingEngine';
 import { loadPlayers } from '@/lib/tournamentStore';
 import { SCORE_HEADER_FIELD_MAP, SCORE_TARGET_OPTIONS } from '@/lib/knownFields';
@@ -35,6 +35,9 @@ const DEFAULT_SCORE_ROUND_OPTIONS = {
 };
 
 const createRoundTimestamp = () => Date.now();
+
+// Legacy storage key name kept so active live sessions survive the button/modal rename.
+const getLiveSessionStorageKey = (tournamentId) => `remoteSessionId_${tournamentId}`;
 
 function nextUniqueScoreColumnMap(prev, columnIndex, field) {
     const next = { ...prev, [columnIndex]: field };
@@ -818,16 +821,13 @@ export default function RoundsTab() {
     const scoreFileInputRef = useRef(null);
     const roundSelectorRef = useRef(null);
     
-    // Remote session state
-    const [remoteSessionId, setRemoteSessionId] = useState(null);
-    const [remoteSessionUrl, setRemoteSessionUrl] = useState('');
-    const [showRemoteSessionModal, setShowRemoteSessionModal] = useState(false);
-    const [isGeneratingSession, setIsGeneratingSession] = useState(false);
-    const [remoteQrCodeDataUrl, setRemoteQrCodeDataUrl] = useState('');
-    const [scoreboardCopied, setScoreboardCopied] = useState(false);
+    // Live session state
+    const [liveSessionId, setLiveSessionId] = useState(null);
+    const [showLiveSessionModal, setShowLiveSessionModal] = useState(false);
+    const [isStartingLiveSession, setIsStartingLiveSession] = useState(false);
     const lastDirectorUpdateRef = useRef(0);
 
-    const getRemoteSessionMeta = () => {
+    const getLiveSessionMeta = () => {
         const activeTournament = tournaments.find(tournament => tournament.id === activeTournamentId);
         return {
             tournamentName: activeTournament?.name || tournamentConfig?.name || 'Tournament',
@@ -853,37 +853,34 @@ export default function RoundsTab() {
 
     const currentRound = rounds[currentRoundIdx];
     const isLatestRound = currentRoundIdx === rounds.length - 1 || rounds.length === 0;
-    const scoreboardUrl = remoteSessionUrl
-        ? remoteSessionUrl.replace(/\/arbiter\//, '/scoreboard/')
-        : '';
+    const latestLiveRound = rounds.length ? rounds[rounds.length - 1] : null;
+    const liveRoundNumber = Number(latestLiveRound?.roundNumber) || rounds.length || 0;
 
-    // Load active remote session from localStorage when round changes
+    // Load an active live session from localStorage when the tournament changes
     useEffect(() => {
         if (!activeTournamentId) return;
-        const storageKey = `remoteSessionId_${activeTournamentId}`;
-        const savedSessionId = localStorage.getItem(storageKey);
-        
+        const savedSessionId = localStorage.getItem(getLiveSessionStorageKey(activeTournamentId));
+
         if (savedSessionId) {
-            setRemoteSessionId(savedSessionId);
-            setRemoteSessionUrl(`${window.location.origin}/arbiter/${savedSessionId}`);
+            setLiveSessionId(savedSessionId);
         } else {
-            setRemoteSessionId(null);
-            setRemoteSessionUrl('');
-            setShowRemoteSessionModal(false);
+            setLiveSessionId(null);
+            setShowLiveSessionModal(false);
         }
     }, [activeTournamentId]);
 
     useEffect(() => {
-        if (!remoteSessionId) return;
+        if (!liveSessionId) return;
         
         const pollSession = async () => {
             try {
-                const res = await fetch(`/api/arbiter/session/${remoteSessionId}`);
+                const res = await fetch(`/api/arbiter/session/${liveSessionId}`);
                 if (!res.ok) {
                     if (res.status === 404) {
-                        setRemoteSessionId(null);
+                        setLiveSessionId(null);
+                        setShowLiveSessionModal(false);
                         if (activeTournamentId) {
-                            localStorage.removeItem(`remoteSessionId_${activeTournamentId}`);
+                            localStorage.removeItem(getLiveSessionStorageKey(activeTournamentId));
                         }
                     }
                     return;
@@ -925,18 +922,10 @@ export default function RoundsTab() {
 
         const intervalId = setInterval(pollSession, 3000);
         return () => clearInterval(intervalId);
-    }, [remoteSessionId, rounds, updateRounds, activeTournamentId]);
+    }, [liveSessionId, rounds, updateRounds, activeTournamentId]);
 
-    useEffect(() => {
-        if (remoteSessionUrl) {
-            QRCode.toDataURL(remoteSessionUrl, { margin: 1, width: 256 })
-                .then(url => setRemoteQrCodeDataUrl(url))
-                .catch(err => console.error(err));
-        }
-    }, [remoteSessionUrl]);
-
-    const startRemoteSession = async () => {
-        setIsGeneratingSession(true);
+    const startLiveSession = async () => {
+        setIsStartingLiveSession(true);
         try {
             const enrichedRounds = rounds.map(round => ({
                 ...round,
@@ -953,39 +942,37 @@ export default function RoundsTab() {
                 body: JSON.stringify({
                     tournamentId: activeTournamentId,
                     rounds: enrichedRounds,
-                    ...getRemoteSessionMeta()
+                    ...getLiveSessionMeta()
                 })
             });
-            const data = await res.json();
-            
-            if (data.sessionId) {
-                setRemoteSessionId(data.sessionId);
-                const url = `${window.location.origin}/arbiter/${data.sessionId}`;
-                setRemoteSessionUrl(url);
-                setShowRemoteSessionModal(true);
-                localStorage.setItem(`remoteSessionId_${activeTournamentId}`, data.sessionId);
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok || !data.sessionId) {
+                throw new Error(data?.error || 'Failed to start the live session.');
             }
+
+            setLiveSessionId(data.sessionId);
+            localStorage.setItem(getLiveSessionStorageKey(activeTournamentId), data.sessionId);
         } catch (err) {
             console.error(err);
-            alert("Failed to start remote session.");
+            throw err;
         } finally {
-            setIsGeneratingSession(false);
+            setIsStartingLiveSession(false);
         }
     };
     
-    const closeRemoteSession = async () => {
-        if (!remoteSessionId) return;
-        try {
-            await fetch(`/api/arbiter/session/${remoteSessionId}`, { method: 'DELETE' });
-            setRemoteSessionId(null);
-            setShowRemoteSessionModal(false);
-            setRemoteSessionUrl('');
-            setRemoteQrCodeDataUrl('');
-            if (activeTournamentId) {
-                localStorage.removeItem(`remoteSessionId_${activeTournamentId}`);
-            }
-        } catch (err) {
-            console.error(err);
+    const endLiveSession = async () => {
+        if (!liveSessionId) return;
+
+        const res = await fetch(`/api/arbiter/session/${liveSessionId}`, { method: 'DELETE' });
+        if (!res.ok) {
+            throw new Error('Failed to end the live session.');
+        }
+
+        setLiveSessionId(null);
+        setShowLiveSessionModal(false);
+        if (activeTournamentId) {
+            localStorage.removeItem(getLiveSessionStorageKey(activeTournamentId));
         }
     };
 
@@ -1394,7 +1381,7 @@ export default function RoundsTab() {
 
             const newRounds = [...roundsWithPlayerSkips, newRound];
             updateRounds(newRounds);
-            syncAllRoundsToRemote(newRounds);
+            syncAllRoundsToSession(newRounds);
             clearPreRoundForfeitAssignments();
         } catch {
             showAlert('Pairing Failed', 'Could not generate pairings for this round.');
@@ -1613,7 +1600,7 @@ export default function RoundsTab() {
                     ...rounds.slice(currentRoundIdx + 1),
                 ];
                 updateRounds(updatedRounds);
-                syncAllRoundsToRemote(updatedRounds);
+                syncAllRoundsToSession(updatedRounds);
             } else {
                 const newRound = {
                     roundNumber,
@@ -1624,7 +1611,7 @@ export default function RoundsTab() {
                 };
                 const newRounds = [...roundsWithPlayerSkips, newRound];
                 updateRounds(newRounds);
-                syncAllRoundsToRemote(newRounds);
+                syncAllRoundsToSession(newRounds);
             }
 
             setShowManualPairingModal(false);
@@ -1641,8 +1628,8 @@ export default function RoundsTab() {
         }
     };
 
-    const syncAllRoundsToRemote = (roundsToSync) => {
-        if (!remoteSessionId || !roundsToSync) return;
+    const syncAllRoundsToSession = (roundsToSync) => {
+        if (!liveSessionId || !roundsToSync) return;
         lastDirectorUpdateRef.current = Date.now();
         const enrichedRounds = roundsToSync.map(round => ({
             ...round,
@@ -1652,14 +1639,14 @@ export default function RoundsTab() {
                 return { ...p, whitePlayer, blackPlayer };
             })
         }));
-        fetch(`/api/arbiter/session/${remoteSessionId}`, {
+        fetch(`/api/arbiter/session/${liveSessionId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 rounds: enrichedRounds,
-                ...getRemoteSessionMeta()
+                ...getLiveSessionMeta()
             })
-        }).catch(err => console.error("Failed to sync Director update to Arbiter", err));
+        }).catch(err => console.error("Failed to sync Director update to live session", err));
     };
 
     const updateResult = (pairingId, result) => {
@@ -1676,7 +1663,7 @@ export default function RoundsTab() {
             return r;
         });
         updateRounds(updatedRounds);
-        syncAllRoundsToRemote(updatedRounds);
+        syncAllRoundsToSession(updatedRounds);
     };
 
     const resetCurrentRoundScores = () => {
@@ -1702,7 +1689,7 @@ export default function RoundsTab() {
                     return r;
                 });
                 updateRounds(updatedRounds);
-                syncAllRoundsToRemote(updatedRounds);
+                syncAllRoundsToSession(updatedRounds);
             },
             'error',
             'Reset Scores'
@@ -2099,7 +2086,7 @@ export default function RoundsTab() {
             });
         }
         updateRounds(updatedRounds);
-        syncAllRoundsToRemote(updatedRounds);
+        syncAllRoundsToSession(updatedRounds);
         setScoreImportOpen(false);
         resetScoreImportState();
         const importedRoundLabel = importedRounds.size
@@ -2250,7 +2237,7 @@ export default function RoundsTab() {
                     const keptRounds = rounds.slice(0, nextRoundCount);
                     updateTournamentConfig(normalizedConfig);
                     updateRounds(keptRounds);
-                    syncAllRoundsToRemote(keptRounds);
+                    syncAllRoundsToSession(keptRounds);
                     setCurrentRoundIdx(keptRounds.length ? keptRounds.length - 1 : 0);
                     setShowConfigModal(false);
                 },
@@ -2404,7 +2391,7 @@ export default function RoundsTab() {
                         }));
 
                     updateRounds(remainingRounds);
-                    syncAllRoundsToRemote(remainingRounds);
+                    syncAllRoundsToSession(remainingRounds);
                     setCurrentRoundIdx(remainingRounds.length ? remainingRounds.length - 1 : 0);
                     setShowSetupModal(false);
                 } catch (error) {
@@ -2668,16 +2655,15 @@ export default function RoundsTab() {
                     )}
                 </div>
                 <div className="flex gap-2">
-                    <button 
-                        onClick={() => {
-                            if (remoteSessionId) setShowRemoteSessionModal(true);
-                            else startRemoteSession();
-                        }}
-                        disabled={isGeneratingSession}
-                        className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${remoteSessionId ? 'border-2 border-success-500 text-success-500 hover:bg-success-500/10 font-bold' : 'preset-tonal'}`}
+                    <button
+                        type="button"
+                        onClick={() => setShowLiveSessionModal(true)}
+                        className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${liveSessionId ? 'border-2 border-success-500 text-success-500 hover:bg-success-500/10 font-bold' : 'preset-tonal'}`}
+                        title={liveSessionId ? 'Open live session control panel' : 'Go live'}
+                        aria-haspopup="dialog"
                     >
-                        {isGeneratingSession ? <Loader2 size={14} className="animate-spin" /> : (remoteSessionId ? <Wifi size={14} className="animate-pulse" /> : <Wifi size={14} />)}
-                        {remoteSessionId ? 'Active Remote' : 'Remote Input'}
+                        <Radio size={14} className={liveSessionId ? 'animate-pulse' : ''} />
+                        {liveSessionId ? 'Live' : 'Go Live'}
                     </button>
                     <Dialog
                         open={scoreImportOpen}
@@ -3406,115 +3392,17 @@ export default function RoundsTab() {
                 showAlert={showAlert}
             />
 
-            <Dialog open={showRemoteSessionModal} onOpenChange={({ open }) => setShowRemoteSessionModal(open)}>
-                <Portal>
-                    <Dialog.Backdrop className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" />
-                    <Dialog.Positioner className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                        <Dialog.Content className="bg-surface-100-900 border border-surface-200-800 rounded-lg p-6 w-full max-w-sm shadow-xl space-y-4">
-                            <div className="flex justify-between items-center">
-                                <Dialog.Title className="text-lg font-bold flex items-center gap-2">
-                                    <QrCode className="text-primary-500" size={20} />
-                                    Remote Session
-                                </Dialog.Title>
-                                <Dialog.CloseTrigger className="p-1.5 hover:bg-surface-200-800 rounded text-surface-500 hover:text-surface-900 dark:hover:text-surface-50 transition-colors cursor-pointer">
-                                    <X size={18} />
-                                </Dialog.CloseTrigger>
-                            </div>
-                            <div className="text-sm text-surface-600-400">
-                                Scan the QR code or share this link with the arbiter. The session is active in the background.
-                            </div>
-                            {remoteQrCodeDataUrl ? (
-                                <div className="flex justify-center bg-white p-2 rounded-lg">
-                                    <img src={remoteQrCodeDataUrl} alt="Session QR Code" className="w-48 h-48" />
-                                </div>
-                            ) : (
-                                <div className="flex justify-center items-center h-48">
-                                    <Loader2 className="w-8 h-8 animate-spin text-surface-500" />
-                                </div>
-                            )}
-                            <div className="flex items-center gap-2">
-                                <input 
-                                    type="text" 
-                                    readOnly 
-                                    value={remoteSessionUrl} 
-                                    className="flex-1 bg-surface-200-800 border-surface-300-700 text-xs px-2 py-1.5 rounded outline-none text-surface-900 dark:text-surface-50"
-                                />
-                                <button 
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(remoteSessionUrl);
-                                    }}
-                                    className="btn preset-tonal text-xs px-3 py-1.5"
-                                >
-                                    Copy
-                                </button>
-                            </div>
-
-                            {scoreboardUrl && (
-                                <div className="border-t border-surface-200-800 pt-3 space-y-2">
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                            <p className="text-sm font-semibold flex items-center gap-2">
-                                                <Monitor size={16} className="text-primary-500" />
-                                                Live Scoreboard
-                                            </p>
-                                            <p className="text-xs text-surface-600-400">
-                                                Unlisted, read-only display for a second monitor.
-                                            </p>
-                                        </div>
-                                        <a
-                                            href={scoreboardUrl}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="btn preset-tonal-primary text-xs px-3 py-1.5 flex items-center gap-1.5 shrink-0"
-                                        >
-                                            Open
-                                            <ExternalLink size={12} />
-                                        </a>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="text"
-                                            readOnly
-                                            value={scoreboardUrl}
-                                            className="flex-1 min-w-0 bg-surface-200-800 border-surface-300-700 text-xs px-2 py-1.5 rounded outline-none text-surface-900 dark:text-surface-50"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={async () => {
-                                                try {
-                                                    await navigator.clipboard.writeText(scoreboardUrl);
-                                                    setScoreboardCopied(true);
-                                                    window.setTimeout(() => setScoreboardCopied(false), 1600);
-                                                } catch (error) {
-                                                    console.error('Failed to copy scoreboard link:', error);
-                                                }
-                                            }}
-                                            className="btn preset-tonal text-xs px-3 py-1.5 shrink-0"
-                                        >
-                                            {scoreboardCopied ? 'Copied' : 'Copy'}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="pt-2 flex justify-end gap-2">
-                                <button 
-                                    onClick={() => setShowRemoteSessionModal(false)}
-                                    className="btn preset-tonal"
-                                >
-                                    Hide
-                                </button>
-                                <button 
-                                    onClick={closeRemoteSession}
-                                    className="btn bg-red-600 text-white hover:bg-red-700 font-semibold shadow-sm"
-                                >
-                                    Close Session
-                                </button>
-                            </div>
-                        </Dialog.Content>
-                    </Dialog.Positioner>
-                </Portal>
-            </Dialog>
+            <LiveSessionModal
+                open={showLiveSessionModal}
+                onClose={() => setShowLiveSessionModal(false)}
+                sessionId={liveSessionId}
+                tournamentName={getLiveSessionMeta().tournamentName}
+                roundNumber={liveRoundNumber}
+                numRounds={Number(tournamentConfig?.numRounds) || 0}
+                isStarting={isStartingLiveSession}
+                onStartSession={startLiveSession}
+                onEndSession={endLiveSession}
+            />
 
             {confirmationModal}
         </div>
