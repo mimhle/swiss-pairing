@@ -1,7 +1,7 @@
 'use client';
 
 import { Maximize2, Minimize2, Swords, Trophy } from 'lucide-react';
-import { formatClock, formatSyncAge } from './scoreboardData';
+import { formatClock } from './scoreboardData';
 import styles from './scoreboard.module.css';
 
 export default function ScoreboardHeader({
@@ -12,7 +12,6 @@ export default function ScoreboardHeader({
     now,
     roundStartedAt,
     status,
-    lastSync,
     isFinal,
     isFullscreen,
     onToggleFullscreen,
@@ -79,7 +78,6 @@ export default function ScoreboardHeader({
                             <span className={`${styles.liveDot} ${liveWarn ? styles.liveDotWarn : ''}`} />
                             {liveLabel}
                         </span>
-                        <span className={styles.syncAge}>{formatSyncAge(now, lastSync)}</span>
                     </div>
 
                     <button

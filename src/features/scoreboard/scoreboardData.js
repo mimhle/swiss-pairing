@@ -20,22 +20,19 @@ export function formatClock(milliseconds) {
     return [hours, minutes, seconds].map(part => String(part).padStart(2, '0')).join(':');
 }
 
-export function formatSyncAge(now, lastSync) {
-    if (!lastSync) return 'WAITING';
-    const seconds = Math.max(0, Math.floor(((Number(now) || 0) - lastSync) / 1000));
-    if (seconds < 2) return 'JUST NOW';
-    if (seconds < 60) return `${seconds}S AGO`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}M AGO`;
-    return `${Math.floor(minutes / 60)}H AGO`;
-}
-
 export function isPairingDecided(pairing) {
     return Boolean(pairing?.isBye || pairing?.isTournamentForfeit || pairing?.result);
 }
 
-export function getRoundInfo(round) {
+// Tournament forfeits are not live games: the scoreboard ignores them entirely
+// (cards, board counts and ticker).
+export function getDisplayPairings(round) {
     const pairings = Array.isArray(round?.pairings) ? round.pairings : [];
+    return pairings.filter(pairing => !pairing?.isTournamentForfeit);
+}
+
+export function getRoundInfo(round) {
+    const pairings = getDisplayPairings(round);
     const total = pairings.length;
     const decided = pairings.reduce((count, pairing) => count + (isPairingDecided(pairing) ? 1 : 0), 0);
 
@@ -117,23 +114,6 @@ export function getScoreDigits(pairing) {
     return null;
 }
 
-export function getStatusLabel(meta, roundComplete) {
-    if (!meta) return 'PENDING';
-    if (meta.kind === 'pending') return roundComplete ? 'PENDING' : 'IN PLAY';
-    if (meta.kind === 'bye') return 'BYE';
-    if (meta.kind === 'skip') return 'SKIP';
-    if (meta.kind === 'forfeit' || meta.kind === 'forfeit-win' || meta.kind === 'forfeit-loss') return 'FORFEIT';
-    return 'FINAL';
-}
-
-export function getStatusTone(meta) {
-    if (!meta) return 'pending';
-    if (meta.kind === 'pending') return 'live';
-    if (meta.kind === 'bye' || meta.kind === 'skip') return 'bye';
-    if (meta.kind === 'forfeit' || meta.kind === 'forfeit-win' || meta.kind === 'forfeit-loss') return 'forfeit';
-    return 'final';
-}
-
 function getPlayerName(player, fallbackId, fallbackName) {
     const name = String(player?.name || fallbackName || '').trim();
     if (name) return name;
@@ -179,7 +159,7 @@ export function normalizeBoard(pairing, index) {
 
 export function buildResultMap(round) {
     const map = new Map();
-    const pairings = Array.isArray(round?.pairings) ? round.pairings : [];
+    const pairings = getDisplayPairings(round);
 
     pairings.forEach((pairing, index) => {
         const board = normalizeBoard(pairing, index);
@@ -220,7 +200,7 @@ export function buildRecentResults(rounds, limit = 20) {
 
     (Array.isArray(rounds) ? rounds : []).forEach((round, roundIndex) => {
         const roundNumber = Number(round?.roundNumber) || roundIndex + 1;
-        const pairings = Array.isArray(round?.pairings) ? round.pairings : [];
+        const pairings = getDisplayPairings(round);
 
         pairings.forEach((pairing, index) => {
             const board = normalizeBoard(pairing, index);

@@ -1,19 +1,26 @@
 'use client';
 
-import { formatBoardNumber, getScoreDigits, getStatusLabel, getStatusTone } from './scoreboardData';
+import { formatBoardNumber, getScoreDigits } from './scoreboardData';
 import styles from './scoreboard.module.css';
 
 function getMetaText(player) {
     return [player.federation].filter(Boolean).join(' · ');
 }
 
+function formatPlayerId(id) {
+    const value = String(id ?? '').trim();
+    return value;
+}
+
 function PlayerRow({ player, side, winner }) {
     const isWhite = side === 'white';
     const metaText = getMetaText(player);
+    const playerId = formatPlayerId(player.id);
     const stateClass = winner === side ? styles.winner : winner ? styles.loser : '';
 
     return (
         <div className={`${styles.matchRow} ${stateClass}`}>
+            {playerId && <span className={styles.playerId}>{playerId}</span>}
             <span className={`${styles.piece} ${isWhite ? styles.pieceWhite : styles.pieceBlack}`} aria-hidden="true" />
             {player.title && <span className={styles.titleBadge}>{player.title}</span>}
             <span className={styles.playerName}>{player.name}</span>
@@ -25,23 +32,15 @@ function PlayerRow({ player, side, winner }) {
 export default function BoardCard({
     board,
     index,
-    roundComplete,
+    maxPlayerIdLength,
     isFlashing,
     flashNonce,
 }) {
+    const idDigits = Math.min(4, Math.max(2, Number(maxPlayerIdLength) || 2));
     const meta = board.meta;
     const winner = meta.winner;
     const isPending = meta.kind === 'pending';
     const singlePlayer = board.isBye || meta.kind === 'forfeit';
-    const statusTone = getStatusTone(meta);
-    const statusLabel = getStatusLabel(meta, roundComplete);
-    const statusClass = {
-        live: styles.statusLive,
-        final: styles.statusFinal,
-        bye: styles.statusBye,
-        forfeit: styles.statusForfeit,
-        pending: styles.statusPending,
-    }[statusTone] || styles.statusPending;
     const accentClass = winner === 'white'
         ? styles.accentWinWhite
         : winner === 'black'
@@ -54,7 +53,9 @@ export default function BoardCard({
         board.isBye ? styles.boardCardBye : '',
         isFlashing ? styles.boardCardFlashing : '',
     ].filter(Boolean).join(' ');
-    const ariaLabel = `Board ${board.boardNumber}. ${board.white.name}${singlePlayer ? '' : ` versus ${board.black.name}`}. ${meta.label}.`;
+    const ariaLabel = singlePlayer
+        ? `${board.white.name}. ${meta.label}.`
+        : `Board ${board.boardNumber}. ${board.white.name} versus ${board.black.name}. ${meta.label}.`;
     const digits = getScoreDigits(board.raw);
     const digitClass = side => (
         winner === side
@@ -66,20 +67,20 @@ export default function BoardCard({
                     : ''
     );
 
+    const boardTag = (
+        <span className={styles.boardTag} aria-hidden="true">
+            <span className={styles.boardTab}>{formatBoardNumber(board.boardNumber)}</span>
+            {board.group && <span className={styles.boardGroup}>{board.group}</span>}
+        </span>
+    );
+
     return (
         <article
             className={cardClass}
+            data-id-digits={idDigits}
             style={{ '--i': String(Math.min(index, 24)) }}
             aria-label={ariaLabel}
         >
-            <div className={styles.cardTop}>
-                <div className={styles.cardTopLeft}>
-                    <span className={styles.boardNo}>Board {formatBoardNumber(board.boardNumber)}</span>
-                    {board.group && <span className={styles.groupChip}>{board.group}</span>}
-                </div>
-                <span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span>
-            </div>
-
             {singlePlayer ? (
                 <div className={styles.byeBody}>
                     <PlayerRow player={board.white} side="white" winner={winner} />
@@ -96,15 +97,13 @@ export default function BoardCard({
                     </div>
 
                     <div className={`${styles.matchScore} ${isPending ? styles.matchScorePending : ''}`}>
+                        {boardTag}
                         {isPending ? (
-                            <div className={styles.matchVs}>
-                                <span>VS</span>
-                                <span className={styles.pendingDots} aria-hidden="true">
-                                    <i />
-                                    <i />
-                                    <i />
-                                </span>
-                            </div>
+                            <span className={styles.pendingDots} aria-hidden="true">
+                                <i />
+                                <i />
+                                <i />
+                            </span>
                         ) : (
                             <>
                                 <span className={`${styles.matchDigit} ${digitClass('white')}`}>

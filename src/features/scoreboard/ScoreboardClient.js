@@ -12,6 +12,7 @@ import {
     buildRecentResults,
     buildResultMap,
     computeFit,
+    getDisplayPairings,
     getRoundInfo,
     normalizeBoard,
     toTickerItem,
@@ -30,7 +31,7 @@ function prefersReducedMotion() {
 }
 
 export default function ScoreboardClient({ sessionId }) {
-    const { session, status, error, lastSync } = useSessionPolling(sessionId);
+    const { session, status, error } = useSessionPolling(sessionId);
     const [now, setNow] = useState(0);
     const [paneRef, paneSize] = useElementSize();
     const stageRef = useRef(null);
@@ -114,10 +115,10 @@ export default function ScoreboardClient({ sessionId }) {
     const roundNumber = Number(currentRound?.roundNumber) || rounds.length || 0;
     const numRounds = Number(session?.numRounds) || 0;
     const roundInfo = useMemo(() => getRoundInfo(currentRound), [currentRound]);
-    const boards = useMemo(() => {
-        const pairings = Array.isArray(currentRound?.pairings) ? currentRound.pairings : [];
-        return pairings.map((pairing, index) => normalizeBoard(pairing, index));
-    }, [currentRound]);
+    const boards = useMemo(
+        () => getDisplayPairings(currentRound).map((pairing, index) => normalizeBoard(pairing, index)),
+        [currentRound],
+    );
     const maxNameLength = useMemo(() => {
         let max = 0;
         boards.forEach(board => {
@@ -126,10 +127,31 @@ export default function ScoreboardClient({ sessionId }) {
         });
         return Math.max(15, max);
     }, [boards]);
+    const maxPlayerIdLength = useMemo(() => {
+        let max = 2;
+        boards.forEach(board => {
+            max = Math.max(max, String(board.white.id ?? '').length);
+            if (!board.isBye) max = Math.max(max, String(board.black.id ?? '').length);
+        });
+        return Math.min(4, max);
+    }, [boards]);
     const fit = useMemo(
         () => computeFit(boards.length, paneSize.width, paneSize.height, BOARD_GAP, maxNameLength),
         [boards.length, paneSize.width, paneSize.height, maxNameLength],
     );
+    // Boards fill column by column (top to bottom, then the next column), not left to
+    // right: reading order matches the board numbers on a wall chart.
+    const displayBoards = useMemo(() => {
+        const columns = Math.max(1, fit.columns);
+        const rows = Math.max(1, fit.rows);
+        const slots = columns * rows;
+        const slotsByBoard = new Array(slots).fill(null);
+        boards.forEach((board, index) => {
+            const position = (index % rows) * columns + Math.floor(index / rows);
+            if (position < slots) slotsByBoard[position] = board;
+        });
+        return slotsByBoard;
+    }, [boards, fit.columns, fit.rows]);
     const isFinal = Boolean(numRounds && roundNumber >= numRounds);
     const roundStartedAt = Number(currentRound?.timestamp) || Number(session?.createdAt) || 0;
     const tournamentName = String(session?.tournamentName || '').trim() || 'Tournament';
@@ -137,7 +159,7 @@ export default function ScoreboardClient({ sessionId }) {
     useEffect(() => {
         if (!session || !currentRound) return;
 
-        const pairings = Array.isArray(currentRound.pairings) ? currentRound.pairings : [];
+        const pairings = getDisplayPairings(currentRound);
         if (pairings.length === 0) return;
 
         const nextResults = buildResultMap(currentRound);
@@ -300,7 +322,6 @@ export default function ScoreboardClient({ sessionId }) {
                     now={now}
                     roundStartedAt={roundStartedAt}
                     status={status}
-                    lastSync={lastSync}
                     isFinal={isFinal}
                     isFullscreen={isFullscreen}
                     onToggleFullscreen={toggleFullscreen}
@@ -317,26 +338,27 @@ export default function ScoreboardClient({ sessionId }) {
                                 '--board-gap': `${BOARD_GAP}px`,
                             }}
                         >
-                            {boards.map((board, index) => (
-                                <BoardCard
-                                    key={board.key}
-                                    board={board}
-                                    index={index}
-                                    roundComplete={roundInfo.isComplete}
-                                    isFlashing={Boolean(flashKeys?.has(board.key))}
-                                    flashNonce={flash?.nonce || 0}
-                                />
-                            ))}
-                            {Array.from({ length: Math.max(0, fit.columns * fit.rows - boards.length) }, (_, index) => (
-                                <div
-                                    key={`filler-${index}`}
-                                    className={styles.gridFiller}
-                                    style={{ '--i': String(Math.min(boards.length + index, 24)) }}
-                                    aria-hidden="true"
-                                >
-                                    <span className={styles.gridFillerPiece}>♞</span>
-                                    <span className={styles.gridFillerText}>Swiss Pairing</span>
-                                </div>
+                            {displayBoards.map((board, index) => (
+                                board ? (
+                                    <BoardCard
+                                        key={board.key}
+                                        board={board}
+                                        index={index}
+                                        maxPlayerIdLength={maxPlayerIdLength}
+                                        isFlashing={Boolean(flashKeys?.has(board.key))}
+                                        flashNonce={flash?.nonce || 0}
+                                    />
+                                ) : (
+                                    <div
+                                        key={`filler-${index}`}
+                                        className={styles.gridFiller}
+                                        style={{ '--i': String(Math.min(index, 24)) }}
+                                        aria-hidden="true"
+                                    >
+                                        <span className={styles.gridFillerPiece}>♞</span>
+                                        <span className={styles.gridFillerText}>Swiss Pairing</span>
+                                    </div>
+                                )
                             ))}
                         </div>
                     </div>
