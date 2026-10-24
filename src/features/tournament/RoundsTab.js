@@ -825,13 +825,16 @@ export default function RoundsTab() {
     const [liveSessionId, setLiveSessionId] = useState(null);
     const [showLiveSessionModal, setShowLiveSessionModal] = useState(false);
     const [isStartingLiveSession, setIsStartingLiveSession] = useState(false);
+    const [liveCardLayout, setLiveCardLayout] = useState('line');
     const lastDirectorUpdateRef = useRef(0);
+    const lastLayoutUpdateRef = useRef(0);
 
     const getLiveSessionMeta = () => {
         const activeTournament = tournaments.find(tournament => tournament.id === activeTournamentId);
         return {
             tournamentName: activeTournament?.name || tournamentConfig?.name || 'Tournament',
             numRounds: Number(tournamentConfig?.numRounds) || null,
+            cardLayout: liveCardLayout,
         };
     };
 
@@ -861,6 +864,8 @@ export default function RoundsTab() {
         if (!activeTournamentId) return;
         const savedSessionId = localStorage.getItem(getLiveSessionStorageKey(activeTournamentId));
 
+        setLiveCardLayout('line');
+
         if (savedSessionId) {
             setLiveSessionId(savedSessionId);
         } else {
@@ -878,6 +883,7 @@ export default function RoundsTab() {
                 if (!res.ok) {
                     if (res.status === 404) {
                         setLiveSessionId(null);
+                        setLiveCardLayout('line');
                         setShowLiveSessionModal(false);
                         if (activeTournamentId) {
                             localStorage.removeItem(getLiveSessionStorageKey(activeTournamentId));
@@ -886,7 +892,15 @@ export default function RoundsTab() {
                     return;
                 }
                 const sessionData = await res.json();
-                
+
+                const nextLayout = sessionData.cardLayout;
+                if (
+                    (nextLayout === 'line' || nextLayout === 'stacked')
+                    && Date.now() - lastLayoutUpdateRef.current >= 3000
+                ) {
+                    setLiveCardLayout(nextLayout);
+                }
+
                 // If director updated within the last 3 seconds, skip applying remote changes 
                 // to prevent overwriting director's local updates before they reach Redis.
                 if (Date.now() - lastDirectorUpdateRef.current < 3000) return;
@@ -970,10 +984,33 @@ export default function RoundsTab() {
         }
 
         setLiveSessionId(null);
+        setLiveCardLayout('line');
         setShowLiveSessionModal(false);
         if (activeTournamentId) {
             localStorage.removeItem(getLiveSessionStorageKey(activeTournamentId));
         }
+    };
+
+    const changeLiveSessionLayout = async (nextLayout) => {
+        if (nextLayout !== 'line' && nextLayout !== 'stacked') return;
+
+        if (!liveSessionId) {
+            setLiveCardLayout(nextLayout);
+            return;
+        }
+
+        lastLayoutUpdateRef.current = Date.now();
+        const res = await fetch(`/api/arbiter/session/${liveSessionId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cardLayout: nextLayout }),
+        });
+
+        if (!res.ok) {
+            throw new Error('Failed to update the scoreboard layout.');
+        }
+
+        setLiveCardLayout(nextLayout);
     };
 
     const isRoundComplete = useMemo(() => {
@@ -3399,6 +3436,8 @@ export default function RoundsTab() {
                 tournamentName={getLiveSessionMeta().tournamentName}
                 roundNumber={liveRoundNumber}
                 numRounds={Number(tournamentConfig?.numRounds) || 0}
+                cardLayout={liveCardLayout}
+                onCardLayoutChange={changeLiveSessionLayout}
                 isStarting={isStartingLiveSession}
                 onStartSession={startLiveSession}
                 onEndSession={endLiveSession}

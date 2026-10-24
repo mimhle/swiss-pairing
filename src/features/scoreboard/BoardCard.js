@@ -29,6 +29,23 @@ function PlayerRow({ player, side, winner }) {
     );
 }
 
+function PlayerSide({ player, side, winner }) {
+    const isWhite = side === 'white';
+    const metaText = getMetaText(player);
+    const playerId = formatPlayerId(player.id);
+    const stateClass = winner === side ? styles.winner : winner ? styles.loser : '';
+
+    return (
+        <div className={`${styles.matchSide} ${isWhite ? styles.sideWhite : styles.sideBlack} ${stateClass}`}>
+            {playerId && <span className={styles.playerId}>{playerId}</span>}
+            <span className={`${styles.piece} ${isWhite ? styles.pieceWhite : styles.pieceBlack}`} aria-hidden="true" />
+            {player.title && <span className={styles.titleBadge}>{player.title}</span>}
+            <span className={styles.playerName}>{player.name}</span>
+            {metaText && <span className={styles.playerMeta}>{metaText}</span>}
+        </div>
+    );
+}
+
 export default function BoardCard({
     board,
     heldBoard,
@@ -36,8 +53,10 @@ export default function BoardCard({
     maxPlayerIdLength,
     isFlashing,
     flashNonce,
+    layout = 'line',
 }) {
     const shownBoard = heldBoard || board;
+    const isStacked = layout === 'stacked';
     const idDigits = Math.min(4, Math.max(2, Number(maxPlayerIdLength) || 2));
     const meta = shownBoard.meta;
     const winner = meta.winner;
@@ -52,6 +71,7 @@ export default function BoardCard({
                 : '';
     const cardClass = [
         styles.boardCard,
+        isStacked ? styles.layoutStacked : '',
         shownBoard.isBye ? styles.boardCardBye : '',
         isFlashing ? styles.boardCardFlashing : '',
     ].filter(Boolean).join(' ');
@@ -79,19 +99,24 @@ export default function BoardCard({
     return (
         <article
             className={cardClass}
+            data-layout={layout}
             data-id-digits={idDigits}
             style={{ '--i': String(Math.min(index, 24)) }}
             aria-label={ariaLabel}
         >
             {singlePlayer ? (
                 <div className={styles.byeBody}>
-                    <PlayerRow player={shownBoard.white} side="white" winner={winner} />
+                    {isStacked ? (
+                        <PlayerRow player={shownBoard.white} side="white" winner={winner} />
+                    ) : (
+                        <PlayerSide player={shownBoard.white} side="white" winner={winner} />
+                    )}
                     <div className={styles.byeScore}>
                         <span className={styles.byeLabel}>{meta.label}</span>
                         {meta.points !== null && <span className={styles.byePoints}>{meta.points} PT</span>}
                     </div>
                 </div>
-            ) : (
+            ) : isStacked ? (
                 <div className={styles.matchBody}>
                     <div className={styles.matchPlayers}>
                         <PlayerRow player={shownBoard.white} side="white" winner={winner} />
@@ -118,6 +143,33 @@ export default function BoardCard({
                         )}
                         {isFlashing && <span key={`flash-${flashNonce}`} className={styles.scoreFlash} />}
                     </div>
+                </div>
+            ) : (
+                <div className={styles.matchLine}>
+                    {boardTag}
+                    <PlayerSide player={shownBoard.white} side="white" winner={winner} />
+
+                    <div className={`${styles.matchScore} ${isPending ? styles.matchScorePending : ''}`}>
+                        {isPending ? (
+                            <span className={styles.pendingDots} aria-hidden="true">
+                                <i />
+                                <i />
+                                <i />
+                            </span>
+                        ) : (
+                            <>
+                                <span className={`${styles.matchDigit} ${digitClass('white')}`}>
+                                    {digits?.white ?? '–'}
+                                </span>
+                                <span className={`${styles.matchDigit} ${digitClass('black')}`}>
+                                    {digits?.black ?? '–'}
+                                </span>
+                            </>
+                        )}
+                        {isFlashing && <span key={`flash-${flashNonce}`} className={styles.scoreFlash} />}
+                    </div>
+
+                    <PlayerSide player={shownBoard.black} side="black" winner={winner} />
                 </div>
             )}
 

@@ -12,6 +12,7 @@ import {
     buildRecentResults,
     buildResultMap,
     computeFit,
+    computeStackedFit,
     getDisplayPairings,
     getRoundInfo,
     normalizeBoard,
@@ -143,9 +144,27 @@ export default function ScoreboardClient({ sessionId }) {
         });
         return Math.min(4, max);
     }, [boards]);
+    const cardLayout = session?.cardLayout === 'stacked' ? 'stacked' : 'line';
     const fit = useMemo(
-        () => computeFit(boards.length, paneSize.width, paneSize.height, BOARD_GAP, maxNameLength),
-        [boards.length, paneSize.width, paneSize.height, maxNameLength],
+        () => (
+            cardLayout === 'stacked'
+                ? computeStackedFit(
+                    boards.length,
+                    paneSize.width,
+                    paneSize.height,
+                    BOARD_GAP,
+                    maxNameLength,
+                )
+                : computeFit(
+                    boards.length,
+                    paneSize.width,
+                    paneSize.height,
+                    BOARD_GAP,
+                    maxNameLength,
+                    maxPlayerIdLength,
+                )
+        ),
+        [cardLayout, boards.length, paneSize.width, paneSize.height, maxNameLength, maxPlayerIdLength],
     );
     // Boards fill column by column (top to bottom, then the next column), not left to
     // right: reading order matches the board numbers on a wall chart.
@@ -379,10 +398,14 @@ export default function ScoreboardClient({ sessionId }) {
                         <div
                             key={revealNonce}
                             className={styles.boardGrid}
+                            data-layout={cardLayout}
                             style={{
                                 '--cols': String(fit.columns),
                                 '--rows': String(fit.rows),
                                 '--board-gap': `${BOARD_GAP}px`,
+                                ...(cardLayout === 'line' && fit.fontSize > 0
+                                    ? { '--fit-font': `${fit.fontSize}px` }
+                                    : {}),
                             }}
                         >
                             {displayBoards.map((board, index) => (
@@ -395,6 +418,7 @@ export default function ScoreboardClient({ sessionId }) {
                                         maxPlayerIdLength={maxPlayerIdLength}
                                         isFlashing={Boolean(flashKeys?.has(board.key))}
                                         flashNonce={flash?.nonce || 0}
+                                        layout={cardLayout}
                                     />
                                 ) : (
                                     <div

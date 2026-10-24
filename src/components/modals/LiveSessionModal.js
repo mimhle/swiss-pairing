@@ -23,6 +23,8 @@ export default function LiveSessionModal({
     tournamentName = '',
     roundNumber = 0,
     numRounds = 0,
+    cardLayout = 'line',
+    onCardLayoutChange,
     isStarting = false,
     onStartSession,
     onEndSession,
@@ -32,6 +34,7 @@ export default function LiveSessionModal({
     const [copied, setCopied] = useState('');
     const [actionError, setActionError] = useState('');
     const [isEnding, setIsEnding] = useState(false);
+    const [isSavingLayout, setIsSavingLayout] = useState(false);
 
     const isLive = Boolean(sessionId);
     const arbiterUrl = isLive && origin ? `${origin}/arbiter/${sessionId}` : '';
@@ -51,6 +54,7 @@ export default function LiveSessionModal({
             setCopied('');
             setActionError('');
             setIsEnding(false);
+            setIsSavingLayout(false);
         }
     }, [open]);
 
@@ -107,6 +111,19 @@ export default function LiveSessionModal({
             setActionError(error?.message || 'Failed to end the live session.');
         } finally {
             setIsEnding(false);
+        }
+    };
+
+    const handleLayoutChange = async (nextLayout) => {
+        if (nextLayout === cardLayout || isSavingLayout) return;
+        setActionError('');
+        setIsSavingLayout(true);
+        try {
+            await onCardLayoutChange?.(nextLayout);
+        } catch (error) {
+            setActionError(error?.message || 'Failed to update the scoreboard layout.');
+        } finally {
+            setIsSavingLayout(false);
         }
     };
 
@@ -291,15 +308,63 @@ export default function LiveSessionModal({
                                             <div className="w-9 h-9 rounded-lg bg-primary-500/10 text-primary-500 flex items-center justify-center shrink-0">
                                                 <SlidersHorizontal size={17} />
                                             </div>
-                                            <div className="min-w-0">
+                                            <div className="min-w-0 flex-1">
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                     <h3 className="text-sm font-semibold">Scoreboard controls</h3>
-                                                    <span className="text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded bg-surface-200-800 text-surface-600-400">
-                                                        Coming soon
-                                                    </span>
+                                                    {isSavingLayout && (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold text-surface-500-400">
+                                                            <Loader2 size={10} className="animate-spin" />
+                                                            Saving
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <p className="text-xs text-surface-600-400 mt-1">
-                                                    Display controls will live here in a future update — results visibility, round intro replay and announcements.
+                                                    Choose how each board is displayed on the live scoreboard.
+                                                </p>
+                                                <div
+                                                    className="mt-3 grid gap-2 sm:grid-cols-2"
+                                                    role="group"
+                                                    aria-label="Scoreboard layout"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleLayoutChange('line')}
+                                                        disabled={isSavingLayout}
+                                                        aria-pressed={cardLayout === 'line'}
+                                                        className={`rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${cardLayout === 'line'
+                                                            ? 'border-primary-500 bg-primary-500/10'
+                                                            : 'border-surface-200-800 hover:bg-surface-200-800'
+                                                        }`}
+                                                    >
+                                                        <span className="flex items-center justify-between gap-2">
+                                                            <span className="text-xs font-semibold">One line</span>
+                                                            {cardLayout === 'line' && <Check size={14} className="text-primary-500 shrink-0" />}
+                                                        </span>
+                                                        <span className="block text-[11px] text-surface-600-400 mt-0.5">
+                                                            Compact row with the score between the players.
+                                                        </span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleLayoutChange('stacked')}
+                                                        disabled={isSavingLayout}
+                                                        aria-pressed={cardLayout === 'stacked'}
+                                                        className={`rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${cardLayout === 'stacked'
+                                                            ? 'border-primary-500 bg-primary-500/10'
+                                                            : 'border-surface-200-800 hover:bg-surface-200-800'
+                                                        }`}
+                                                    >
+                                                        <span className="flex items-center justify-between gap-2">
+                                                            <span className="text-xs font-semibold">Two rows</span>
+                                                            {cardLayout === 'stacked' && <Check size={14} className="text-primary-500 shrink-0" />}
+                                                        </span>
+                                                        <span className="block text-[11px] text-surface-600-400 mt-0.5">
+                                                            Classic cards with one player row above the other.
+                                                        </span>
+                                                    </button>
+                                                </div>
+                                                <p className="text-[11px] text-surface-500-400 mt-2">
+                                                    The scoreboard switches on its next refresh, about 2 seconds.
                                                 </p>
                                             </div>
                                         </div>

@@ -18,7 +18,7 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { tournamentId, rounds, tournamentName, numRounds } = body;
+    const { tournamentId, rounds, tournamentName, numRounds, cardLayout } = body;
 
     if (!tournamentId || !rounds) {
       return NextResponse.json(
@@ -45,6 +45,10 @@ export async function POST(request) {
 
     if (Number.isFinite(normalizedRounds) && normalizedRounds > 0) {
       sessionData.numRounds = normalizedRounds;
+    }
+
+    if (cardLayout === 'line' || cardLayout === 'stacked') {
+      sessionData.cardLayout = cardLayout;
     }
 
     // Store session in Redis, expire after 24 hours (86400 seconds)

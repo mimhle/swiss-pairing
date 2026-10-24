@@ -369,18 +369,19 @@
     animation: cardIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
     animation-delay: calc(var(--i, 0) * 22ms);
     container-type: size;
-    --id-col: calc(min(13.44cqw, 38.4cqh, 57.6px) + min(0.8cqw, 1.6cqh));
-    --pad-y: min(1.2cqw, 2.2cqh);
+    --line-font: var(--fit-font, min(3.4cqw, 42cqh, 40px));
+    --id-col: calc(var(--line-font) * 2.2);
+    --pad-x: min(1.2cqw, 10px);
+    --pad-y: min(0.6cqw, 1.2cqh);
     --card-accent: max(2px, min(0.8cqw, 1.6cqh));
-    --row-gap: min(1cqw, 1.8cqh);
 }
 
 .boardCard[data-id-digits="2"] {
-    --id-col: calc(min(6.72cqw, 19.2cqh, 28.8px) + min(0.8cqw, 1.6cqh));
+    --id-col: calc(var(--line-font) * 1.35);
 }
 
 .boardCard[data-id-digits="3"] {
-    --id-col: calc(min(10.08cqw, 28.8cqh, 43.2px) + min(0.8cqw, 1.6cqh));
+    --id-col: calc(var(--line-font) * 1.8);
 }
 
 .boardCard::before {
@@ -410,10 +411,10 @@
     min-width: 0;
     min-height: 0;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: 2px;
+    gap: min(0.5cqw, 2cqh);
     overflow: hidden;
     border: 1px dashed color-mix(in oklab, var(--sb-border) 70%, transparent);
     border-radius: var(--sb-radius);
@@ -426,13 +427,13 @@
 }
 
 .gridFillerPiece {
-    font-size: min(10cqw, 22cqh, 48px);
+    font-size: min(3.2cqw, 38cqh, 34px);
     line-height: 1;
     opacity: 0.35;
 }
 
 .gridFillerText {
-    font-size: min(2.6cqw, 5.2cqh, 9px);
+    font-size: min(1.7cqw, 11cqh, 10px);
     font-weight: 900;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -442,10 +443,11 @@
 
 .boardTag {
     z-index: 2;
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    gap: min(0.5cqw, 1cqh);
-    padding: 1px min(0.5cqw, 1cqh);
+    gap: 0.2em;
+    padding: 0.05em 0.25em;
     border-radius: var(--sb-radius-sm);
     background: var(--sb-panel);
     pointer-events: none;
@@ -454,7 +456,7 @@
 .boardTab {
     display: grid;
     place-items: center;
-    font-size: min(9cqh, 12px);
+    font-size: 0.58em;
     font-weight: 800;
     line-height: 1;
     letter-spacing: 0.02em;
@@ -464,7 +466,7 @@
 }
 
 .boardGroup {
-    font-size: min(7cqh, 9px);
+    font-size: 0.4em;
     font-weight: 800;
     line-height: 1.5;
     letter-spacing: 0.04em;
@@ -472,60 +474,51 @@
     color: var(--color-primary-600-400);
     background: color-mix(in oklab, var(--color-primary-500) 12%, transparent);
     border-radius: var(--sb-radius-xs);
-    padding: 0 min(0.4cqw, 0.8cqh);
+    padding: 0 0.3em;
     max-width: 8ch;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.matchScorePending .boardTab {
-    font-size: min(13cqh, 24px);
-}
-
-.matchScorePending .boardGroup {
-    font-size: min(9cqh, 11px);
-}
-
-.matchScore:not(.matchScorePending) .boardTag {
-    position: absolute;
-    top: 50%;
-    left: calc(50% + min(1.2cqw, 2.2cqh) / 2);
-    transform: translate(-50%, -50%);
-}
-
-.matchBody {
+.matchLine {
     flex: 1 1 0;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: min(1.4cqw, 2.8cqh);
-    padding: var(--pad-y) min(2.5cqw, 5cqh);
-}
-
-.matchPlayers {
-    min-width: 0;
-    min-height: 0;
-    display: grid;
-    grid-template-rows: 1fr 1fr;
-    gap: var(--row-gap);
-}
-
-.matchRow {
     min-width: 0;
     min-height: 0;
     display: flex;
     align-items: center;
-    gap: min(1.4cqw, 2.5cqh);
-    padding: 0 min(1.2cqw, 2.2cqh) 0 0;
+    gap: 0.2em;
+    padding: var(--pad-y) var(--pad-x);
+    font-size: var(--line-font);
+}
+
+.matchSide {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.25em;
+    padding: 0 0.2em;
     border-radius: var(--sb-radius-sm);
+}
+
+.matchSide.winner {
+    background: color-mix(in oklab, var(--color-primary-500) 9%, transparent);
+}
+
+.sideWhite.winner {
+    box-shadow: inset max(2px, 0.07em) 0 0 var(--color-primary-500);
+}
+
+.sideBlack.winner {
+    box-shadow: inset calc(0px - max(2px, 0.07em)) 0 0 var(--color-primary-500);
 }
 
 .playerId {
     flex: 0 0 var(--id-col);
-    padding-right: min(0.8cqw, 1.6cqh);
+    padding-right: 0.25em;
     text-align: right;
-    font-size: min(4.2cqw, 12cqh, 18px);
+    font-size: 0.72em;
     font-weight: 500;
     line-height: 1;
     letter-spacing: -0.01em;
@@ -537,28 +530,12 @@
     text-overflow: ellipsis;
 }
 
-.matchRow + .matchRow {
-    border-top: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
-}
-
-.matchRow .playerName {
-    flex: 0 1 auto;
-}
-
-.matchRow .playerMeta {
-    flex: 0 0 auto;
-}
-
-.matchRow.winner {
-    background: color-mix(in oklab, var(--color-primary-500) 9%, transparent);
-    box-shadow: inset 3px 0 0 var(--color-primary-500);
-}
-
 .playerName {
+    flex: 0 1 auto;
     min-width: 0;
-    font-size: min(5cqw, 16cqh, 24px);
+    font-size: 1em;
     font-weight: 900;
-    line-height: 1.02;
+    line-height: 1.15;
     letter-spacing: -0.02em;
     white-space: nowrap;
     overflow: hidden;
@@ -567,18 +544,19 @@
 
 .titleBadge {
     flex: 0 0 auto;
-    font-size: min(2.6cqw, 5.2cqh, 9px);
+    font-size: 0.36em;
     font-weight: 900;
     letter-spacing: 0.03em;
-    padding: 0 min(0.8cqw, 1.5cqh);
+    padding: 0 0.4em;
     border-radius: var(--sb-radius-xs);
     background: var(--color-surface-200-800);
     color: var(--sb-muted);
 }
 
 .playerMeta {
-    max-width: 42%;
-    font-size: min(2.6cqw, 5.2cqh, 9px);
+    flex: 0 0 auto;
+    max-width: 30%;
+    font-size: 0.36em;
     color: var(--sb-muted-strong);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -601,8 +579,8 @@
 
 .piece {
     flex: 0 0 auto;
-    width: min(3.2cqw, 6.4cqh, 12px);
-    height: min(3.2cqw, 6.4cqh, 12px);
+    width: 0.46em;
+    height: 0.46em;
     border-radius: var(--sb-radius-xs);
     border: 1px solid var(--color-surface-500);
     box-shadow: 0 1px 2px color-mix(in oklab, var(--color-surface-950) 20%, transparent);
@@ -620,28 +598,24 @@
 
 .matchScore {
     position: relative;
-    min-width: min(20cqw, 50cqh, 100px);
-    display: grid;
-    grid-template-rows: 1fr 1fr;
-    gap: min(1cqw, 1.8cqh);
-    border-left: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
-    padding-left: min(1.2cqw, 2.2cqh);
+    flex: 0 0 auto;
+    min-width: 2.5em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .matchScorePending {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: min(0.8cqw, 1.6cqh);
+    min-width: 2.5em;
 }
 
 .matchDigit {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 0 0.24em;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: min(20cqw, 25cqh, 48px);
+    font-size: 1.35em;
     font-weight: 900;
     line-height: 1;
     letter-spacing: -0.02em;
@@ -650,7 +624,7 @@
 }
 
 .matchDigit + .matchDigit {
-    border-top: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
+    border-left: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
 }
 
 .matchDigitWin {
@@ -667,12 +641,12 @@
 
 .pendingDots {
     display: flex;
-    gap: min(0.4cqw, 0.8cqh);
+    gap: 0.22em;
 }
 
 .pendingDots i {
-    width: min(0.9cqw, 1.8cqh, 4px);
-    height: min(0.9cqw, 1.8cqh, 4px);
+    width: max(2px, 0.26em);
+    height: max(2px, 0.26em);
     border-radius: 999px;
     background: var(--sb-muted);
     animation: blink 1.2s ease-in-out infinite;
@@ -710,7 +684,7 @@
    card is fully covered, and the new result is revealed behind the slanted
    trailing edge with the colour trail on that revealed side. */
 .scoreWipe {
-    --wipe-slant: min(10cqh, 40px);
+    --wipe-slant: max(3px, min(10cqh, 40px));
     --wipe-trail: 22cqw;
     position: absolute;
     top: 0;
@@ -766,34 +740,34 @@
     min-height: 0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: min(1.6cqw, 3cqh);
-    padding: var(--pad-y) min(2.5cqw, 5cqh);
+    gap: 0.6em;
+    padding: var(--pad-y) var(--pad-x);
+    font-size: var(--line-font);
 }
 
-.byeBody .matchRow {
+.byeBody .matchSide {
     flex: 1 1 0;
-    border-top: none;
+    padding-left: 0;
     background: none;
+    box-shadow: none;
 }
 
 .byeScore {
     flex: 0 0 auto;
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: min(0.4cqw, 0.8cqh);
+    align-items: baseline;
+    gap: 0.4em;
 }
 
 .byeLabel {
-    font-size: min(4.5cqw, 9cqh, 20px);
+    font-size: 0.85em;
     font-weight: 900;
     letter-spacing: 0.08em;
     color: var(--color-warning-700-300);
 }
 
 .byePoints {
-    font-size: min(2.6cqw, 5.2cqh, 9px);
+    font-size: 0.38em;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--sb-muted);
@@ -835,6 +809,199 @@
 
 .boardCardBye .cardAccent {
     opacity: 0.35;
+}
+
+/* Stacked (classic two-row) layout. The line layout above is the base; these
+   rules restore the previous card look when the session chooses it. */
+.layoutStacked {
+    --id-col: calc(min(13.44cqw, 38.4cqh, 57.6px) + min(0.8cqw, 1.6cqh));
+    --pad-y: min(1.2cqw, 2.2cqh);
+    --row-gap: min(1cqw, 1.8cqh);
+}
+
+.layoutStacked[data-id-digits="2"] {
+    --id-col: calc(min(6.72cqw, 19.2cqh, 28.8px) + min(0.8cqw, 1.6cqh));
+}
+
+.layoutStacked[data-id-digits="3"] {
+    --id-col: calc(min(10.08cqw, 28.8cqh, 43.2px) + min(0.8cqw, 1.6cqh));
+}
+
+.layoutStacked .matchBody {
+    flex: 1 1 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: min(1.4cqw, 2.8cqh);
+    padding: var(--pad-y) min(2.5cqw, 5cqh);
+}
+
+.layoutStacked .matchPlayers {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    gap: var(--row-gap);
+}
+
+.layoutStacked .matchRow {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    gap: min(1.4cqw, 2.5cqh);
+    padding: 0 min(1.2cqw, 2.2cqh) 0 0;
+    border-radius: var(--sb-radius-sm);
+}
+
+.layoutStacked .matchRow + .matchRow {
+    border-top: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
+}
+
+.layoutStacked .matchRow .playerName {
+    flex: 0 1 auto;
+}
+
+.layoutStacked .matchRow .playerMeta {
+    flex: 0 0 auto;
+}
+
+.layoutStacked .matchRow.winner {
+    background: color-mix(in oklab, var(--color-primary-500) 9%, transparent);
+    box-shadow: inset 3px 0 0 var(--color-primary-500);
+}
+
+.layoutStacked .playerId {
+    flex: 0 0 var(--id-col);
+    padding-right: min(0.8cqw, 1.6cqh);
+    font-size: min(4.2cqw, 12cqh, 18px);
+}
+
+.layoutStacked .playerName {
+    font-size: min(5cqw, 16cqh, 24px);
+    line-height: 1.02;
+}
+
+.layoutStacked .titleBadge {
+    font-size: min(2.6cqw, 5.2cqh, 9px);
+    padding: 0 min(0.8cqw, 1.5cqh);
+}
+
+.layoutStacked .playerMeta {
+    max-width: 42%;
+    font-size: min(2.6cqw, 5.2cqh, 9px);
+}
+
+.layoutStacked .piece {
+    width: min(3.2cqw, 6.4cqh, 12px);
+    height: min(3.2cqw, 6.4cqh, 12px);
+}
+
+.layoutStacked .matchScore {
+    position: relative;
+    min-width: min(20cqw, 50cqh, 100px);
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    align-items: stretch;
+    justify-content: normal;
+    gap: min(1cqw, 1.8cqh);
+    border-left: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
+    padding-left: min(1.2cqw, 2.2cqh);
+}
+
+.layoutStacked .matchScorePending {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: min(0.8cqw, 1.6cqh);
+}
+
+.layoutStacked .matchDigit {
+    padding: 0;
+    font-size: min(20cqw, 25cqh, 48px);
+}
+
+.layoutStacked .matchDigit + .matchDigit {
+    border-left: 0;
+    border-top: 1px solid color-mix(in oklab, var(--color-surface-500) 18%, transparent);
+}
+
+.layoutStacked .pendingDots {
+    gap: min(0.4cqw, 0.8cqh);
+}
+
+.layoutStacked .pendingDots i {
+    width: min(0.9cqw, 1.8cqh, 4px);
+    height: min(0.9cqw, 1.8cqh, 4px);
+}
+
+.layoutStacked .boardTag {
+    gap: min(0.5cqw, 1cqh);
+    padding: 1px min(0.5cqw, 1cqh);
+}
+
+.layoutStacked .boardTab {
+    font-size: min(9cqh, 12px);
+}
+
+.layoutStacked .boardGroup {
+    font-size: min(7cqh, 9px);
+    padding: 0 min(0.4cqw, 0.8cqh);
+}
+
+.layoutStacked .matchScorePending .boardTab {
+    font-size: min(13cqh, 24px);
+}
+
+.layoutStacked .matchScorePending .boardGroup {
+    font-size: min(9cqh, 11px);
+}
+
+.layoutStacked .matchScore:not(.matchScorePending) .boardTag {
+    position: absolute;
+    top: 50%;
+    left: calc(50% + min(1.2cqw, 2.2cqh) / 2);
+    transform: translate(-50%, -50%);
+}
+
+.layoutStacked .byeBody {
+    justify-content: space-between;
+    gap: min(1.6cqw, 3cqh);
+    padding: var(--pad-y) min(2.5cqw, 5cqh);
+}
+
+.layoutStacked .byeBody .matchRow {
+    flex: 1 1 0;
+    border-top: none;
+    background: none;
+}
+
+.layoutStacked .byeScore {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: min(0.4cqw, 0.8cqh);
+}
+
+.layoutStacked .byeLabel {
+    font-size: min(4.5cqw, 9cqh, 20px);
+}
+
+.layoutStacked .byePoints {
+    font-size: min(2.6cqw, 5.2cqh, 9px);
+}
+
+.boardGrid[data-layout="stacked"] .gridFiller {
+    flex-direction: column;
+    gap: 2px;
+}
+
+.boardGrid[data-layout="stacked"] .gridFillerPiece {
+    font-size: min(10cqw, 22cqh, 48px);
+}
+
+.boardGrid[data-layout="stacked"] .gridFillerText {
+    font-size: min(2.6cqw, 5.2cqh, 9px);
 }
 
 .ticker {

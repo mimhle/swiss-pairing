@@ -221,7 +221,84 @@ export function buildRecentResults(rounds, limit = 20) {
     return items.slice(-limit).reverse();
 }
 
-export function computeFit(count, width, height, gap = 10, maxNameLength = 15) {
+const NAME_BUDGET = 20;
+
+export function computeFit(count, width, height, gap = 10, maxNameLength = 15, maxIdLength = 2) {
+    const total = Math.max(0, Math.floor(Number(count) || 0));
+    // Size the row for a typical 3-4 word name. Names longer than the budget
+    // are allowed to truncate; letting one outlier shrink every board made the
+    // whole scoreboard too small.
+    const nameLength = Math.min(NAME_BUDGET, Math.max(15, Math.floor(Number(maxNameLength) || 15)));
+    const idLength = Math.min(4, Math.max(2, Math.floor(Number(maxIdLength) || 2)));
+    // Width taken by one player's ID column, in line-font em (2-4 digits).
+    const idWidth = 1 + 0.45 * idLength;
+
+    if (total <= 0) {
+        return { columns: 1, rows: 1, fontSize: 0 };
+    }
+
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        const columns = total >= 9 ? 3 : Math.min(total, 2);
+        return {
+            columns,
+            rows: Math.ceil(total / columns),
+            fontSize: 0,
+        };
+    }
+
+    // Three columns is the scoreboard's default shape for a normal field: it
+    // gives each board a wide single row without leaving large empty cells.
+    // Very small fields (fewer than nine boards) keep one or two wider columns.
+    const minColumns = total >= 9 ? 3 : 1;
+    const maxColumns = Math.min(total, total >= 9 ? 3 : 2);
+    const candidates = [];
+
+    for (let columns = minColumns; columns <= maxColumns; columns += 1) {
+        const rows = Math.ceil(total / columns);
+        const cellWidth = (width - gap * (columns - 1)) / columns;
+        const cellHeight = (height - gap * (rows - 1)) / rows;
+
+        if (cellWidth <= 0 || cellHeight <= 0) continue;
+
+        // One-line card: the name is a single row, so it can take roughly 42%
+        // of the card height instead of the 16% a stacked two-row card used.
+        const fontCap = Math.min(cellWidth * 0.034, cellHeight * 0.42, 40);
+        // A line spends width on the board chip, both IDs, pieces, titles, the
+        // score column and federations. Only the halves that are left hold the
+        // two names, and the longest name sets the requirement. Both the space
+        // spent and the name size scale with the font, so solve directly.
+        const widthLimitedFont = (cellWidth * 0.5) / (6.75 + idWidth + nameLength * 0.56);
+        const fittedFont = Math.min(fontCap, widthLimitedFont);
+
+        candidates.push({ columns, rows, score: fittedFont });
+    }
+
+    if (candidates.length === 0) {
+        const columns = total >= 9 ? 3 : Math.min(total, 2);
+        return { columns, rows: Math.ceil(total / columns), fontSize: 0 };
+    }
+
+    // Use the layout with the largest names. When another layout is within 2%
+    // prefer the one with more columns: it has shorter rows and less empty
+    // space around each line.
+    const bestScore = Math.max(...candidates.map(candidate => candidate.score));
+    const best = candidates
+        .filter(candidate => candidate.score >= bestScore * 0.98)
+        .reduce((current, candidate) => (
+            candidate.columns > current.columns ? candidate : current
+        ));
+
+    return {
+        columns: best.columns,
+        rows: best.rows,
+        fontSize: Math.round(best.score * 10) / 10,
+    };
+}
+
+// The previous two-row card fit, kept for the "Two rows" scoreboard layout.
+// It sizes the name at roughly 16% of card height and usually lands on 4-6
+// columns; the card itself uses its old container-query sizing.
+export function computeStackedFit(count, width, height, gap = 10, maxNameLength = 15) {
     const total = Math.max(0, Math.floor(Number(count) || 0));
     const nameLength = Math.max(15, Math.floor(Number(maxNameLength) || 15));
 
