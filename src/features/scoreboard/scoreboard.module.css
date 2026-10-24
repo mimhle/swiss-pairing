@@ -176,6 +176,13 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* The takeover's flying number is the header number's stand-in until it lands,
+   so the real one must stay hidden for the whole intro: showing both makes the
+   landing read as a copied number rather than the number arriving. */
+.roundNumberHidden {
+    opacity: 0;
+}
+
 .roundTotal {
     font-size: clamp(0.7rem, 1.35vh, 1.05rem);
     font-weight: 800;
@@ -332,7 +339,7 @@
     min-height: 0;
     min-width: 0;
     display: flex;
-    padding: clamp(5px, 0.5vw, 9px);
+    padding: clamp(4px, 0.4vw, 7px);
     border: 1px solid var(--sb-border);
     border-radius: var(--sb-radius);
     background: color-mix(in oklab, var(--sb-panel) 55%, transparent);
@@ -371,9 +378,9 @@
     container-type: size;
     --line-font: var(--fit-font, min(3.4cqw, 42cqh, 40px));
     --id-col: calc(var(--line-font) * 2.2);
-    --pad-x: min(1.2cqw, 10px);
-    --pad-y: min(0.6cqw, 1.2cqh);
-    --card-accent: max(2px, min(0.8cqw, 1.6cqh));
+    --pad-x: min(0.85cqw, 8px);
+    --pad-y: min(0.3cqw, 0.7cqh);
+    --card-accent: clamp(1px, 2.4cqh, 2px);
 }
 
 .boardCard[data-id-digits="2"] {
@@ -487,7 +494,7 @@
     min-height: 0;
     display: flex;
     align-items: center;
-    gap: 0.2em;
+    gap: 0.12em;
     padding: var(--pad-y) var(--pad-x);
     font-size: var(--line-font);
 }
@@ -497,14 +504,14 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 0.25em;
-    padding: 0 0.2em;
+    gap: 0.18em;
+    padding: 0 0.12em;
     border-radius: var(--sb-radius-sm);
 }
 
 .playerId {
     flex: 0 0 var(--id-col);
-    padding-right: 0.25em;
+    padding-right: 0.18em;
     text-align: right;
     font-size: 0.72em;
     font-weight: 500;
@@ -1102,25 +1109,48 @@
     display: grid;
     place-items: center;
     overflow: hidden;
+    pointer-events: none;
+}
+
+/* The fade-out lives on the backdrop, not on the overlay itself: the flying
+   round number has to stay fully opaque while it travels, because it is the
+   header number's stand-in until it lands. Fading the overlay would dissolve
+   the number mid-flight and leave nothing to hand over to the header. */
+.takeover::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
     background: color-mix(in oklab, var(--color-surface-50-950) 82%, transparent);
     backdrop-filter: blur(10px);
     animation: takeoverOut 0.55s ease-in 2.1s forwards;
-    pointer-events: none;
 }
 
 .takeoverContent {
     position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: clamp(5px, 0.9vh, 12px);
     text-align: center;
     padding: clamp(18px, 3vh, 34px) clamp(28px, 4vw, 60px) clamp(20px, 3.2vh, 38px);
-    border: 1px solid var(--sb-border);
     border-radius: var(--sb-radius);
+    animation: takeoverIn 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* The panel is its own layer for the same reason as the backdrop: it dissolves
+   while the round number is still flying. */
+.takeoverContent::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border: 1px solid var(--sb-border);
+    border-radius: inherit;
     background: var(--sb-panel);
     box-shadow: var(--sb-shadow);
-    animation: takeoverIn 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: takeoverCardOut 0.5s ease-in 2.1s forwards;
 }
 
 .takeoverInitial .takeoverRoundNumber {
@@ -1132,7 +1162,7 @@
     letter-spacing: 0.02em;
     color: var(--sb-muted);
     font-weight: 800;
-    animation: fadeUp 0.5s 0.1s both;
+    animation: fadeUp 0.5s 0.1s both, takeoverContentOut 0.34s ease-in 2.15s forwards;
 }
 
 .takeoverRound {
@@ -1151,6 +1181,7 @@
     line-height: 1;
     text-transform: uppercase;
     color: var(--sb-muted-strong);
+    animation: takeoverContentOut 0.34s ease-in 2.15s forwards;
 }
 
 .takeoverRoundNumber {
@@ -1176,7 +1207,7 @@
     letter-spacing: 0.02em;
     color: var(--sb-muted);
     font-weight: 800;
-    animation: fadeUp 0.5s 0.25s both;
+    animation: fadeUp 0.5s 0.25s both, takeoverContentOut 0.34s ease-in 2.15s forwards;
 }
 
 .completeBanner {
@@ -1348,6 +1379,18 @@
     }
 }
 
+@keyframes takeoverCardOut {
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes takeoverContentOut {
+    to {
+        opacity: 0;
+    }
+}
+
 @keyframes roundSlam {
     0% {
         opacity: 0;
@@ -1355,10 +1398,10 @@
     }
     60% {
         opacity: 1;
-        transform: translateY(0) scale(0.98);
+        transform: translateY(0) scale(1);
     }
     100% {
-        transform: scale(1);
+        transform: translateY(0) scale(1);
     }
 }
 

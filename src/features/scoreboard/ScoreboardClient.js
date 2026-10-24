@@ -20,8 +20,16 @@ import styles from './scoreboard.module.css';
 const RESULT_FLASH_MS = 900;
 const WIPE_SWAP_MS = 230;
 const ROUND_TAKEOVER_MS = 2700;
+// The grid is remounted (and its cards re-enter) while the overlay is still
+// fading, not after it is gone: the flight and the veil fade both start at
+// 2.1s, so the board fills as it is revealed instead of waiting for the
+// takeover to finish and then cascading into an already quiet screen.
+const CARD_REVEAL_MS = 2100;
 const COMPLETE_BANNER_MS = 4200;
 const BOARD_GAP = 10;
+// Maximum gap for the one-line layout. Its real gap is computed from the row
+// height, so it shrinks with the screen instead of staying a fixed 8-10px.
+const LINE_BOARD_GAP_MAX = 12;
 
 // The result wipe and the held (old) board must mount in the same frame as the
 // new data, otherwise the updated score paints first and the wipe looks like a
@@ -155,7 +163,7 @@ export default function ScoreboardClient({ sessionId }) {
                     boards.length,
                     paneSize.width,
                     paneSize.height,
-                    BOARD_GAP,
+                    LINE_BOARD_GAP_MAX,
                     maxNameLength,
                     maxPlayerIdLength,
                 )
@@ -270,11 +278,14 @@ export default function ScoreboardClient({ sessionId }) {
 
     useEffect(() => {
         if (!roundAnnouncement) return undefined;
-        const timer = setTimeout(() => {
-            setRoundAnnouncement(null);
-            setRevealNonce(previous => previous + 1);
-        }, ROUND_TAKEOVER_MS);
-        return () => clearTimeout(timer);
+        // Cards re-enter as the veil starts lifting; the overlay unmounts later,
+        // on its own timer.
+        const revealTimer = setTimeout(() => setRevealNonce(previous => previous + 1), CARD_REVEAL_MS);
+        const endTimer = setTimeout(() => setRoundAnnouncement(null), ROUND_TAKEOVER_MS);
+        return () => {
+            clearTimeout(revealTimer);
+            clearTimeout(endTimer);
+        };
     }, [roundAnnouncement]);
 
     useEffect(() => {
@@ -362,6 +373,7 @@ export default function ScoreboardClient({ sessionId }) {
                     roundStartedAt={roundStartedAt}
                     status={status}
                     isFinal={isFinal}
+                    hideRoundNumber={Boolean(roundAnnouncement)}
                     isFullscreen={isFullscreen}
                     onToggleFullscreen={toggleFullscreen}
                 />
@@ -375,7 +387,7 @@ export default function ScoreboardClient({ sessionId }) {
                             style={{
                                 '--cols': String(fit.columns),
                                 '--rows': String(fit.rows),
-                                '--board-gap': `${BOARD_GAP}px`,
+                                '--board-gap': `${cardLayout === 'line' ? fit.gap : BOARD_GAP}px`,
                                 ...(cardLayout === 'line' && fit.fontSize > 0
                                     ? { '--fit-font': `${fit.fontSize}px` }
                                     : {}),

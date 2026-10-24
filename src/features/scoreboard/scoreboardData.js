@@ -190,7 +190,7 @@ export function buildResultMap(round) {
 
 const NAME_BUDGET = 20;
 
-export function computeFit(count, width, height, gap = 10, maxNameLength = 15, maxIdLength = 2) {
+export function computeFit(count, width, height, maxGap = 12, maxNameLength = 15, maxIdLength = 2) {
     const total = Math.max(0, Math.floor(Number(count) || 0));
     // Size the row for a typical 3-4 word name. Names longer than the budget
     // are allowed to truncate; letting one outlier shrink every board made the
@@ -201,35 +201,43 @@ export function computeFit(count, width, height, gap = 10, maxNameLength = 15, m
     const idWidth = 1 + 0.45 * idLength;
 
     if (total <= 0) {
-        return { columns: 1, rows: 1, fontSize: 0 };
+        return { columns: 1, rows: 1, fontSize: 0, gap: maxGap };
     }
 
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-        const columns = total >= 9 ? 3 : Math.min(total, 2);
+        const columns = total >= 9 ? 2 : Math.min(total, 2);
         return {
             columns,
             rows: Math.ceil(total / columns),
             fontSize: 0,
+            gap: maxGap,
         };
     }
 
-    // Three columns is the scoreboard's default shape for a normal field: it
-    // gives each board a wide single row without leaving large empty cells.
-    // Very small fields (fewer than nine boards) keep one or two wider columns.
-    const minColumns = total >= 9 ? 3 : 1;
+    // Two columns is the scoreboard's shape for a normal field: it gives each
+    // board a wide single row, and the extra cell width roughly doubles the
+    // fitted name font compared with three columns (the name is width-limited,
+    // not height-limited). Three columns stay available as a fallback for very
+    // large fields, where two columns would need more rows than the height can
+    // carry. Very small fields (fewer than nine boards) may use one column.
+    const minColumns = total >= 9 ? 2 : 1;
     const maxColumns = Math.min(total, total >= 9 ? 3 : 2);
     const candidates = [];
 
     for (let columns = minColumns; columns <= maxColumns; columns += 1) {
         const rows = Math.ceil(total / columns);
+        // The gap scales with the row height instead of being a fixed pixel
+        // value: the cards shrink with the screen, so a constant gap goes from
+        // ~10% of a row on a 1080p wall to a third of it on a small laptop.
+        const gap = Math.round(Math.min(maxGap, Math.max(3, (height / rows) * 0.12)));
         const cellWidth = (width - gap * (columns - 1)) / columns;
         const cellHeight = (height - gap * (rows - 1)) / rows;
 
         if (cellWidth <= 0 || cellHeight <= 0) continue;
 
-        // One-line card: the name is a single row, so it can take roughly 42%
-        // of the card height instead of the 16% a stacked two-row card used.
-        const fontCap = Math.min(cellWidth * 0.034, cellHeight * 0.42, 40);
+        // One-line card: the name is a single row, so it can take half the card
+        // height instead of the 16% a stacked two-row card used.
+        const fontCap = Math.min(cellWidth * 0.034, cellHeight * 0.5, 40);
         // A line spends width on the board chip, both IDs, pieces, titles, the
         // score column and federations. Only the halves that are left hold the
         // two names, and the longest name sets the requirement. Both the space
@@ -237,28 +245,31 @@ export function computeFit(count, width, height, gap = 10, maxNameLength = 15, m
         const widthLimitedFont = (cellWidth * 0.5) / (6.75 + idWidth + nameLength * 0.56);
         const fittedFont = Math.min(fontCap, widthLimitedFont);
 
-        candidates.push({ columns, rows, score: fittedFont });
+        candidates.push({ columns, rows, gap, score: fittedFont });
     }
 
     if (candidates.length === 0) {
-        const columns = total >= 9 ? 3 : Math.min(total, 2);
-        return { columns, rows: Math.ceil(total / columns), fontSize: 0 };
+        const columns = total >= 9 ? 2 : Math.min(total, 2);
+        return { columns, rows: Math.ceil(total / columns), fontSize: 0, gap: maxGap };
     }
 
-    // Use the layout with the largest names. When another layout is within 2%
-    // prefer the one with more columns: it has shorter rows and less empty
-    // space around each line.
+    // Use the layout with the largest names. Any layout within 5% of the best
+    // name size is good enough, and there two columns wins: it is the
+    // scoreboard's default shape and leaves less empty space around each line.
+    // Three columns only comes back when it fits the names meaningfully better,
+    // which happens with large fields on a short screen.
     const bestScore = Math.max(...candidates.map(candidate => candidate.score));
     const best = candidates
-        .filter(candidate => candidate.score >= bestScore * 0.98)
+        .filter(candidate => candidate.score >= bestScore * 0.95)
         .reduce((current, candidate) => (
-            candidate.columns > current.columns ? candidate : current
+            candidate.columns < current.columns ? candidate : current
         ));
 
     return {
         columns: best.columns,
         rows: best.rows,
         fontSize: Math.round(best.score * 10) / 10,
+        gap: best.gap,
     };
 }
 
